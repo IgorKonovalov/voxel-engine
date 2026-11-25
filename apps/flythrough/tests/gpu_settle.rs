@@ -116,7 +116,6 @@ fn the_rig_reads_the_default_look() {
             indirect: true,
             auto: false,
             upscaler: true,
-            bridge: false,
             probe_freeze: None,
             probe_move: None,
         },

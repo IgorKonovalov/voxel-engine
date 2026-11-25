@@ -731,6 +731,14 @@ the streaming line above; the rest runs on background threads.
 
 ### Frame ledger (2026-10-31)
 
+*Noted 2026-11-24 (Plan 0102):* the scenario tables below were read under `own`, the engine's
+own upscaler, which Plan 0102 removed (ADR-0086); FSR 2 is the only upscaler and a frame
+without it renders at its output size. The tables are kept as history; the live figures are
+the render profiles' rows ("The render profiles" below) and the re-based paragraph below. At
+Plan 0102's base (`be97152a`, Portable's 853 x 480 to 1280 x 720, loaded) `own`'s upscale and
+sharpen passes read 0.380 ms on the RTX 3080 Laptop and 1.790 ms on the RADV RENOIR against
+FSR 2's 0.640 and 4.077 ms ([Plan 0102's readings log](../plans/logs/0102.md), Phase 1).
+
 The frame the owner judges Plan 0054's field surface against at its Phase 4d: today's measured
 passes in three surface scenarios, beside a slice reserved for every planned system not yet in
 the frame, held against the 16.6 ms split above. It is a ledger, not a bar. Phase 4b's bar (RTX

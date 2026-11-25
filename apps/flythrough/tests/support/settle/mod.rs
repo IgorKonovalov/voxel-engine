@@ -119,8 +119,7 @@ pub const VEIN_FLIGHT: ([f32; 3], [f32; 3]) =
 /// A run's light: the lamp, indirect light, the eye adaptation (`Auto`, the fly-through's
 /// eye) or the pose's pinned exposure, and the upscaler at 1.5 (the fly-through's default:
 /// FSR 2, sharpening 0.5, over `LookPreset::DEFAULT`) or the frame at scale 1 with no upscaler.
-/// `bridge` renders `LookPreset::FACE` under our upscaler at 1.5 jittered instead, the setting
-/// Plan 0049's tables were read at. `probe_freeze` and `probe_move` override the lamp channel's
+/// `probe_freeze` and `probe_move` override the lamp channel's
 /// freeze count and moving-lamp blend (`h_move`); `None` keeps the renderer's defaults.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Setting {
@@ -128,7 +127,6 @@ pub struct Setting {
     pub indirect: bool,
     pub auto: bool,
     pub upscaler: bool,
-    pub bridge: bool,
     pub probe_freeze: Option<u32>,
     pub probe_move: Option<f32>,
 }
@@ -155,11 +153,7 @@ impl Setting {
     }
 
     pub fn upscaler_name(&self) -> &'static str {
-        match (self.bridge, self.upscaler) {
-            (true, _) => "bridge",
-            (false, true) => "up1.5",
-            (false, false) => "scale1",
-        }
+        if self.upscaler { "up1.5" } else { "scale1" }
     }
 
     fn tag(&self) -> String {
@@ -194,15 +188,8 @@ pub fn start_upscaler() -> UpscalerKind {
 
 /// A frame at `setting` for `pose`, its composite readable ([`Pixels::composite`]).
 pub fn make_frame(level: &VeinLevel, pose: &Pose, setting: Setting) -> Frame {
-    let (device, queue) = (&level.device, &level.queue);
-    let mut frame = if setting.bridge {
-        let mut f = Frame::with_sizes(device, SIZE, OUTPUT);
-        f.set_jitter(device, true);
-        f.set_upscaler_kind(device, UpscalerKind::Own(svet_render::Upscaler::default()));
-        f.set_sharpness(queue, 0.5);
-        f.set_look(look_of(LookPreset::FACE));
-        f
-    } else if setting.upscaler {
+    let device = &level.device;
+    let mut frame = if setting.upscaler {
         let mut f = Frame::with_sizes(device, SIZE, OUTPUT);
         f.set_upscaler_kind(device, start_upscaler());
         f.set_look(look_of(LookPreset::DEFAULT));

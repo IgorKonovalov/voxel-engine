@@ -92,9 +92,9 @@ fn applying_the_frames_own_settings_changes_nothing() {
     }
 }
 
-/// Changing the scale from 1.5 to 2 is reported as `Settle`, and `settings().scale` reads 2
-/// after the next frame; changing the mirror budget is reported in `rebuild`, and
-/// `settings()` still reads the old budget.
+/// Under FSR 2, changing the scale from 1.5 to 2 is reported as `Settle`, and
+/// `settings().scale` reads 2 after the next frame; changing the mirror budget is reported in
+/// `rebuild`, and `settings()` still reads the old budget.
 #[test]
 fn a_scale_change_settles_and_a_budget_change_waits_for_a_rebuild() {
     let Some((device, queue)) = device() else {
@@ -103,6 +103,10 @@ fn a_scale_change_settles_and_a_budget_change_waits_for_a_rebuild() {
     let gpu = mirrored(&device, &queue);
     let internal = RenderScale::OneHalf.internal(SIZE);
     let mut frame = Frame::with_sizes(&device, internal, SIZE);
+    frame.set_upscaler_kind(
+        &device,
+        svet_render::UpscalerKind::Fsr2(svet_render::Fsr2Settings::default()),
+    );
     assert_eq!(frame.settings().scale, RenderScale::OneHalf);
     frames(&device, &queue, &mut frame, &gpu, 2);
     let mut s = frame.settings();
@@ -122,7 +126,11 @@ fn a_scale_change_settles_and_a_budget_change_waits_for_a_rebuild() {
 /// For each `Live` and `Settle` row of `FIELDS` whose name `rows` keeps, on `frame` warmed 4
 /// frames: the row's test value (`RenderSettings::with_test_value`) applied alone leaves
 /// `history_restarts()` unchanged for `Live` and raises it by exactly 1 for `Settle`; the
-/// frame's own settings are applied back and one frame stepped after each.
+/// frame's own settings are applied back and one frame stepped after each. With the upscaler
+/// off the frame renders at its output size, so two rows apply as the clamp
+/// (`RenderSettings::clamped`) says: the scale off FSR 2 changes nothing and restarts nothing,
+/// and turning FSR 2 off at a scale other than 1 names the scale and the upscaler and
+/// restarts the history once.
 fn assert_classes(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -141,13 +149,28 @@ fn assert_classes(
         let before = frame.history_restarts();
         let change = frame.apply_settings(device, queue, &s);
         let after = frame.history_restarts();
-        let want = u64::from(class == ApplyClass::Settle);
-        assert_eq!(after - before, want, "{name} ({class:?}): {change:?}");
-        let named = match class {
-            ApplyClass::Live => &change.live,
-            _ => &change.settled,
-        };
-        assert_eq!(named, &[name], "{change:?}");
+        if name == "scale" && base.upscaler == UpscalerChoice::Off {
+            assert!(change.is_empty(), "the scale off FSR 2: {change:?}");
+            assert_eq!(after, before, "the scale off FSR 2 restarted the history");
+            assert_eq!(frame.internal_size(), frame.output_size());
+            assert_eq!(frame.settings().scale, RenderScale::One);
+        } else {
+            let want = u64::from(class == ApplyClass::Settle);
+            assert_eq!(after - before, want, "{name} ({class:?}): {change:?}");
+            let named = match class {
+                ApplyClass::Live => &change.live,
+                _ => &change.settled,
+            };
+            if name == "upscaler"
+                && s.upscaler == UpscalerChoice::Off
+                && base.scale != RenderScale::One
+            {
+                assert_eq!(named, &["scale", "upscaler"], "{change:?}");
+                assert_eq!(frame.internal_size(), frame.output_size());
+            } else {
+                assert_eq!(named, &[name], "{change:?}");
+            }
+        }
         frames(device, queue, frame, gpu, 1);
         frame.apply_settings(device, queue, &base);
         frames(device, queue, frame, gpu, 1);
@@ -187,7 +210,7 @@ fn under_fsr2_its_knobs_keep_the_history_and_the_scale_restarts_it() {
     frame.apply_settings(&device, &queue, &s);
     assert!(frame.fsr2().is_some());
     let read = assert_classes(&device, &queue, &mut frame, &gpu, |n| {
-        n.starts_with("fsr2.") || ["scale", "upscaler", "sharpness"].contains(&n)
+        n.starts_with("fsr2.") || ["scale", "upscaler"].contains(&n)
     });
-    assert_eq!(read, 9);
+    assert_eq!(read, 8);
 }

@@ -260,14 +260,21 @@ impl TestLights {
         self.lights.iter().map(|l| l.light).collect()
     }
 
-    /// The `lights` row: `lights <n>/16 [bounce *..] [carry] [fly <m>] over <k> colour <name>`,
-    /// `n` the lights shaded with the headlamp counted while it is on, one `*` for each list
-    /// light flagged to bounce, `m` those in flight, `k` those past the cap, `name` the picked
-    /// colour.
-    pub fn write_row(&self, lamp: bool, out: &mut String) {
-        let cap = Self::cap(lamp);
+    /// The list lights the frame shades beside the headlamp under its light cap of `slots`
+    /// slots, the headlamp's included (`svet_render::Frame::set_light_cap`): at most
+    /// [`TestLights::cap`].
+    pub fn shaded_cap(lamp: bool, slots: u32) -> usize {
+        Self::cap(lamp).min((slots as usize).saturating_sub(usize::from(lamp)))
+    }
+
+    /// The `lights` row: `lights <n>/<slots> [bounce *..] [carry] [fly <m>] over <k> colour
+    /// <name>`, `n` the lights shaded with the headlamp counted while it is on, `slots` the
+    /// frame's light cap, one `*` for each list light flagged to bounce, `m` those in flight,
+    /// `k` those past the cap, `name` the picked colour.
+    pub fn write_row(&self, lamp: bool, slots: u32, out: &mut String) {
+        let cap = Self::shaded_cap(lamp, slots);
         let shaded = self.lights.len().min(cap) + usize::from(lamp);
-        let _ = write!(out, "lights {shaded}/{MAX_LIGHTS}");
+        let _ = write!(out, "lights {shaded}/{slots}");
         let b = self.bouncing();
         if b > 0 {
             let _ = write!(out, " bounce {}", "*".repeat(b));
@@ -287,10 +294,10 @@ impl TestLights {
         );
     }
 
-    /// The banner's count, `lights <n>/16`.
-    pub fn count_words(&self, lamp: bool) -> String {
-        let shaded = self.lights.len().min(Self::cap(lamp)) + usize::from(lamp);
-        format!("lights {shaded}/{MAX_LIGHTS}")
+    /// The banner's count, `lights <n>/<slots>`, as [`TestLights::write_row`] counts it.
+    pub fn count_words(&self, lamp: bool, slots: u32) -> String {
+        let shaded = self.lights.len().min(Self::shaded_cap(lamp, slots)) + usize::from(lamp);
+        format!("lights {shaded}/{slots}")
     }
 }
 
@@ -410,7 +417,7 @@ mod tests {
         assert_eq!(l.cycle_colour(), "blue");
         assert_eq!(l.cycle_colour(), "white");
         let mut row = String::new();
-        l.write_row(false, &mut row);
+        l.write_row(false, MAX_LIGHTS as u32, &mut row);
         assert_eq!(row, "lights 4/16 fly 2 over 0 colour white");
     }
 
@@ -424,7 +431,7 @@ mod tests {
         assert_eq!(l.lights[1].light.flags & Light::BOUNCE, Light::BOUNCE);
         assert_eq!(l.lights[0].light.flags & Light::BOUNCE, 0);
         let mut row = String::new();
-        l.write_row(false, &mut row);
+        l.write_row(false, MAX_LIGHTS as u32, &mut row);
         assert_eq!(row, "lights 2/16 bounce * fly 1 over 0 colour white");
         assert_eq!(l.toggle_bounce(), Some(false));
         assert_eq!(l.bouncing(), 0);

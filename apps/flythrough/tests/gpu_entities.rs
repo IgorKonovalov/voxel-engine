@@ -1467,7 +1467,6 @@ fn reset_frame(rig: &mut Rig, internal: [u32; 2], kind: Option<svet_render::Upsc
     let (device, f) = (&rig.device, &mut rig.frame);
     f.set_entities(&rig.queue, &EntitySet::new(), &[]);
     f.set_lights(&[]);
-    f.set_jitter(device, false);
     f.set_upscaler_kind(device, kind.unwrap_or(svet_render::UpscalerKind::Off));
     f.set_resolution(device, LightingResolution::Full);
     f.set_sizes(device, internal, [W, H]);
@@ -1476,8 +1475,8 @@ fn reset_frame(rig: &mut Rig, internal: [u32; 2], kind: Option<svet_render::Upsc
     f.reset_exposure();
 }
 
-/// The rig's frame set up for the trail ([`reset_frame`]): FSR 2 or our upscaler at 1.5
-/// (`kind`), or with none the frame at the output size.
+/// The rig's frame set up for the trail ([`reset_frame`]): FSR 2 at 1.5 (`kind`), or with
+/// none the frame at the output size.
 fn trail_frame(rig: &mut Rig, kind: Option<svet_render::UpscalerKind>) {
     let internal = if kind.is_some() { [128, 72] } else { [W, H] };
     reset_frame(rig, internal, kind);
@@ -1561,8 +1560,8 @@ fn trail_pixel() -> ([usize; 2], usize) {
 /// Phase 4 done-when 4 (written here, beside the entity rigs, not in `gpu_fsr2.rs`): after done-
 /// when 1's move, the output at the pixel the part left reaches a tenth of the step from the
 /// run without the entity under FSR 2 at 1.5 in at most 2 frames more than the frame at the
-/// output size takes (`fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step`'s rule); the
-/// same under our upscaler at 1.5. The trails' lengths are printed. The gate's variant moves 8
+/// output size takes (`fsr2_keeps_pace_with_a_sweeping_headlamp_and_a_lamp_step`'s rule). The
+/// trails' lengths are printed. The gate's variant moves 8
 /// frames; `fsr2_leaves_no_trail_behind_a_moving_entity_over_16_frames` moves 16.
 #[test]
 fn fsr2_leaves_no_trail_behind_a_moving_entity() {
@@ -1584,10 +1583,8 @@ fn trail_rule(moves: usize) {
     // Every run on the rig's frame: a new frame's pipelines cost more than a run's frames.
     let (native, _) = trail_after_move(&mut rig, red, None, at, moves, clear);
     let native = native.expect("the frame at the output size settles");
-    for kind in [
-        support::rigs::fsr2_kind(),
-        svet_render::UpscalerKind::Own(svet_render::Upscaler::default()),
-    ] {
+    {
+        let kind = support::rigs::fsr2_kind();
         let (s, step) = trail_after_move(&mut rig, red, Some(kind), at, moves, clear);
         println!(
             "{}: the trail is {s:?} frames against {native} at the output size (step {step:.1}/255)",

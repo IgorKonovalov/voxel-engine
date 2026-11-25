@@ -854,19 +854,18 @@ impl Run {
             self.modes.show_lights(words, ms_since(self.start));
         }
         if std::mem::take(&mut self.upscaler_changed) {
-            let (kind, scale, jitter) = self.args.upscaler_settings(self.modes.upscaler.mode);
+            let (kind, scale) = self.args.upscaler_settings(self.modes.upscaler.mode);
             let output = self.args.output_size(gpu.size);
-            gfx.frame.set_jitter(&gpu.device, jitter);
             gfx.frame.set_upscaler_kind(&gpu.device, kind);
             gfx.frame
                 .set_sizes(&gpu.device, scale.internal(output), output);
         }
-        if std::mem::take(&mut self.sharpen_changed) {
-            gfx.frame.set_sharpness(&gpu.queue, self.args.look.sharpen);
-            if self.modes.upscaler.mode == hud::UpscalerMode::Fsr2 {
-                let (kind, _, _) = self.args.upscaler_settings(self.modes.upscaler.mode);
-                gfx.frame.set_upscaler_kind(&gpu.device, kind);
-            }
+        // The sharpening is FSR 2's: it reaches the frame through FSR 2's settings.
+        if std::mem::take(&mut self.sharpen_changed)
+            && self.modes.upscaler.mode == hud::UpscalerMode::Fsr2
+        {
+            let (kind, _) = self.args.upscaler_settings(self.modes.upscaler.mode);
+            gfx.frame.set_upscaler_kind(&gpu.device, kind);
         }
         gfx.frame.set_lighting(self.modes.lighting);
         gfx.frame.set_light_hooks(self.modes.diag.hooks);

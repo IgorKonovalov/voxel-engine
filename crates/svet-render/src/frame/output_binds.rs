@@ -1,5 +1,5 @@
-//! The encode's filter and output bind groups: the a-trous passes', the composite's, the
-//! gradient's and the engine's own upscale and sharpen passes'.
+//! The encode's filter and output bind groups: the a-trous passes', the composite's and the
+//! gradient's.
 
 use super::*;
 
@@ -8,8 +8,6 @@ pub(super) struct OutputBinds<'a> {
     pub(super) composite: &'a wgpu::ComputePipeline,
     pub(super) composite_bind: wgpu::BindGroup,
     pub(super) gradient_bind: wgpu::BindGroup,
-    pub(super) upscale_bind: Option<wgpu::BindGroup>,
-    pub(super) sharpen_bind: Option<wgpu::BindGroup>,
 }
 
 impl Frame {
@@ -61,8 +59,8 @@ impl Frame {
         (filtering, variance_bind, atrous_binds)
     }
 
-    /// The bind groups of the composite (and its pipeline, FSR 2's variant in FSR mode), the
-    /// gradient, and the engine's own upscale and sharpen passes.
+    /// The bind groups of the composite (and its pipeline, FSR 2's variant in FSR mode) and
+    /// the gradient.
     pub(super) fn output_binds(&self, device: &wgpu::Device, filtering: bool) -> OutputBinds<'_> {
         let t = &self.targets;
         let (c, q) = (self.cur, self.cur ^ 1);
@@ -117,42 +115,11 @@ impl Frame {
                 Res::Tex(&t.strata),
             ],
         );
-        let upscale_bind = t.history.as_ref().map(|hist| {
-            self.binds.io(
-                device,
-                self.pipes.layout(P_UPSCALE),
-                &[
-                    Res::Tex(&t.hit_pos[c]),
-                    Res::Tex(&t.hit_info[c]),
-                    Res::Tex(&t.output),
-                    Res::Tex(&t.hit_pos[q]),
-                    Res::Tex(&t.hit_info[q]),
-                    Res::Tex(&hist[q]),
-                    Res::Tex(&hist[c]),
-                    Res::Buf(&self.state.edits),
-                    Res::Buf(&self.up.params),
-                    Res::Tex(&t.accum[c]),
-                ],
-            )
-        });
-        let sharpen_bind = t.history.as_ref().map(|hist| {
-            self.binds.io(
-                device,
-                self.pipes.layout(P_SHARPEN),
-                &[
-                    Res::Tex(&hist[c]),
-                    Res::Tex(&t.output),
-                    Res::Buf(&self.up.sharpen_params),
-                ],
-            )
-        });
         // The gradient pass runs in a shaded view for the gradient mode's lambda.
         OutputBinds {
             composite,
             composite_bind,
             gradient_bind,
-            upscale_bind,
-            sharpen_bind,
         }
     }
 }

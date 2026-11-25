@@ -42,7 +42,7 @@ fn the_banner_and_hud_name_the_colour_and_the_removal() {
     assert_eq!(KEY_REMOVE, svet_app::KeyCode::Digit4);
     m.lights.lights.truncate(3);
     m.lights.remove_newest();
-    m.show_lights(m.lights.count_words(false), 30.0);
+    m.show_lights(m.lights.count_words(false, m.light_cap), 30.0);
     assert!(m.banner(30.0).unwrap().lines().any(|l| l == "lights 2/16"));
 }
 
@@ -133,7 +133,7 @@ fn the_banner_and_hud_name_the_lights() {
     (carry.flip)(&mut m, 20.0);
     assert!(m.banner(20.0).unwrap().lines().any(|l| l == "carry off"));
     // The drop key's banner, as `run::keys` shows it.
-    m.show_lights(m.lights.count_words(false), 30.0);
+    m.show_lights(m.lights.count_words(false, m.light_cap), 30.0);
     assert!(m.banner(30.0).unwrap().lines().any(|l| l == "lights 3/16"));
     // Two lights, one in flight.
     let mut f = Modes::new(lamp_off, half, 0.0);
@@ -147,7 +147,10 @@ fn the_banner_and_hud_name_the_lights() {
         f.row(HudRow::Lights),
         "lights 2/16 fly 1 over 0 colour white"
     );
-    f.show_lights(format!("fire, {}", f.lights.count_words(false)), 40.0);
+    f.show_lights(
+        format!("fire, {}", f.lights.count_words(false, f.light_cap)),
+        40.0,
+    );
     let b = f.banner(40.0).unwrap();
     assert!(b.contains("fire") && b.contains("lights 2/16"), "{b}");
     // A full list refuses a drop and a shot with `FULL_LINE`.

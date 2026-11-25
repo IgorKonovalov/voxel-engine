@@ -59,16 +59,14 @@ pub(super) const P_GRADIENT: usize = 3;
 pub(super) const P_DOWNSAMPLE: usize = 4;
 pub(super) const P_VARIANCE: usize = 5;
 pub(super) const P_ATROUS: usize = 6;
-pub(super) const P_UPSCALE: usize = 7;
-pub(super) const P_SHARPEN: usize = 8;
-pub(super) const P_COMPOSITE: usize = 9;
-pub(super) const P_GATHER: usize = 10;
-pub(super) const P_PROBE_TRACE: usize = 11;
-pub(super) const P_PROBE_BLEND: usize = 12;
-pub(super) const P_LIGHT_BARE: usize = 13;
-pub(super) const P_LIGHT_STEPS: usize = 14;
-pub(super) const P_LIGHT_ARMS: usize = 15;
-pub(super) const P_LIGHT_BARE_ARMS: usize = 16;
+pub(super) const P_COMPOSITE: usize = 7;
+pub(super) const P_GATHER: usize = 8;
+pub(super) const P_PROBE_TRACE: usize = 9;
+pub(super) const P_PROBE_BLEND: usize = 10;
+pub(super) const P_LIGHT_BARE: usize = 11;
+pub(super) const P_LIGHT_STEPS: usize = 12;
+pub(super) const P_LIGHT_ARMS: usize = 13;
+pub(super) const P_LIGHT_BARE_ARMS: usize = 14;
 
 /// The probe update's modules: its trace and blend share one source.
 const PROBE_UPDATE: &[&str] = &[
@@ -101,7 +99,7 @@ const LIGHT_MODULES: &[&str] = &[
 
 /// Every frame pass but the hit pass ([`Marcher`]) and the composite's FSR 2 variant
 /// ([`composite_hdr_source`]), indexed by the `P_*` constants.
-pub(crate) const PASSES: [PassSpec; 17] = [
+pub(crate) const PASSES: [PassSpec; 15] = [
     PassSpec {
         label: "temporal",
         modules: &[
@@ -286,56 +284,6 @@ pub(crate) const PASSES: [PassSpec; 17] = [
                 (7, Io::Float),
                 (8, Io::Float),
                 (10, Io::Float),
-            ]),
-        ],
-        arms: false,
-        lazy: false,
-    },
-    PassSpec {
-        label: "upscale",
-        modules: &[
-            COMMON_WGSL,
-            HITREC_WGSL,
-            ENTITY_WGSL,
-            EDITS_WGSL,
-            SKY_ATMOSPHERE_WGSL,
-            SKY_WGSL,
-            UPSCALE_WGSL,
-        ],
-        entry: "upscale",
-        constants: &[],
-        groups: &[
-            W,
-            E,
-            Group::Own(&[
-                Io::Float,
-                Io::Uint,
-                Io::Float,
-                Io::Float,
-                Io::Uint,
-                Io::Float,
-                F16,
-                Io::Uniform,
-                Io::Uniform,
-                Io::Float,
-            ]),
-        ],
-        arms: false,
-        lazy: false,
-    },
-    PassSpec {
-        label: "sharpen",
-        modules: &[COMMON_WGSL, SHARPEN_WGSL],
-        entry: "sharpen_main",
-        constants: &[],
-        groups: &[
-            W,
-            E,
-            E,
-            Group::Own(&[
-                Io::Float,
-                Io::Store(wgpu::TextureFormat::Rgba8Unorm),
-                Io::Uniform,
             ]),
         ],
         arms: false,

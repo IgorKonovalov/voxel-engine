@@ -65,7 +65,9 @@ pub mod internals {
         band_slot_units,
     };
     pub use crate::font8x8::{FONT, glyph};
-    pub use crate::frame::{JITTER_PHASES, ShaderSource, composite_hdr_source, shader_sources};
+    pub use crate::frame::{
+        CHANGE_ABS, CHANGE_REL, ShaderSource, composite_hdr_source, shader_sources,
+    };
     pub use crate::fsr2::{
         FSR2_ACCUMULATE_WGSL, FSR2_DEPTH_CLIP_WGSL, FSR2_INPUT_WGSL, FSR2_LOCK_WGSL,
         FSR2_LUMINANCE_PYRAMID_WGSL, FSR2_PASSES, FSR2_RCAS_WGSL, FSR2_RECONSTRUCT_WGSL,
@@ -113,7 +115,7 @@ pub use frame::{
     ATROUS_ITERATIONS, DEFAULT_KEY_HISTORY, DEFAULT_KEY_STEP, DEFAULT_LIGHT_FLOOR,
     DEFAULT_PROBE_FREEZE, DEFAULT_SKY_HISTORY, DEFAULT_SKY_RAYS, Light, MAX_LIGHTS,
     MAX_SKY_HISTORY, MAX_SKY_RAYS, Params, SHADOW_ABSORB, SHADOW_AS_BRICK, SHADOW_SIGMA_SHIFT,
-    Upscaler, shadow_absorb,
+    shadow_absorb,
 };
 pub use frame::{
     CrackShares, DigHold, EntityLight, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, KeyFar,
@@ -175,7 +177,6 @@ pub const PROBE_UPDATE_WGSL: &str = include_str!("shaders/probe_update.wgsl");
 /// The field pass (`field.rs`), compiled after the prelude and `mirror.wgsl`
 /// ([`internals::shader_sources`] lists it composed).
 pub const FIELD_WGSL: &str = include_str!("shaders/field.wgsl");
-pub use frame::{SHARPEN_WGSL, UPSCALE_WGSL};
 
 /// A limit the frame's shaders need past what the adapter offers.
 #[derive(Clone, Debug)]

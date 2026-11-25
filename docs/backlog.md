@@ -283,7 +283,10 @@ the open surface. What it takes: find the commit (the reading `reading::undergro
 `r` 7 takes about 220 s on lavapipe), then either a fix or the reference re-read by the owner's
 rule for a moved reference. Read with it: of the run's other four failures, the wobble table is
 a reading since Plan 0098 (`c46fb41a`), and the two still-camera upscaler bars and the shutdown
-bound pass here (`docs/nfr/07-startup-and-build.md`); the next weekly run shows whether CI's
+bound pass here (since Plan 0102, 2026-11-25, neither bar exists: `gpu_upscale`'s test went with
+the engine's own upscaler, and `gpu_fsr2`'s asserted that upscaler alone and is the hand-run
+reading `reading::fsr2_from_the_linear_supersampled_render_on_a_still_camera`, so the next weekly
+run cannot trip on them) (`docs/nfr/07-startup-and-build.md`); the next weekly run shows whether CI's
 older LLVM 21 lavapipe or its parallel GPU tests still trip them. The weekly soak is the only
 CI net for soak and sole marks, so a red run is owed a reading each week.
 
@@ -353,7 +356,35 @@ From the same reading: once the pipelines are warm, the first world frame comes 
 
 ### Remove `own`, the engine's own upscaler
 
-Drafted 2026-11-24 as [Plan 0102](plans/0102-remove-own-the-engines-own-upscaler-fsr-2-is-the-only-one.md) with [ADR-0086](adrs/0086-fsr-2-is-the-only-upscaler-the-upscaler-of-our-own-is-removed.md) (proposed); awaits the owner's go. It recommends the removal: `own` is a second output path (two passes, a history target, its own settings, a test binary and a golden), not an arm that is cheap when off. Its Phase 1 reads what the Radeon loses at Portable before anything is deleted.
+Done 2026-11-25: [Plan 0102](plans/done/0102-remove-own-the-engines-own-upscaler-fsr-2-is-the-only-one.md), v0.74.0, [ADR-0086](adrs/0086-fsr-2-is-the-only-upscaler-the-upscaler-of-our-own-is-removed.md) accepted with an Outcome.
+
+### Plan 0102's leftovers (the close, 2026-11-25)
+
+None blocked the close of [Plan 0102](plans/done/0102-remove-own-the-engines-own-upscaler-fsr-2-is-the-only-one.md).
+
+- **A still shadow edge moves under FSR 2's jitter.** On the level's spawn (lamp on, a still
+  camera, face look, lavapipe) the frame with no upscaler reads 0.000/255 of per-pixel
+  luminance range, whole image and at the lamp-shadow boundary. FSR 2 reads 1.419 and
+  4.512/255 at scale 1.5 over its 18 phases, 1.346 and 5.098 at scale 1 over 8; its input at
+  the boundary moves 35.7 and 24.0/255 (the jittered lighting before the upscaler).
+  `gpu_fsr2::fsr2_at_scale_1_5_holds_its_shadow_wobble_on_a_still_camera` (soak) bars the
+  1.5 figures plus 10 % as a regression bar on the picture the owner accepted at Plan 0098's
+  windows; it does not say the figure is good. By ADR-0076's rule nothing but a `FLICKERS`
+  material varies at rest, so this is a fault with no fix designed. The same mechanism is
+  being read for [Plan 0100](plans/0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md)'s
+  terraces (their wobble under FSR 2, the architect's branch `arch-0100-terraces`,
+  2026-11-25): take this reading there, and when that work names a fix the bar tightens to
+  what it reaches. Not an owner question until a fix has a cost.
+- **The gate's saving, quiet.** `docs/nfr.md` section 7 has 894.3 to 868.3 s (26.0 s), both
+  runs loaded with three lanes open. A quiet re-read is owed with the next quiet gate run;
+  it needs only the tip, the base's figure being the older quiet logs'.
+- **The settle rig's seed stride.** `SEED_STRIDE` (`apps/flythrough/tests/support/settle/runs.rs`,
+  `1 << 20`) is documented as a multiple of the jitter's 16 phases so every seed's frames take
+  the same jitter offsets. That was the removed upscaler's sequence; under FSR 2 at 1.5 the
+  sequence has 18 phases and seed k starts 4 k phases on. What it takes: read whether any
+  settle run under FSR 2 compares across seeds; if one does, a stride that is a multiple of
+  the rig's phase count (or the offsets pinned), else the doc says the seeds do not share
+  offsets. A dev chore.
 
 ### The first near-lighting step stalls 130 to 210 ms on a cold driver cache
 
@@ -1024,7 +1055,27 @@ flag, the row's text follows; (4) the gate tier's wall time, now about 36 min on
 tree against the 19 min line (see "The gate tier is over its wall-time budget" below): a cut,
 not another acceptance. Size M. **Pick up** before the next plan that needs an owner window,
 ahead of the follow-on light plan's first window. Item (4) done 2026-11-24 on branch
-`chore-gate-time` (1133.2 s quiet, `docs/nfr/07-startup-and-build.md`); (1) to (3) remain.
+`chore-gate-time` (1133.2 s quiet, `docs/nfr/07-startup-and-build.md`); Items (2) and (3) done
+2026-11-25 on branch `chore-harness-2`: `apps/flythrough/tests/gpu_settings_rows.rs` (sole-marked,
+about 14 s on lavapipe) walks every row from the fly-through's outdoor defaults over a small
+fixture, its `INERT` list holding each row that changes under 0.1 % of the image with its reason
+(a row listed as needing other rows is proven live under them); `apps/flythrough/src/run/hud_live_tests.rs`
+walks every row a flag sets and every menu entry against the HUD's text. (1) remains, and the
+banner half of (2) (marking an inert row) waits on the owner's choice of form.
+**Findings of the walk** (rows inert under the defaults, as the walk read them; none "fixed"):
+the key ray's rows `lighting.penumbra`, `key_cap` and `key_history` (under key far column a cube
+face's key light is the column map's; each live under key far ray, the penumbra on 18525 of
+20736 pixels); the sky rays' rows `lighting.sky_rays`, `sky_history` and `sky_down_skip` (with no
+light history a face's sky term is its record's or the column's; live with the light history on,
+`sky_history` on only 22 pixels); `lighting.key_far_mix` (3 pixels; live under key far baked);
+`lighting.candidates` (no pixel under the defaults or with the light history on: what it needs is
+open); `metering` (under the auto exposure the preset's own weights meter, under a manual one the
+meter feeds only the readout: no arrangement changes the image); `lighting.history`'s gradient
+(a light change under a light history); `look.tuning.face_mix` (the field look alone). Two rows
+change the image where their docs say they should not: `lighting.entity_light` (6062 pixels with
+no entity in view) and `field_split` (7938 pixels in the face look). The HUD walk found the lights
+row counting against 16 whatever the frame's light cap (now the cap) and an unnamed sky history
+(now named).
 
 ### Two process-spawning GPU tests skip silently without lavapipe
 

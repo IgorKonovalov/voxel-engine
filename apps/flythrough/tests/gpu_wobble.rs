@@ -38,7 +38,7 @@ fn queue_step(rig: &mut Rig, f: &mut Frame, cam: &Camera) {
 use support::terms::Rig;
 use svet_render::{Camera, Frame};
 
-/// The frame's sizes: FSR 2 and our upscaler at 1.5, `off` at 1.
+/// The frame's sizes: FSR 2 at 1.5, `off` at 1.
 const INTERNAL: [u32; 2] = [1280, 720];
 const OUT: [u32; 2] = [1920, 1080];
 
@@ -108,7 +108,7 @@ struct Arm {
 
 impl Arm {
     /// `SVET_WOBBLE`: comma-separated tokens over the defaults (`default` alone is the
-    /// fly-through's frame): `off1` (no upscaler, scale 1), `own` (ours at 1.5), `s0`
+    /// fly-through's frame): `off1` (no upscaler, scale 1), `s0`
     /// (sharpen 0), `albedo`, `full`, `nofilter`, `farn0`, `pin`, `anyhist`, `keyoff`,
     /// `sky0`, `brick`, `sun=EL/AZ`, `speed=M_S`, `turn=DEG`, `drain=N`, `face` (store read
     /// face), `phases=N`, `dither`, `nostair`, `wnormal`, `ray` (`key_far ray`), `step`
@@ -181,7 +181,6 @@ impl Arm {
                 "default" => {}
                 "tag" => {}
                 "off1" => a.upscaler = "off",
-                "own" => a.upscaler = "own",
                 "s0" => a.sharpen = 0.0,
                 "albedo" => a.albedo = true,
                 "full" => a.lighting_full = true,
@@ -295,18 +294,7 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
                 ..Default::default()
             }),
         ),
-        "own" => {
-            f.set_upscaler_kind(
-                &rig.device,
-                svet_render::UpscalerKind::Own(Default::default()),
-            );
-            f.set_jitter(&rig.device, true);
-            f.set_sharpness(&rig.queue, arm.sharpen);
-        }
-        _ => {
-            f.set_upscaler_kind(&rig.device, svet_render::UpscalerKind::Off);
-            f.set_jitter(&rig.device, false);
-        }
+        _ => f.set_upscaler_kind(&rig.device, svet_render::UpscalerKind::Off),
     }
     f.set_count_store(true);
     f.set_look(svet_render::LookParams {

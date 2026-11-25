@@ -66,13 +66,10 @@ pub(super) struct Targets {
     /// lamp's lambda, the new and old luminances, 0).
     pub(super) strata: wgpu::Texture,
     /// The frame's display-encoded image (rgba8unorm): the composite's output at the
-    /// internal size, or with the upscaler at the output size, the composite's image in its
-    /// top-left pixels until the sharpening pass overwrites it.
+    /// internal size, or under FSR 2 FSR's image at the output size.
     pub(super) output: wgpu::Texture,
     /// The probe gather's indirect irradiance (rgba16float), on the lighting grid.
     pub(super) indirect: wgpu::Texture,
-    /// The upscaler's history at the output size (rgba16float), this frame's and the last.
-    pub(super) history: Option<[wgpu::Texture; 2]>,
     /// The exposure meter's tiles: two `f32` per 8 x 8 workgroup of the internal target.
     pub(super) tiles: wgpu::Buffer,
     /// The split walk's hand-off list (a count word and three of padding, then a `vec4<u32>`
@@ -87,14 +84,13 @@ pub(super) struct Targets {
 
 impl Targets {
     /// The targets at the internal size `width` x `height`, with the output at `upscaled` when
-    /// an upscaler runs, and the history of ADR-0024's upscaler with `own_history`.
+    /// FSR 2 runs.
     pub(super) fn new(
         device: &wgpu::Device,
         width: u32,
         height: u32,
         scale: u32,
         upscaled: Option<[u32; 2]>,
-        own_history: bool,
     ) -> Self {
         let sized = |label, format, width, height| {
             device.create_texture(&wgpu::TextureDescriptor {
@@ -147,9 +143,6 @@ impl Targets {
                 Some([w, h]) => sized("frame target", Rgba8Unorm, w, h),
                 None => tex("frame target", Rgba8Unorm),
             },
-            history: upscaled
-                .filter(|_| own_history)
-                .map(|[w, h]| [0, 1].map(|_| sized("upscale history", Rgba16Float, w, h))),
             indirect: lit("indirect irradiance", Rgba16Float),
             tiles: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("exposure meter tiles"),
@@ -215,12 +208,8 @@ impl Targets {
         let half = if self.scale > 1 { 2 * (16 + 8) } else { 0 };
         let strata = u64::from(self.strata.width()) * u64::from(self.strata.height());
         let output = u64::from(self.output.width()) * u64::from(self.output.height());
-        let history = self.history.as_ref().map_or(0, |h| {
-            2 * 8 * u64::from(h[0].width()) * u64::from(h[0].height())
-        });
         px * (2 * (16 + 8) + 8)
             + output * 4
-            + history
             + lpx * (half + 8 + 8 + 2 * 8 + 2 * 8 + 2 * 8 + 2 * 8 + 8 + 4 + 2 * 8)
             + strata * 8
             + self.tiles.size()

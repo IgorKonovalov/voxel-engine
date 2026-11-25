@@ -82,10 +82,10 @@ row showing the new value.
 |-------|-----|------|
 | moving | `G` | Toggle fly and walk mode (bounded worlds only) |
 | camera and paths | `T` | On a `--path ... --path-mode tour` run: resume the path from its nearest point after a key took the camera |
-| upscaler | `F10` | Cycle the upscaler: off, own, fsr2 |
+| upscaler | `F10` | Cycle the upscaler: off, fsr2 |
 | upscaler | `F4` | The next render profile: floor, portable, performance, high (`--profile`) |
 | lighting | `F7` | Toggle the headlamp |
-| lights | `1` | Drop a point light of the picked colour (intensity 600) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/16`. Sixteen slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
+| lights | `1` | Drop a point light of the picked colour (intensity 600) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/<cap>`, `cap` the frame's light cap (16, the portable profile's 4). Sixteen slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
 | lights | `4` | Remove the newest light or walker, whichever was added last (in placement mode `4` is the belt's slot 4) |
 | lights | `6` | Fire a point light of the picked colour (intensity 600) along the view ray at 20 m/s; it stops 2 voxels short of the first surface (or after 40 m) and stays there as a dropped light |
 | entities | `` ` `` | `choose an entity`: the chooser (also the `entities` page's first row). Four rows per library entry beside its icon: a blank row, its name, parts and size on the cursor's row (an entry in error: its name grey, its error red), then its clips (the one a placement starts on marked `*`) and the belt's slot that holds it. `Enter` (or the left click, or the pad's `South`, or `` ` ``) on an entry puts it in the belt's selected slot (or selects the slot already holding it), closes the menu and enters placement mode; a digit `1`..`9` puts it in that slot and the chooser stays open; letters search the menu as on any page |
@@ -302,7 +302,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--sun-radius DEG` | The sun's angular radius, 0.05 to 10 degrees: a wider disc softens every sun shadow (the real sun's is 0.2665) [3] |
 | `--moon-radius DEG` | The moon's angular radius, 0.05 to 10 degrees: its disc in the sky and its shadows' softness [3] |
 | `--sky-rays N` | Cosine-weighted sky rays a lighting pixel casts where no baked sky visibility is fresh, 0 (bake only) to 4; the banner names the count [1] |
-| `--sky-history N` | Frames the sky rays' running mean (the visibility pair) holds at most, 1 to 1024 [64] |
+| `--sky-history N` | Frames the sky rays' running mean (the visibility pair) holds at most, 1 to 1024 [64]; the banner names it when not the default |
 | `--key-history N` | Frames the key light's visibility mean (the pair's `g`) holds at most, 1 to 1024 [256]; the banner names it when not the default |
 | `--key-far baked\|column\|ray` | The key light's visibility where a voxel is small on screen (ADR-0079), with no ray and no screen history: `baked` reads the store's baked value per brick direction over the sun's disc where fresh, else the column map's horizon toward the sun (softened by the disc's radius), a switch between the two riding one fade; `column` reads the horizon at every far face; the band is blended or stepped by `--key-far-mix` and a near pixel's restarted mean is seeded from the estimate, so with `--light-history off` (the default) every world face shows the estimate at every distance: under `column` the sun's shadow is the column map's, with no penumbra but the horizon's ramp and no sun under cover (ADR-0082); `ray` casts the per-pixel disc ray everywhere; the banner reads `key far baked`, `key far ray` or `key far column, key far mix blend` with a sky set (nothing for the default), and the menu's lighting page switches both (`key far` cycles baked, column, ray; `key far mix`) [column] |
 | `--key-far-mix blend\|step` | Inside the far normal's band under `--key-far baked` or `column`: the ray's mean blended to the far estimate by the band's weight, or the estimate from the weight's half; with `--light-history off` both show the estimate alone and the choice only moves where the ray is cast [step] |
@@ -353,9 +353,8 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--translucent-layers N` | Translucent voxels composited before the hit [4; 0 ignores them] |
 | `--cutaway auto\|on\|off` | The cutaway view's start state [auto: on while the camera is in rock] |
 | `--internal-scale 1\|1.5\|2` | The output size over the internal size [1.5] |
-| `--jitter on\|off` | The primary rays' sub-pixel jitter (selects the `own` upscaler) |
-| `--sharpen S` | The upscaler's sharpening, 0 to 1 [0.5] |
-| `--upscaler off\|own\|fsr2` | The upscaler [fsr2, or own with `--jitter`, or off at scale 1 but under `--profile high`] |
+| `--sharpen S` | FSR 2's sharpening, 0 to 1 [0.5] |
+| `--upscaler off\|fsr2` | The upscaler; `off` renders at the output size [fsr2, or off at scale 1 but under `--profile high`] |
 | `--pan DEG_PER_S` | Turn the camera at a constant yaw rate (`.` stops and starts it) |
 | `--jitter-phases N` | FSR 2's jitter phase count, 1 to 1024 |
 | `--dither on\|off` | FSR 2's static one-level dither [off] |
@@ -487,7 +486,8 @@ from the next frame, and the profile row names the fields that wait for a restar
 ### Removed flags
 
 Flags from earlier plans (`--steady`, `--sampler`, `--emissive-history` and others from Plan
-0057; `--light`, `--preload` and others from Plan 0059) are refused with a message that names
+0057; `--light`, `--preload` and others from Plan 0059; `--jitter` and `--upscaler own` from
+Plan 0102, which removed the engine's own upscaler) are refused with a message that names
 the plan. `--help` lists them.
 
 ## Recording clips

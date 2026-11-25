@@ -1,7 +1,5 @@
 //! FSR 2's settings and tuning, the upscaler a frame runs, and the jitter sequence.
 
-use super::*;
-
 /// FSR 2's knobs in the engine ([`UpscalerKind::Fsr2`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fsr2Settings {
@@ -47,10 +45,9 @@ impl Default for Fsr2Settings {
 /// Which upscaler a [`crate::Frame`] runs ([`crate::Frame::set_upscaler_kind`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum UpscalerKind {
-    /// No upscaler: the jitter off, and at equal sizes the composite's image is the frame's.
+    /// No upscaler: the frame renders at its output size, unjittered, and the composite's
+    /// image is the frame's.
     Off,
-    /// The upscaler of ADR-0024 with this tuning.
-    Own(Upscaler),
     /// FSR 2 with these settings.
     Fsr2(Fsr2Settings),
 }
@@ -60,7 +57,6 @@ impl UpscalerKind {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Off => "off",
-            Self::Own(_) => "own",
             Self::Fsr2(_) => "fsr2",
         }
     }
