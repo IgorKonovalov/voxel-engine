@@ -1057,6 +1057,11 @@ impl Frame {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         around.1 = None;
+        if let Some(link) = &self.baked.thread {
+            self.baked
+                .snapshot_reach
+                .note(&link.books, p.views[0].origin);
+        }
         if let Exposure::Auto(a) = &self.state.lighting.exposure {
             u.set_auto(a, self.sky.sky.is_some());
             u.set_highlight(a, self.state.lighting.tone_map);

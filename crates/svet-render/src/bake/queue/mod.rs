@@ -19,7 +19,7 @@ mod stats;
 mod step;
 mod tiers;
 
-pub(crate) use self::books::Books;
+pub(crate) use self::books::{Books, SnapshotReach};
 pub(crate) use self::box_signal::{BoxSender, BoxSignal};
 pub use self::message::Residency;
 pub(crate) use self::message::{Arrival, FrameMessage, Inbox, StepSettings};

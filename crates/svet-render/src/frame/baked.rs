@@ -106,6 +106,8 @@ pub(super) struct BakeLink {
     pub(super) leftover: Option<crate::bake::FrameMessage>,
     /// A bake thread's panic read outside a step, for the next step to return.
     pub(super) failed: Option<crate::bake::BakeError>,
+    /// The encode's reads of the books' snapshot while the thread runs.
+    pub(super) snapshot_reach: crate::bake::SnapshotReach,
 }
 
 /// The bake pool's buffer of `bytes`.
@@ -161,6 +163,7 @@ impl BakeLink {
             unissued: Vec::new(),
             leftover: None,
             failed: None,
+            snapshot_reach: Default::default(),
         }
     }
 }

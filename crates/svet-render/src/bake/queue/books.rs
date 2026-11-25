@@ -19,6 +19,8 @@ type Summary = ([i32; 3], [u32; BRICK_WORDS]);
 pub(crate) struct Books {
     /// The message's frame the step read.
     pub(crate) frame: u64,
+    /// The step's eye (voxels), which [`Books::around`] was read under.
+    pub(crate) eye: [f32; 3],
     pub(crate) stats: QueueStats,
     pub(crate) shells: (u64, u64),
     pub(crate) ages: (Vec<u32>, Vec<u32>),
@@ -67,6 +69,7 @@ impl Books {
         let (around, around_summary) = around(store, eye);
         Self {
             frame,
+            eye,
             stats: q.stats,
             shells: q.shells(),
             ages: (q.ages_first.clone(), q.ages_full.clone()),
@@ -110,6 +113,14 @@ impl Books {
                 .values()
                 .map(|w| w.len() * 4 + 12)
                 .sum::<usize>()
+    }
+
+    /// Whether `eye` lies where the snapshot's words reach: within [`AROUND_MARGIN`] of the
+    /// step's eye across, in its chunk's layer.
+    pub(crate) fn reaches(&self, eye: [f32; 3]) -> bool {
+        let layer = |v: f32| (v.floor() as i32).div_euclid(64);
+        (0..2).all(|k| (eye[k] - self.eye[k]).abs() <= AROUND_MARGIN)
+            && layer(eye[2]) == layer(self.eye[2])
     }
 
     /// [`crate::bake::sky_over_floor`] over the snapshot's words.
@@ -175,5 +186,33 @@ impl QueueStats {
             submitted: 0,
             ..self
         }
+    }
+}
+
+/// The encode's reads of the books' snapshot while the bake thread runs (a reading): frames,
+/// frames whose eye lay past [`Books::reaches`], and frames whose sky over the floor read
+/// nothing at the encode's eye but an answer at the step's.
+#[derive(Default)]
+pub(crate) struct SnapshotReach {
+    counts: [std::sync::atomic::AtomicU64; 3],
+}
+
+impl SnapshotReach {
+    /// One encode at `eye` against `books`.
+    pub(crate) fn note(&self, books: &Books, eye: [f32; 3]) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.counts[0].fetch_add(1, Relaxed);
+        if !books.reaches(eye) {
+            self.counts[1].fetch_add(1, Relaxed);
+        }
+        if books.sky_over_floor(eye).is_none() && books.sky_over_floor(books.eye).is_some() {
+            self.counts[2].fetch_add(1, Relaxed);
+        }
+    }
+
+    pub(crate) fn read(&self) -> [u64; 3] {
+        self.counts
+            .each_ref()
+            .map(|c| c.load(std::sync::atomic::Ordering::Relaxed))
     }
 }

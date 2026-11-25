@@ -28,6 +28,13 @@ impl Frame {
         self.baked.thread_on
     }
 
+    /// The frames encoded while the bake thread ran, those whose eye lay past the reach of the
+    /// books' snapshot of the words under the step's eye, and those where the sky over the
+    /// floor read nothing at the encode's eye but an answer at the step's (a reading).
+    pub fn bake_snapshot_reach(&self) -> [u64; 3] {
+        self.baked.snapshot_reach.read()
+    }
+
     /// Whether the bake thread runs now (on, started, not stopped by a panic).
     pub fn bake_thread_running(&self) -> bool {
         self.baked.thread.is_some()
