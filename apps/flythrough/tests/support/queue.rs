@@ -444,13 +444,13 @@ pub fn ring_marked(r: &[u32]) -> bool {
 
 /// Whether a dig's step has placed its block over the ring-1 records `pre` (read in the pool
 /// after the edit, before any step read its box): `cur` holds the step's provisional record for
-/// every brick of `pre`. The step keeps a touched brick's record with every direction it held
+/// every brick of `pre` it keeps, and lacks one it drops. The step keeps a touched brick's record with every direction it held
 /// none for filled, all six in the mask (`fill_directions`, a record that holds light); a baked
 /// sky visibility it marks stale and then writes its held cells over (`apply_held`: the two sky
 /// words baked without the stale mark, the two key words cleared, all six directions in the
 /// mask). So each record that held light has all six directions, each baked visibility is
-/// stale or held, and one record not already stale before the edit differs from its old one
-/// (else the dig's block is not told from the old).
+/// stale or held, and one brick not already stale before the edit differs from its old record
+/// or is dropped (else the dig's block is not told from the old).
 pub fn dig_held<K: Ord>(pre: &BTreeMap<K, Vec<u32>>, cur: &BTreeMap<K, Vec<u32>>) -> bool {
     let all = |r: &[u32]| r[6] >> 16 == 0x3F;
     let held_shape = |r: &[u32]| {
@@ -458,8 +458,10 @@ pub fn dig_held<K: Ord>(pre: &BTreeMap<K, Vec<u32>>, cur: &BTreeMap<K, Vec<u32>>
     };
     let mut told = false;
     for (slot, p) in pre {
+        // A brick the carve left with no face leaves the block the step lays out.
         let Some(c) = cur.get(slot) else {
-            return false;
+            told = true;
+            continue;
         };
         if p[6] >> 16 != 0 && !all(c) {
             return false;
