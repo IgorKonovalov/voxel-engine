@@ -25,6 +25,58 @@ pub(crate) struct SubmitDone {
     /// dispatch's time by its share of the samples, not a measurement of each class.
     pub class_samples: [u64; 2],
     pub class_ms: [f64; 2],
+    /// The samples the submits timed in `gpu_ms` drew, kept or not (a withdrawn job's rounds,
+    /// a round past its face's stop): what that time paid for, where `samples` counts those
+    /// kept. Of them, those of ring-1 dig jobs and of other dig jobs ([`JobClass`]).
+    pub drawn: u64,
+    pub dig_drawn: [u64; 2],
+    /// The rays those samples traced and their lengths summed, in voxels.
+    pub rays: u64,
+    pub ray_len: f64,
+}
+
+impl SubmitDone {
+    /// Adds another collect's sums: the read-backs of both.
+    pub(crate) fn add(&mut self, w: &SubmitDone) {
+        self.samples += w.samples;
+        self.seconds += w.seconds;
+        if let Some(ms) = w.gpu_ms {
+            *self.gpu_ms.get_or_insert(0.0) += ms;
+        }
+        self.timed += w.timed;
+        for k in 0..2 {
+            self.class_samples[k] += w.class_samples[k];
+            self.class_ms[k] += w.class_ms[k];
+            self.dig_drawn[k] += w.dig_drawn[k];
+        }
+        self.drawn += w.drawn;
+        self.rays += w.rays;
+        self.ray_len += w.ray_len;
+    }
+}
+
+/// One read-back's rounds as drawn, kept or not ([`SubmitDone::drawn`]).
+#[derive(Default)]
+struct Drawn {
+    samples: u64,
+    dig: [u64; 2],
+    rays: u64,
+    ray_len: f64,
+}
+
+impl Drawn {
+    /// A round of a job of `class`, its entry's words as read back.
+    fn add(&mut self, class: JobClass, words: &[u32]) {
+        let samples = u64::from(words[5]);
+        self.samples += samples;
+        match class {
+            JobClass::Ring1 => self.dig[0] += samples,
+            JobClass::Dig => self.dig[1] += samples,
+            JobClass::Other => {}
+        }
+        self.rays += u64::from(words[15]);
+        self.ray_len += f64::from(f32::from_bits(words[16]));
+    }
 }
 
 /// Lanes of a workgroup that share an entry's samples (`BAKE_LANES` in bake.wgsl).
@@ -497,6 +549,8 @@ impl JobLoop {
             let mut e = 0usize;
             let mut at = 0usize;
             let mut class_samples = [0u64; 2];
+            // Every round's samples drawn, kept or not, by its job's class.
+            let mut drawn = Drawn::default();
             for &(slot, i, r) in &f.entries {
                 if self.open.get(at).is_none_or(|j| j.slot != slot) {
                     match self.open.iter().position(|j| j.slot == slot) {
@@ -509,7 +563,9 @@ impl JobLoop {
                                 .find(|j| j.slot == slot)
                                 .expect("a job with entries in flight stays open or withdrawn");
                             for _ in 0..r {
-                                let samples = out_words[e * FACE_WORDS + 5];
+                                let words = &out_words[e * FACE_WORDS..(e + 1) * FACE_WORDS];
+                                let samples = words[5];
+                                drawn.add(z.class, words);
                                 e += 1;
                                 z.states[i].queued -= samples;
                                 report.wasted += u64::from(samples);
@@ -519,11 +575,13 @@ impl JobLoop {
                     }
                 }
                 let class = usize::from(self.open[at].own_count);
+                let job_class = self.open[at].class;
                 let s = &mut self.open[at].states[i];
                 for _ in 0..r {
                     let words = &out_words[e * FACE_WORDS..(e + 1) * FACE_WORDS];
                     e += 1;
                     let samples = words[5];
+                    drawn.add(job_class, words);
                     s.queued -= samples;
                     // A readback that failed to map draws its rounds again in a later submit,
                     // from the face's first sample not drawn.
@@ -567,6 +625,10 @@ impl JobLoop {
             if let Some(ms) = gpu_ms {
                 *out.gpu_ms.get_or_insert(0.0) += ms;
                 out.timed += 1;
+                out.drawn += drawn.samples;
+                out.dig_drawn = [0, 1].map(|k| out.dig_drawn[k] + drawn.dig[k]);
+                out.rays += drawn.rays;
+                out.ray_len += drawn.ray_len;
                 let all = class_samples[0] + class_samples[1];
                 for ((s, m), &n) in out
                     .class_samples
@@ -672,6 +734,8 @@ pub(super) struct OpenJob {
     pub(super) own_count: bool,
     /// [`Job::tier`].
     pub(super) tier: u8,
+    /// [`Job::class`]: its samples' class in [`SubmitDone::dig_drawn`].
+    pub(super) class: JobClass,
     pub(super) states: Vec<FaceState>,
     /// The faces still running.
     pub(super) live: Vec<usize>,
@@ -699,6 +763,7 @@ impl JobCtx<'_, '_> {
             brick_samples,
             key_only,
             tier,
+            class,
         } = job;
         // A job's own count (the live queue's coarse pass) on cells of a brick draws each
         // direction's samples on `ceil(count / BAKE_LANES)` of its faces, spread evenly through
@@ -791,6 +856,7 @@ impl JobCtx<'_, '_> {
             key_only,
             own_count,
             tier,
+            class,
             states,
             live,
             slot,

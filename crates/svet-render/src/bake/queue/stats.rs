@@ -56,6 +56,14 @@ pub struct QueueStats {
     /// spread) and the ns a sample beyond it ([`SampleCost`]).
     pub fixed_ms: f64,
     pub cost_ns: f64,
+    /// The samples the last step's read-backs drew, kept or not (`samples` counts those kept),
+    /// and their rays' mean length in voxels (0 where none was read).
+    pub drawn: u64,
+    pub ray_len: f64,
+    /// A dig's price by its first job's class: the ns a sample all in of ring-1 dig work and
+    /// of other dig work, 0 until first read ([`DigCost`]).
+    pub ring1_ns: f64,
+    pub dig_ns: f64,
     /// Chunks with dig bricks waiting or in a job, and chunks waiting to re-bake whole (ring 3).
     pub digs: u64,
     pub reach: u64,

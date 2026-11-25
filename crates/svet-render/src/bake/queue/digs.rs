@@ -371,6 +371,11 @@ impl BakeQueue {
                 brick_samples: own_count,
                 key_only: false,
                 tier: 0,
+                class: if d.near {
+                    JobClass::Ring1
+                } else {
+                    JobClass::Dig
+                },
             });
             self.dig_open.insert(c, d);
         }

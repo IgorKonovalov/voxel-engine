@@ -2,6 +2,8 @@
 
 use std::collections::VecDeque;
 
+use super::JobClass;
+
 /// The live queue's slice by default, in milliseconds of a frame.
 pub const DEFAULT_BAKE_SLICE_MS: f64 = 1.5;
 
@@ -274,6 +276,65 @@ impl SampleCost {
         let (fixed, per) = self.price();
         (((ms - fixed).max(0.0) * 1e6 / per.max(0.1)) as u64)
             .clamp(CAP_FLOOR_SAMPLES, super::SUBMIT_SAMPLES)
+    }
+}
+
+/// The share of a read-back's samples drawn that makes it one class's reading in [`DigCost`].
+const DIG_SHARE: f64 = 0.9;
+
+/// The weight a new reading of a [`DigCost`] figure takes.
+const DIG_DECAY: f64 = 0.8;
+
+/// The ns a sample all in (a dispatch's whole ms over the samples it drew) of ring-1 dig work
+/// and of other dig work (Plan 0099 Phase 2d). A sample costs by whose it is (a ring-2 sample
+/// about twice another job's on a slow adapter), so a dig's cap priced by the general
+/// [`SampleCost`] draws by the work read last. All in, not net of a fixed part: a dig's submits
+/// all go out under one grant, where a figure read at that grant gives a cap that costs it.
+/// A read-back at least [`DIG_SHARE`] of one class's samples moves that class's figure, `0.8
+/// old + 0.2 new`; the first sets it. Kept between digs.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct DigCost {
+    pub(crate) ring1_ns: Option<f64>,
+    pub(crate) dig_ns: Option<f64>,
+}
+
+impl DigCost {
+    /// One step's read-backs: `drawn` samples in `ms`, `dig[0]` of them ring-1 dig jobs' and
+    /// `dig[1]` other dig jobs'.
+    pub(crate) fn read(&mut self, drawn: u64, dig: [u64; 2], ms: f64) {
+        if drawn == 0 {
+            return;
+        }
+        let n = drawn as f64;
+        let figure = if dig[0] as f64 >= DIG_SHARE * n {
+            &mut self.ring1_ns
+        } else if (dig[0] + dig[1]) as f64 >= DIG_SHARE * n {
+            &mut self.dig_ns
+        } else {
+            return;
+        };
+        let ns = ms * 1e6 / n;
+        *figure = Some(figure.map_or(ns, |old| DIG_DECAY * old + (1.0 - DIG_DECAY) * ns));
+    }
+
+    /// The ns a sample a step whose first job is of `class` is priced by: its class's figure,
+    /// else the other dig class's; `None` for a job that is not a dig's or no figure read.
+    pub(crate) fn ns(&self, class: JobClass) -> Option<f64> {
+        match class {
+            JobClass::Ring1 => self.ring1_ns.or(self.dig_ns),
+            JobClass::Dig => self.dig_ns.or(self.ring1_ns),
+            JobClass::Other => None,
+        }
+    }
+
+    /// The samples a submit whose first job is of `class` draws in `ms`: `ms` over the class's
+    /// figure ([`DigCost::ns`]) under [`SampleCost::cap`]'s clamp, else `cost`'s cap.
+    pub(crate) fn cap(&self, class: JobClass, cost: &SampleCost, ms: f64) -> u64 {
+        match self.ns(class) {
+            Some(ns) => ((ms.max(0.0) * 1e6 / ns.max(0.1)) as u64)
+                .clamp(CAP_FLOOR_SAMPLES, super::SUBMIT_SAMPLES),
+            None => cost.cap(ms),
+        }
     }
 }
 

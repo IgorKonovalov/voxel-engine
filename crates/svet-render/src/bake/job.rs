@@ -189,6 +189,23 @@ pub(crate) struct Job {
     /// The record's tier bits ([`TIER_SHIFT`]): 0 at the settings' count (the near tier),
     /// [`TIER_MID`] or [`TIER_FAR`] at the live queue's lesser counts (ADR-0080).
     pub tier: u8,
+    /// What the job re-bakes, for the live queue's price of a submit.
+    pub class: JobClass,
+}
+
+/// What a job re-bakes, for the live queue's price of a submit (Plan 0099 Phase 2d): a sample
+/// costs by whose it is, so a read-back's samples drawn are counted by the class of their job
+/// ([`crate::bake::SubmitDone::dig_drawn`]) and a dig's cap is priced by its class's figure
+/// ([`DigCost`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum JobClass {
+    /// Any job that is not a dig's.
+    #[default]
+    Other,
+    /// A dig job holding ring-1 bricks (its chunk's ring 1, or both its rings in one job).
+    Ring1,
+    /// Any other dig job (a split chunk's ring 2, a ring chunk the box did not touch).
+    Dig,
 }
 
 /// The entry's `face` word's flag (`BakeFace.face` in `bake.wgsl`): a key-only job's face,
@@ -271,6 +288,7 @@ pub(crate) fn run(
                 brick_samples: None,
                 key_only: false,
                 tier: 0,
+                class: JobClass::Other,
             };
             at += words;
             job
@@ -381,6 +399,7 @@ pub(crate) fn rebake(
             brick_samples: None,
             key_only: false,
             tier: 0,
+            class: JobClass::Other,
         });
     }
     let bake = run_jobs(run, gpu, store, jobs, settings, progress)?;

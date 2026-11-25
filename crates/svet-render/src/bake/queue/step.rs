@@ -295,13 +295,11 @@ impl BakeQueue {
         store: &mut Store,
         view: &QueueView,
     ) -> Result<(u64, bool), BakeError> {
-        let dig = !self.digs.is_empty() || !self.dig_open.is_empty();
         self.refresh_waiting(store, view, false);
         let cap = view.samples.unwrap_or_else(|| {
             let slice = self.step_slice(view.interval_s);
             self.stats.slice_ms = slice;
-            let ms = slice + if dig { self.edit_ms } else { 0.0 };
-            self.cost.cap(ms)
+            self.priced_cap(slice)
         });
         self.withdraw_passed(run, store, view);
         self.laps.lap(S_WITHDRAW);
@@ -325,6 +323,28 @@ impl BakeQueue {
         self.stats.visited = self.ordered.take_visited();
         self.stats.visited_total += self.stats.visited;
         Ok((cap, opened_step))
+    }
+
+    /// The submit's sample cap for `slice`: grown by [`BakeQueue::edit_ms`] while a dig waits or
+    /// its jobs are in the loop, and priced by the class of the job the submit plans first. A
+    /// ring-1 dig waiting or in a job prices it by ring 1's figure, else a dig job by the
+    /// dig's ([`DigCost::cap`]), else the general price ([`SampleCost::cap`]).
+    pub(super) fn priced_cap(&self, slice: f64) -> u64 {
+        let dig = !self.digs.is_empty() || !self.dig_open.is_empty();
+        let ms = slice + if dig { self.edit_ms } else { 0.0 };
+        let class = if self
+            .digs
+            .values()
+            .chain(self.dig_open.values())
+            .any(|d| d.near)
+        {
+            JobClass::Ring1
+        } else if !self.dig_open.is_empty() {
+            JobClass::Dig
+        } else {
+            JobClass::Other
+        };
+        self.dig_cost.cap(class, &self.cost, ms)
     }
 
     /// The step's poll, collect, place and submit stages, and the stats they read: the submits
@@ -480,21 +500,21 @@ impl BakeQueue {
             let w = self
                 .lp
                 .collect(run, half, store, &settings, &mut sink, &mut |_| {}, left);
-            d.samples += w.samples;
-            d.seconds += w.seconds;
-            if let Some(ms) = w.gpu_ms {
-                *d.gpu_ms.get_or_insert(0.0) += ms;
-            }
-            d.timed += w.timed;
-            d.class_samples = [0, 1].map(|k| d.class_samples[k] + w.class_samples[k]);
-            d.class_ms = [0, 1].map(|k| d.class_ms[k] + w.class_ms[k]);
+            d.add(&w);
             lap(&mut self.laps, S_COLLECT);
         }
         self.read_stats(&d, cap, submitted, in_flight_full);
     }
 
-    /// The submit stage's stats, and the price of a submit fed with what was read back.
-    fn read_stats(&mut self, d: &SubmitDone, cap: u64, submitted: u64, in_flight_full: bool) {
+    /// The submit stage's stats, and the price of a submit fed with what was read back: the
+    /// samples drawn, kept or not, against the dispatches' time.
+    pub(super) fn read_stats(
+        &mut self,
+        d: &SubmitDone,
+        cap: u64,
+        submitted: u64,
+        in_flight_full: bool,
+    ) {
         // The slice is sized by the GPU's own time for the submits read back, a frame or two
         // late; without timestamps it stays at the first guess, a fixed count.
         self.stats.cap = cap;
@@ -508,12 +528,21 @@ impl BakeQueue {
         let st = &mut self.stats;
         st.class_samples = [0, 1].map(|k| st.class_samples[k] + d.class_samples[k]);
         st.class_ms = [0, 1].map(|k| st.class_ms[k] + d.class_ms[k]);
+        self.stats.drawn = d.drawn;
+        self.stats.ray_len = if d.rays > 0 {
+            d.ray_len / d.rays as f64
+        } else {
+            0.0
+        };
         if let Some(ms) = d.gpu_ms
-            && d.samples >= 4096
+            && d.drawn >= 4096
         {
-            self.cost.read(d.timed, d.samples, ms);
+            self.cost.read(d.timed, d.drawn, ms);
+            self.dig_cost.read(d.drawn, d.dig_drawn, ms);
             self.stats.ns_per_sample = self.cost.mean_ns;
             (self.stats.fixed_ms, self.stats.cost_ns) = self.cost.price();
+            self.stats.ring1_ns = self.dig_cost.ring1_ns.unwrap_or(0.0);
+            self.stats.dig_ns = self.dig_cost.dig_ns.unwrap_or(0.0);
         }
     }
 

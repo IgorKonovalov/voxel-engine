@@ -185,6 +185,7 @@ impl BakeQueue {
                 brick_samples: None,
                 key_only: true,
                 tier: 0,
+                class: JobClass::Other,
             });
             self.keys.open.insert(c);
         }

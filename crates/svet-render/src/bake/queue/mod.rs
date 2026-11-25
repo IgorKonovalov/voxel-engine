@@ -365,6 +365,8 @@ pub struct BakeQueue {
     pub(super) stats: QueueStats,
     /// The price of a submit the cap is sized by ([`SampleCost`]).
     pub(super) cost: SampleCost,
+    /// The price of a dig's submit by the class of its first job ([`DigCost`]).
+    pub(super) dig_cost: DigCost,
     /// The current step's stage laps.
     pub(super) laps: Laps,
     /// On the bake thread, whether a box waits in a message not yet taken: the opening then
@@ -611,6 +613,7 @@ impl BakeQueue {
                 ..QueueStats::default()
             },
             cost: SampleCost::new(20.0),
+            dig_cost: DigCost::default(),
             laps: Laps::new(StepStart::now()),
             box_signal: None,
             #[cfg(test)]

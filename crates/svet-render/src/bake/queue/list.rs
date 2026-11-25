@@ -230,6 +230,7 @@ impl BakeQueue {
             brick_samples: (count != self.settings.brick_samples).then_some(count),
             key_only: false,
             tier,
+            class: JobClass::Other,
         });
         self.job_coarse.insert(c, coarse);
         self.job_count.insert(c, count);

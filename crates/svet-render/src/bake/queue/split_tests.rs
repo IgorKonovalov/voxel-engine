@@ -111,6 +111,8 @@ struct Half {
     /// The frame each list taken was named by ([`WriteList::frame`]), in order.
     named: Vec<u64>,
     applied: Vec<Applied>,
+    /// Each read-back's GPU milliseconds, 0.1 where unset.
+    ms: Option<f64>,
 }
 
 impl RenderHalf for Half {
@@ -132,7 +134,7 @@ impl RenderHalf for Half {
             words: input.iter().flatten().copied().collect(),
             mapped: true,
             seconds: 0.001,
-            gpu_ms: Some(0.1),
+            gpu_ms: Some(self.ms.unwrap_or(0.1)),
             timer_ms: None,
         })
     }
@@ -586,6 +588,7 @@ fn a_dig_job_is_planned_ahead_of_an_open_job_that_is_not_a_digs() {
             brick_samples: None,
             key_only: false,
             tier: 0,
+            class: JobClass::Other,
         }
     };
     let samples_of = |j: &OpenJob| j.states.iter().map(|s| u64::from(s.queued)).sum::<u64>();
@@ -682,6 +685,104 @@ fn a_dig_job_is_planned_ahead_of_an_open_job_that_is_not_a_digs() {
         assert!(
             first_other.is_none_or(|o| last_dig.is_some_and(|d| d < o)),
             "the dig job's rounds ahead of the other's"
+        );
+    }
+}
+
+/// Done when (1) of Plan 0099 Phase 2d. A submit of one job's 200 000 samples and another's
+/// 20 000, the first withdrawn before the read-back, read back in 4.0 ms: `samples` counts the
+/// 20 000 kept and the drawn count is 220 000, which the estimate reads, so from 20 ns its mean
+/// is `0.8 x 20 + 0.2 x 4.0 ms / 220 000` = 19.64 ns, where the kept samples would give 56.0.
+/// With both withdrawn nothing is kept and the read-back is read all the same, to 19.64 again.
+#[test]
+fn a_withdrawn_round_counts_in_what_the_estimate_reads() {
+    use crate::bake::job_loop::JobCtx;
+    const GONE_AT: [i32; 3] = [0, 0, 0];
+    const KEPT_AT: [i32; 3] = [1, 0, 0];
+    // `bricks` bricks of five directions, one face each and one round a face.
+    let job = |c: [i32; 3], bricks: u16| {
+        let faces = ChunkFaces {
+            bricks: (0..bricks).map(|b| (b, (0..5u16).collect())).collect(),
+            glass: Vec::new(),
+        };
+        Job {
+            coord: ChunkCoord(c),
+            samples: faces.faces() as u64 * 2000,
+            faces,
+            first_word: 0,
+            kept_bricks: KeptBricks::default(),
+            brick_samples: None,
+            key_only: false,
+            tier: 0,
+            class: JobClass::Other,
+        }
+    };
+    let kept_mean = {
+        let mut c = SampleCost::new(20.0);
+        c.read(1, 20_000, 4.0);
+        c.mean_ns
+    };
+    assert!((kept_mean - 56.0).abs() < 1e-9, "{kept_mean}");
+    for both in [false, true] {
+        let mut rig = Rig::new(None);
+        rig.queue.settings.round = 2000;
+        rig.queue.settings.brick_samples = 2000;
+        rig.half.ms = Some(4.0);
+        let settings = rig.queue.settings.clone();
+        let run = BakeRun {
+            mirror: &rig.shadow,
+            world: &rig.world,
+            sky: 0,
+            key: None,
+        };
+        let ctx = JobCtx {
+            run: &run,
+            settings: &settings,
+            round: 2000,
+            rounds_cap: 0,
+        };
+        let (big, small) = (job(GONE_AT, 20), job(KEPT_AT, 2));
+        assert_eq!((big.samples, small.samples), (200_000, 20_000));
+        rig.queue.lp.open = vec![ctx.open(big, 0), ctx.open(small, 1)];
+        rig.queue.lp.free.clear();
+        rig.queue.lp.pending.clear();
+        let mut sink = |_: &mut Store, _, _, _, _| {};
+        assert!(rig.queue.lp.dispatch(
+            &run,
+            &mut rig.half,
+            &mut rig.store,
+            &settings,
+            1_000_000,
+            &mut sink,
+            &mut |_| {},
+        ));
+        assert_eq!(rig.queue.lp.last_samples, 220_000, "both jobs whole");
+        let record = record_words(settings.cell);
+        let gone = rig
+            .queue
+            .lp
+            .withdraw(|c| c.0 == GONE_AT || (both && c.0 == KEPT_AT), record);
+        assert_eq!(gone.len(), 1 + usize::from(both));
+        let d = rig.queue.lp.collect(
+            &run,
+            &mut rig.half,
+            &mut rig.store,
+            &settings,
+            &mut sink,
+            &mut |_| {},
+            0,
+        );
+        assert_eq!(d.gpu_ms, Some(4.0));
+        let kept = if both { 0 } else { 20_000 };
+        assert_eq!(d.samples, kept, "both {both}: the samples kept");
+        assert_eq!(d.drawn, 220_000, "both {both}: the samples drawn");
+        rig.queue.read_stats(&d, 1_000_000, 220_000, false);
+        assert_eq!(rig.queue.stats.samples, kept);
+        assert_eq!(rig.queue.stats.drawn, 220_000);
+        let mean = rig.queue.cost.mean_ns;
+        assert!(
+            (mean - 19.636_363).abs() < 1e-3,
+            "both {both}: the estimate's mean {mean}"
         );
     }
 }

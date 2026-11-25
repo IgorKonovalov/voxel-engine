@@ -201,7 +201,9 @@ mod dig_line {
 
         /// The timeline's text: a row a frame (the queue's cap and the submit's samples, the
         /// samples in flight on ring 1's bricks, ring 2's and other jobs', the free slots,
-        /// pending, open and unread, the step's and the passes' ms) and under it a row per
+        /// pending, open and unread, the read-back's samples kept and drawn, its ms and mean
+        /// ray length, the prices: the general one and the dig's by class, the step's and the
+        /// passes' ms) and under it a row per
         /// watched chunk (where it is and what holds it); then per dig the frame its ring 1 and
         /// its ring 2 land, ring 1's samples and the samples thrown away with stale jobs.
         #[allow(clippy::too_many_lines, reason = "a reading's report, one pass over the frames")]
@@ -240,9 +242,9 @@ mod dig_line {
                 pool_full = Some(pf);
                 let _ = writeln!(
                     out,
-                    "{fi:4} {:8} cap {:7} sent {:7} | flight r1 {:6} r2 {:6} other {:7} | free {:2} pend {:3} open {:2} unread {} withdrawn {} pool+{pool} | read {:7} in {} at {:.4} ms, ns {:.1} price {:.3} ms + {:.2} ns | step {:6.3} ms light {:6.3} temporal {:6.3} gpu {:6.2} | waiting {} depth {} digs {}",
+                    "{fi:4} {:8} cap {:7} sent {:7} | flight r1 {:6} r2 {:6} other {:7} | free {:2} pend {:3} open {:2} unread {} withdrawn {} pool+{pool} | read {:7} drawn {:7} in {} at {:.4} ms, ray {:.2}, ns {:.1} price {:.3} ms + {:.2} ns r1 {:.2} dig {:.2} | step {:6.3} ms light {:6.3} temporal {:6.3} gpu {:6.2} | waiting {} depth {} digs {}",
                     f.label, f.q.cap, f.q.submitted, fl[0], fl[1], fl[2], t.free_slots, t.pending, t.open,
-                    t.in_flight, t.withdrawn, f.q.samples, f.q.read_submits, f.q.ms, f.q.ns_per_sample, f.q.fixed_ms, f.q.cost_ns, f.q.stages.total_ms, f.light_ms, f.temporal_ms, f.gpu_ms,
+                    t.in_flight, t.withdrawn, f.q.samples, f.q.drawn, f.q.read_submits, f.q.ms, f.q.ray_len, f.q.ns_per_sample, f.q.fixed_ms, f.q.cost_ns, f.q.ring1_ns, f.q.dig_ns, f.q.stages.total_ms, f.light_ms, f.temporal_ms, f.gpu_ms,
                     f.q.drain_waiting, f.q.depth, f.q.digs
                 );
                 let jobs: BTreeMap<[i32; 3], &svet_render::DigTraceJob> = t.jobs.iter().map(|j| (j.coord, j)).collect();

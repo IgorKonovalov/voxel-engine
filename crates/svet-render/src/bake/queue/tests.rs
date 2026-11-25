@@ -948,3 +948,130 @@ fn a_steady_slice_draws_what_the_mean_drew() {
         "cap {cap}, the mean's rule {by_mean}"
     );
 }
+
+/// The GPU ms of a read-back under Plan 0099 Phase 2d's fit by class (the RENOIR's, quiet B):
+/// 0.8 ms a dispatch and 14.6, 16.4 and 8.0 ns a ring-1, ring-2 and other sample.
+fn class_ms(class: JobClass, samples: u64) -> f64 {
+    let ns = match class {
+        JobClass::Ring1 => 14.6,
+        JobClass::Dig => 16.4,
+        JobClass::Other => 8.0,
+    };
+    0.8 + ns * 1e-6 * samples as f64
+}
+
+/// One read-back of `samples` drawn, all of `class`, through the queue's own reading of it.
+fn read_class(q: &mut BakeQueue, class: JobClass, samples: u64) {
+    let dig_drawn = match class {
+        JobClass::Ring1 => [samples, 0],
+        JobClass::Dig => [0, samples],
+        JobClass::Other => [0, 0],
+    };
+    let d = SubmitDone {
+        samples,
+        gpu_ms: Some(class_ms(class, samples)),
+        timed: 1,
+        drawn: samples,
+        dig_drawn,
+        ..SubmitDone::default()
+    };
+    q.read_stats(&d, samples, samples, false);
+}
+
+/// Plan 0099 Phase 2d (2): at the fit by class, 100 other read-backs at their caps under a
+/// 1.0 ms slice, then ten digs under 4.0 ms (the slice and `edit_ms` 3), each one ring-1
+/// read-back and seven ring-2, each of the size its cap gave. Ring 1's cap comes within 10 % of
+/// `(4.0 - 0.8) / 14.6 ns` = 219 178 and the dig's of `(4.0 - 0.8) / 16.4 ns` = 195 122, the
+/// caps whose read-backs cost the grant; before the first ring-2 read-back the dig's cap is ring
+/// 1's; a 1.0 ms step with no dig is sized by the general price.
+#[test]
+fn a_dig_cap_is_priced_by_its_class() {
+    let mut q = BakeQueue::new(BakeSettings::default(), 1.0);
+    q.edit_ms = 3.0;
+    const C: [i32; 3] = [0, 0, 0];
+    for _ in 0..100 {
+        let n = q.priced_cap(1.0);
+        read_class(&mut q, JobClass::Other, n);
+    }
+    let (mut ring1, mut dig) = (0, 0);
+    for k in 0..10 {
+        // The dig's step: its ring-1 chunk waits.
+        q.digs.insert(
+            C,
+            DigChunk {
+                near: true,
+                ..DigChunk::default()
+            },
+        );
+        ring1 = q.priced_cap(1.0);
+        read_class(&mut q, JobClass::Ring1, ring1);
+        q.digs.clear();
+        // Ring 2's job in the loop.
+        q.dig_open.insert(C, DigChunk::default());
+        for r in 0..7 {
+            dig = q.priced_cap(1.0);
+            if k == 0 && r == 0 {
+                assert_eq!(
+                    dig,
+                    q.dig_cost.cap(JobClass::Ring1, &q.cost, 4.0),
+                    "before the first ring-2 read-back the dig's cap is ring 1's"
+                );
+            }
+            read_class(&mut q, JobClass::Dig, dig);
+        }
+        q.dig_open.clear();
+        eprintln!("dig {k}: ring 1's cap {ring1}, the dig's {dig}");
+    }
+    assert!(
+        (ring1 as f64 / 219_178.0 - 1.0).abs() < 0.10,
+        "ring 1's cap {ring1}"
+    );
+    assert!(
+        (dig as f64 / 195_122.0 - 1.0).abs() < 0.10,
+        "the dig's cap {dig}"
+    );
+    assert_eq!(
+        q.priced_cap(1.0),
+        q.cost.cap(1.0),
+        "a step with no dig: the general price"
+    );
+}
+
+/// Plan 0099 Phase 2d (3): figures of 16.0 ns (ring 1) and 20.0 ns (the dig's), a general price
+/// of 10.0 ns, a 1.0 ms slice and `edit_ms` 3: the cap is 250 000 with a ring-1 dig waiting (and
+/// with one in a job), 200 000 with only a ring-2 job in the loop, 100 000 with no dig. A figure
+/// not read takes the other's.
+#[test]
+fn a_step_prices_its_cap_by_the_first_jobs_class() {
+    let mut q = BakeQueue::new(BakeSettings::default(), 1.0);
+    q.edit_ms = 3.0;
+    q.cost = SampleCost::new(10.0);
+    q.dig_cost = DigCost {
+        ring1_ns: Some(16.0),
+        dig_ns: Some(20.0),
+    };
+    const A: [i32; 3] = [0, 0, 0];
+    const B: [i32; 3] = [1, 0, 0];
+    let near = DigChunk {
+        near: true,
+        ..DigChunk::default()
+    };
+    assert_eq!(q.priced_cap(1.0), 100_000, "no dig");
+    q.digs.insert(A, near.clone());
+    q.dig_open.insert(B, DigChunk::default());
+    assert_eq!(q.priced_cap(1.0), 250_000, "a ring-1 dig waiting");
+    q.digs.clear();
+    assert_eq!(q.priced_cap(1.0), 200_000, "only a ring-2 job");
+    q.dig_open.insert(A, near);
+    assert_eq!(q.priced_cap(1.0), 250_000, "a ring-1 dig in a job");
+    q.dig_open.remove(&A);
+    q.dig_cost.dig_ns = None;
+    assert_eq!(q.priced_cap(1.0), 250_000, "the dig's not read: ring 1's");
+    q.dig_open.clear();
+    q.digs.insert(B, DigChunk::default());
+    assert_eq!(
+        q.priced_cap(1.0),
+        400_000,
+        "a ring-2 dig waiting with no job: the grant at the general price"
+    );
+}
