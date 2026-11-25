@@ -178,3 +178,41 @@ impl KeyHorizon {
         Self::ALL[(i + 1) % Self::ALL.len()]
     }
 }
+
+/// The source that adds the key light back on a cube face where the column horizon reads under
+/// 1 (Plan 0100 Phase 6, ADR-0084): the shown visibility is the larger of the horizon and the
+/// source, so a source only adds. Entities, field surfaces, `light history on` and `key far ray`
+/// are as without it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum KeyCover {
+    /// The horizon alone (ADR-0082's picture). The default.
+    #[default]
+    Off,
+    /// Near (the far normal's weight under one half), one ray from the face's centre toward the
+    /// key light's disc centre, times its transmittance, cast every frame with no random number
+    /// and shown with no mean; under [`crate::Penumbra::Approach`] its closest-approach score.
+    /// Its length is `key_cap`'s. Past the half, the horizon alone.
+    Ray,
+    /// At every distance, the store's baked key visibility where the face's own cell holds a
+    /// fresh one, else the horizon alone; a landing rides the key slot's fade.
+    Record,
+    /// `Ray` near and `Record` far, switched at the band by [`KeyFarMix`]: at one half under
+    /// `Step`, blended by the far normal's weight under `Blend` (the ray then cast to the band's
+    /// end).
+    RayRecord,
+}
+
+named_enum!(KeyCover {
+    Off => "off",
+    Ray => "ray",
+    Record => "record",
+    RayRecord => "ray-record",
+});
+
+impl KeyCover {
+    /// The value after this one in [`KeyCover::ALL`], the first after the last.
+    pub fn next(self) -> Self {
+        let i = Self::ALL.iter().position(|&k| k == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+}

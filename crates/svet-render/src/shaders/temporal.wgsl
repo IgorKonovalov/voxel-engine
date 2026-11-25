@@ -761,6 +761,8 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // The store's key light visibility at a cube face (ADR-0079) in x, with a 1 in y where its
     // cell holds a fresh one under LIGHTING_KEY_BAKED; 0 in y for none.
     var key_store = vec2<f32>(0.0);
+    // The face's own cell's key visibility under LIGHTING2_KEY_COVER_RECORD (`store_key_cell`).
+    var key_own = vec2<f32>(0.0);
     let fresh = sample.w > 0.5 && view_mode() != VIEW_STEPS;
     sample.w = 0.0;
     var stored = false;
@@ -822,6 +824,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         if (!on_entity && (params.lighting & (LIGHTING_KEY_BAKED | LIGHTING_KEY_COLUMN)) == LIGHTING_KEY_BAKED) {
             key_store = store_key_visibility(head, store_voxel(rec.p, nf), face, rec.n);
+        }
+        if (!on_entity && (params.lighting2 & LIGHTING2_KEY_COVER_RECORD) != 0u) {
+            key_own = store_key_cell(head, store_voxel(rec.p, nf) >> vec3<u32>(head.shift), face);
         }
         // The sky's term (ADR-0070) where no ray was cast: a face's baked visibility, else the
         // missing-light chain's, coloured by the sky now. An entity keeps its sky rays.
@@ -1115,8 +1120,10 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (far_on && (!key_cast || w > 0.0 || reset)) {
             k_far = key_store.x;
             if (key_store.y == 0.0) {
-                k_far = key_horizon_at(rec.p, lift_n, rec.axis, full_px(gid.xy));
-                far_src = KEY_SRC_HORIZON;
+                let near = select(-1.0, vis.y, vis.z < 2.0 * KEY_FROM_STORE && vis.z > 1.25 * KEY_FROM_STORE);
+                let f = key_cover_far(rec.p, lift_n, rec.axis, full_px(gid.xy), near, key_own, w);
+                k_far = f.x;
+                far_src = u32(f.y);
             }
         }
         var k = 0.0;

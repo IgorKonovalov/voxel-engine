@@ -153,6 +153,7 @@ pub(super) fn hold(a: &mut crate::cli::Args, s: &RenderSettings) {
     o.sky_down_skip = l.sky_down_skip;
     o.key_at = l.key_at;
     o.key_horizon = l.key_horizon;
+    o.key_cover = l.key_cover;
     if let svet_render::Exposure::Auto(auto) = l.exposure
         && base.exposure != l.exposure
     {

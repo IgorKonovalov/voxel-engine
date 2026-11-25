@@ -552,3 +552,7 @@ fn emission_of(m: u32) -> vec3<f32> {
 // under one half, which no tap that pools the key light's ray (atrous.wgsl) takes for a cast
 // one; 1 where the ray was cast. The temporal pass tells the two apart at its double.
 const KEY_FROM_STORE: f32 = 0.25;
+// The same where the light pass also read the near cover source (`key_cover_near`,
+// sky_light.wgsl): its value, the far estimate's near answer, is the sample's g. Between
+// KEY_FROM_STORE and its double, so the temporal pass takes it for no cast ray.
+const KEY_COVER: f32 = 0.375;

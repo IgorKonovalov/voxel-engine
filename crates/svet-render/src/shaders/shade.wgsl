@@ -32,7 +32,9 @@
 //                                        and 1 in b where the key light falls on the face, else
 //                                        0 in both; KEY_FROM_STORE in b and 0 in g where it
 //                                        falls on the face and the temporal pass's far estimate
-//                                        answers it with no ray (`key_from_store`); the key
+//                                        answers it with no ray (`key_from_store`); KEY_COVER
+//                                        in b and the near cover source's value in g where
+//                                        that also answers (`key_cover_near`); the key
 //                                        light is not in
 //                                        `direct_out`
 //
@@ -277,6 +279,10 @@ fn shade_px(gid: vec3<u32>) {
                 if (any(key_light_at(rec.p, n) > vec3<f32>(0.0))
                     && (params.lighting & LIGHTING_HOOK_KEY_OFF) == 0u) {
                     vis = vec4<f32>(0.0, 0.0, KEY_FROM_STORE, 0.0);
+                    let c = key_cover_near(rec, ns, view_here, full_px(gid.xy));
+                    if (c >= 0.0) {
+                        vis = vec4<f32>(0.0, c, KEY_COVER, 0.0);
+                    }
                 }
             } else {
                 let kv = key_visibility(rec.p, n, ns, gid.xy);

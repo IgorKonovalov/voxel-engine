@@ -647,3 +647,42 @@ fn key_horizon_is_march_unless_named() {
         assert_eq!((tog.get)(&m), want);
     }
 }
+
+/// Plan 0100 Phase 6: `--key-cover` is `off` unless named, which the lighting row and the banner
+/// leave out; each arm reaches the lighting, the row and the banner; the debug page's `key
+/// cover` cycles the four and its row reads the value.
+#[test]
+fn key_cover_is_off_unless_named() {
+    use crate::hud::HudRow;
+    use svet_render::KeyCover;
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(r.start_lighting().key_cover, KeyCover::Off);
+    let m = r.start_modes(0.0);
+    assert!(!m.row(HudRow::Lighting).contains("key cover"));
+    assert!(!m.banner(0.0).unwrap().contains("key cover"));
+    for k in [KeyCover::Ray, KeyCover::Record, KeyCover::RayRecord] {
+        let r = parse_args_from(argv(&["--source", "outdoor", "--key-cover", k.name()])).unwrap();
+        assert_eq!(r.start_lighting().key_cover, k);
+        let m = r.start_modes(0.0);
+        let want = format!("key cover {}, ", k.name());
+        let row = m.row(HudRow::Lighting);
+        assert!(row.contains(&want), "{row}");
+        let banner = m.banner(0.0).unwrap().replace('\n', ", ");
+        assert!(banner.contains(&want), "{banner}");
+    }
+    assert!(parse_args_from(argv(&["--key-cover", "both"])).is_err());
+    let tog = crate::toggles::TOGGLES
+        .iter()
+        .find(|t| t.name == "key cover")
+        .unwrap();
+    let mut m = r.start_modes(0.0);
+    for want in [
+        "key cover ray",
+        "key cover record",
+        "key cover ray-record",
+        "key cover off",
+    ] {
+        (tog.flip)(&mut m, 0.0);
+        assert_eq!((tog.get)(&m), want);
+    }
+}

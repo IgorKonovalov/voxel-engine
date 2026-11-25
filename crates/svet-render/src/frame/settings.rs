@@ -311,6 +311,15 @@ pub(crate) const LIGHTING2_KEY_AT_CENTRE: u32 = 1 << 3;
 /// map cell to the window's side over the coarse levels, not the march.
 pub(crate) const LIGHTING2_KEY_WALK: u32 = 1 << 4;
 
+/// `Params::lighting2` bit ([`KeyCover::Ray`], [`KeyCover::RayRecord`]): near a cube face the
+/// horizon reads under 1 at, the light pass casts one ray from the face's centre toward the key
+/// light's disc centre and the shown visibility is the larger of the two.
+pub(crate) const LIGHTING2_KEY_COVER_RAY: u32 = 1 << 5;
+
+/// `Params::lighting2` bit ([`KeyCover::Record`], [`KeyCover::RayRecord`]): a cube face whose own
+/// store cell holds a fresh baked key visibility shows the larger of it and the horizon.
+pub(crate) const LIGHTING2_KEY_COVER_RECORD: u32 = 1 << 6;
+
 /// The light passes' reading hooks ([`Frame::set_light_hooks`]): switches that take a term or a
 /// test out of the frame to attribute what the image does to it. All off by default; each is
 /// a uniform branch on a `Params::lighting` bit.
@@ -974,6 +983,9 @@ pub struct Lighting {
     pub key_at: KeyAt,
     /// How the key light's column horizon reads the map ([`KeyHorizon`]; default `March`).
     pub key_horizon: KeyHorizon,
+    /// The source that adds the key light back where the horizon reads shadow ([`KeyCover`];
+    /// default `Off`).
+    pub key_cover: KeyCover,
 }
 
 /// [`Lighting::key_step`] by default, in degrees (Plan 0095 Phase 8, a guess: 10 s of the
@@ -1037,6 +1049,7 @@ impl Default for Lighting {
             key_step: DEFAULT_KEY_STEP,
             key_at: KeyAt::Hit,
             key_horizon: KeyHorizon::March,
+            key_cover: KeyCover::Off,
         }
     }
 }
@@ -1148,6 +1161,11 @@ impl Lighting {
         } | match self.key_horizon {
             KeyHorizon::March => 0,
             KeyHorizon::Walk => LIGHTING2_KEY_WALK,
+        } | match self.key_cover {
+            KeyCover::Off => 0,
+            KeyCover::Ray => LIGHTING2_KEY_COVER_RAY,
+            KeyCover::Record => LIGHTING2_KEY_COVER_RECORD,
+            KeyCover::RayRecord => LIGHTING2_KEY_COVER_RAY | LIGHTING2_KEY_COVER_RECORD,
         }
     }
 

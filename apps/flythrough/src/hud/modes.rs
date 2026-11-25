@@ -750,6 +750,9 @@ impl Modes {
             if l.key_horizon != svet_render::KeyHorizon::default() {
                 let _ = write!(out, "key horizon {}, ", l.key_horizon.name());
             }
+            if l.key_cover != svet_render::KeyCover::default() {
+                let _ = write!(out, "key cover {}, ", l.key_cover.name());
+            }
             if l.penumbra != crate::DEFAULT_PENUMBRA {
                 let _ = write!(out, "penumbra {}, ", l.penumbra.name());
             }

@@ -134,3 +134,44 @@ fn the_key_horizon_march_sets_no_bit() {
         [KeyHorizon::Walk, KeyHorizon::March]
     );
 }
+
+/// Plan 0100 Phase 6: `key_cover` is `off` by default, which sets no bit; `ray` and `record` set
+/// their bit alone, `ray-record` both, and none touches the first word; the names round-trip and
+/// `next` cycles.
+#[test]
+fn the_key_cover_off_sets_no_bit() {
+    use super::{KeyCover, LIGHTING2_KEY_COVER_RAY, LIGHTING2_KEY_COVER_RECORD, Lighting};
+    let d = Lighting::default();
+    assert_eq!(d.key_cover, KeyCover::Off);
+    assert_eq!(d.flags2(), 0);
+    let bits = KeyCover::ALL.map(|key_cover| {
+        let l = Lighting { key_cover, ..d };
+        assert_eq!(l.flags(), d.flags());
+        l.flags2()
+    });
+    assert_eq!(
+        bits,
+        [
+            0,
+            LIGHTING2_KEY_COVER_RAY,
+            LIGHTING2_KEY_COVER_RECORD,
+            LIGHTING2_KEY_COVER_RAY | LIGHTING2_KEY_COVER_RECORD
+        ]
+    );
+    assert_eq!(
+        KeyCover::ALL.map(KeyCover::name),
+        ["off", "ray", "record", "ray-record"]
+    );
+    for k in KeyCover::ALL {
+        assert_eq!(KeyCover::from_name(k.name()), Some(k));
+    }
+    assert_eq!(
+        KeyCover::ALL.map(KeyCover::next),
+        [
+            KeyCover::Ray,
+            KeyCover::Record,
+            KeyCover::RayRecord,
+            KeyCover::Off
+        ]
+    );
+}

@@ -94,6 +94,8 @@ const LIGHT_MODULES: &[&str] = &[
     SKY_ATMOSPHERE_WGSL,
     SKY_WGSL,
     SKY_LIGHT_WGSL,
+    KEY_HORIZON_WGSL,
+    KEY_WALK_WGSL,
     SHADE_WGSL,
 ];
 
@@ -112,6 +114,7 @@ pub(crate) const PASSES: [PassSpec; 15] = [
             SKY_ATMOSPHERE_WGSL,
             SKY_WGSL,
             PAIR_WGSL,
+            KEY_HORIZON_WGSL,
             KEY_WALK_WGSL,
             TEMPORAL_WGSL,
         ],
@@ -160,6 +163,7 @@ pub(crate) const PASSES: [PassSpec; 15] = [
             SKY_ATMOSPHERE_WGSL,
             SKY_WGSL,
             PAIR_WGSL,
+            KEY_HORIZON_WGSL,
             KEY_WALK_WGSL,
             TEMPORAL_WGSL,
         ],

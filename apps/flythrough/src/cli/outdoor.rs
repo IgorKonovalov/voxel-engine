@@ -100,6 +100,9 @@ pub struct OutdoorArgs {
     /// `--key-horizon march|walk`: how the key light's column horizon reads the map
     /// (`Lighting::key_horizon`).
     pub(crate) key_horizon: svet_render::KeyHorizon,
+    /// `--key-cover off|ray|record|ray-record`: the source that adds the key light back where
+    /// the horizon reads shadow (`Lighting::key_cover`).
+    pub(crate) key_cover: svet_render::KeyCover,
 }
 
 impl OutdoorArgs {
@@ -292,6 +295,7 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
         ),
     ];
     flags.extend(sky_light_flags());
+    flags.extend(key_face_flags());
     flags.extend(ray_lever_flags());
     flags.push(dig_hold_flag());
     flags.extend(ceiling_flags());
@@ -456,6 +460,13 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
                 Ok(())
             },
         ),
+    ]
+}
+
+/// The section's flags of the key light on a cube face (Plan 0100): where its horizon is read,
+/// how it reads the map and the source that adds it back under cover.
+fn key_face_flags() -> Vec<Flag<Parsing>> {
+    vec![
         Flag::value(
             &["--key-at"],
             "hit|face|face-smooth|centre",
@@ -480,6 +491,21 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
             |p: &mut Parsing, v| {
                 p.args.outdoor.key_horizon =
                     v.named(svet_render::KeyHorizon::from_name, "march or walk")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--key-cover"],
+            "off|ray|record|ray-record",
+            "the source that adds the key light back on a cube face where its horizon reads \
+                 shadow, the larger of the two shown: one ray from the face's centre toward \
+                 the sun's disc centre near, the face's own baked key record at every \
+                 distance, or the ray near and the record far [off]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.key_cover = v.named(
+                    svet_render::KeyCover::from_name,
+                    "off, ray, record or ray-record",
+                )?;
                 Ok(())
             },
         ),

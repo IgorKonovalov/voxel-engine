@@ -25,6 +25,9 @@ use support::cover::{Columns, Records, Solid, disc_direction, octa16_decode};
 #[path = "walked.rs"]
 mod walked;
 
+#[path = "cover_arms.rs"]
+mod arms;
+
 /// Voxels north of W3's eye at which its camera looks at the ground.
 const AHEAD: f32 = 40.0;
 const W3_EYE: [f32; 3] = [-9.5, 915.1, 595.8];

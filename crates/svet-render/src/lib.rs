@@ -119,10 +119,10 @@ pub use frame::{
 };
 pub use frame::{
     CrackShares, DigHold, EntityLight, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, KeyAt,
-    KeyFar, KeyFarMix, KeyHorizon, LightHooks, LightWeights, Lighting, LightingResolution,
-    LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher, NormalMode, PassTimer,
-    Penumbra, RenderScale, ShadowWalk, SkyNormal, StoreRead, SurfaceTuning, ToneMap, ViewMode,
-    YoungFilter, jitter_at,
+    KeyCover, KeyFar, KeyFarMix, KeyHorizon, LightHooks, LightWeights, Lighting,
+    LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
+    NormalMode, PassTimer, Penumbra, RenderScale, ShadowWalk, SkyNormal, StoreRead, SurfaceTuning,
+    ToneMap, ViewMode, YoungFilter, jitter_at,
 };
 pub use fsr2::{Fsr2, Fsr2Settings, Fsr2Stage, UpscalerKind};
 pub use gpu_world::{
@@ -165,8 +165,11 @@ pub const LIGHT_WGSL: &str = include_str!("shaders/light.wgsl");
 pub const GRADIENT_WGSL: &str = include_str!("shaders/gradient.wgsl");
 /// The visibility pair's functions, compiled before `temporal.wgsl`.
 pub const PAIR_WGSL: &str = include_str!("shaders/pair.wgsl");
+/// The key light's column horizon (the march, the switch to the walk, where on a face it is
+/// read), composed into the temporal and the light passes.
+pub const KEY_HORIZON_WGSL: &str = include_str!("shaders/key_horizon.wgsl");
 /// The key light's horizon walked over every column-map cell (`KeyHorizon::Walk`), composed after
-/// [`PAIR_WGSL`].
+/// [`KEY_HORIZON_WGSL`].
 pub const KEY_WALK_WGSL: &str = include_str!("shaders/key_walk.wgsl");
 /// The temporal pass, compiled after the modules its pass names.
 pub const TEMPORAL_WGSL: &str = include_str!("shaders/temporal.wgsl");

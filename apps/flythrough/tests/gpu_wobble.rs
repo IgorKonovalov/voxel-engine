@@ -113,6 +113,8 @@ struct Arm {
     key_at: svet_render::KeyAt,
     /// Plan 0100 Phase 5b's arm: how the column horizon reads the map (`keyhorizon=march|walk`).
     key_horizon: svet_render::KeyHorizon,
+    /// Plan 0100 Phase 6's arm: the source under cover (`keycover=off|ray|record|ray-record`).
+    key_cover: svet_render::KeyCover,
     /// Plan 0100 Phase 3's arms, read by `coarse::reading` alone: the coarse pass's samples a
     /// brick direction (`coarse=N`, the fly-through's by default), the full-first radius
     /// (`ff=N|none`, the fly-through's by default) and the baked sky term read by the face's
@@ -140,7 +142,7 @@ impl Arm {
     /// `hfar` (`light_history_far`); Plan 0098 Phase 9's `hist` (`light_history` on, after
     /// `calm`) and `baked` (`key_far baked`); Plan 0100 Phase 1's `keyat=hit|face|face-smooth`
     /// (`Lighting::key_at`; Phase 1b's `centre`); Plan 0100 Phase 3's `coarse=N`, `ff=N|none` and `skyface`; Phase 5b's
-    /// `keyhorizon=march|walk`.
+    /// `keyhorizon=march|walk`; Phase 6's `keycover=off|ray|record|ray-record`.
     fn parse() -> Self {
         Self::from_spec(&std::env::var("SVET_WOBBLE").unwrap_or_else(|_| "default".into()))
     }
@@ -194,6 +196,7 @@ impl Arm {
             light_history_far: false,
             key_at: flythrough::default_lighting().key_at,
             key_horizon: flythrough::default_lighting().key_horizon,
+            key_cover: flythrough::default_lighting().key_cover,
             coarse: svet_render::DEFAULT_COARSE_SAMPLES,
             full_first: Some(svet_render::DEFAULT_NEAR),
             sky_face: false,
@@ -268,6 +271,9 @@ impl Arm {
                 "keyat" => a.key_at = svet_render::KeyAt::from_name(v).expect("keyat=NAME"),
                 "keyhorizon" => {
                     a.key_horizon = svet_render::KeyHorizon::from_name(v).expect("keyhorizon=NAME")
+                }
+                "keycover" => {
+                    a.key_cover = svet_render::KeyCover::from_name(v).expect("keycover=NAME")
                 }
                 "coarse" => a.coarse = v.parse().unwrap(),
                 "ff" => a.full_first = (v != "none").then(|| v.parse().unwrap()),
@@ -362,6 +368,7 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
         light_history_far: arm.light_history_far,
         key_at: arm.key_at,
         key_horizon: arm.key_horizon,
+        key_cover: arm.key_cover,
         sky_normal: if arm.sky_face {
             svet_render::SkyNormal::Face
         } else {

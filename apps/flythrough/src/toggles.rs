@@ -141,29 +141,7 @@ macro_rules! lighting {
 }
 
 mod cycle;
-pub(crate) use cycle::{next_missing_light, next_reach};
-
-/// The budgets the menu's `bake budget` steps through: the default slice, 150 ms a second and 300 ms a
-/// second, each capped at a quarter of the frame.
-pub(crate) const BUDGET_CYCLE: [svet_render::Budget; 3] = [
-    svet_render::Budget::PerFrame {
-        ms: svet_render::DEFAULT_BAKE_SLICE_MS,
-    },
-    svet_render::Budget::PerSecond {
-        ms_per_s: 150.0,
-        cap: 0.25,
-    },
-    svet_render::Budget::PerSecond {
-        ms_per_s: 300.0,
-        cap: 0.25,
-    },
-];
-
-/// The budget after `b` in [`BUDGET_CYCLE`]; one not in it goes to the first.
-pub(crate) fn next_budget(b: svet_render::Budget) -> svet_render::Budget {
-    let i = BUDGET_CYCLE.iter().position(|&x| x == b);
-    BUDGET_CYCLE[i.map_or(0, |i| (i + 1) % BUDGET_CYCLE.len())]
-}
+pub(crate) use cycle::{next_budget, next_missing_light, next_reach};
 
 /// The menu's `look`: the next preset, its normal mode and tuning in the look. The far normal stays, so
 /// returning to face mode uses it again.
@@ -1080,6 +1058,11 @@ pub static TOGGLES: &[Toggle] = &[
         "key horizon",
         |m| format!("key horizon {}", m.lighting.key_horizon.name()),
         |m| m.lighting.key_horizon = m.lighting.key_horizon.next()
+    ),
+    diag!(
+        "key cover",
+        |m| format!("key cover {}", m.lighting.key_cover.name()),
+        |m| m.lighting.key_cover = m.lighting.key_cover.next()
     ),
     Toggle {
         press: Press::Menu,

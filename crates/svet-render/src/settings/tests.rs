@@ -309,3 +309,31 @@ fn the_key_horizon_row_is_live_and_every_profile_marches() {
         assert_eq!(t.lighting.key_horizon, crate::frame::KeyHorizon::Walk);
     }
 }
+
+/// Plan 0100 Phase 6: `lighting.key_cover` is a row of its own, applied live, and every profile
+/// holds `off`, the image before the setting (Plan 0100 Phase 9 picks); its test value is
+/// `ray-record`, which acts near and far.
+#[test]
+fn the_key_cover_row_is_live_and_every_profile_is_off() {
+    assert_eq!(
+        RenderSettings::FIELDS
+            .iter()
+            .filter(|&&(n, _)| n == "lighting.key_cover")
+            .map(|&(_, c)| c)
+            .collect::<Vec<_>>(),
+        [ApplyClass::Live]
+    );
+    for p in Profile::ALL {
+        let s = RenderSettings::profile(p);
+        assert_eq!(
+            s.lighting.key_cover,
+            crate::frame::KeyCover::Off,
+            "{}",
+            p.name()
+        );
+        let t = s
+            .with_test_value("lighting.key_cover")
+            .expect("a test value");
+        assert_eq!(t.lighting.key_cover, crate::frame::KeyCover::RayRecord);
+    }
+}
