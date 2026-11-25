@@ -2,6 +2,7 @@
 
 use super::*;
 
+mod books;
 mod digs;
 mod fade_clock;
 mod keys;
@@ -17,11 +18,13 @@ mod stats;
 mod step;
 mod tiers;
 
+pub(crate) use self::books::Books;
 pub use self::message::Residency;
 pub(crate) use self::message::{FrameMessage, Inbox, StepSettings};
 pub use self::open::in_view_census;
 use self::reach::reach_of;
 pub use self::reads::QueueRead;
+pub(crate) use self::reads::Source as ReadSource;
 pub(crate) use self::shadow::{LightNote, Shadow, notes};
 pub use self::stats::{
     Band, Bands, DigTrace, DigTraceJob, InViewWaiting, LANDED_BARE, LANDED_FALLBACK,

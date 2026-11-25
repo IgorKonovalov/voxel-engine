@@ -107,8 +107,10 @@ where
                     let bytes: usize = out.iter().map(Weighed::bytes).sum();
                     let mut ob = Shared::<M, O>::lock(&sh.outbox);
                     while ob.bytes > 0 && ob.bytes + bytes > sh.cap {
+                        // At the stop the step's entries still go in: the books already hold
+                        // them, so the joiner applies them ([`BakeThread::stop_all`]).
                         if sh.stop.load(Ordering::Acquire) {
-                            return side;
+                            break;
                         }
                         ob = sh.wake.wait(ob).unwrap_or_else(PoisonError::into_inner);
                     }
@@ -146,16 +148,19 @@ where
     }
 
     /// The bytes waiting in the outbox.
+    #[cfg(test)]
     pub(crate) fn outbox_bytes(&self) -> usize {
         Shared::<M, O>::lock(&self.shared.outbox).bytes
     }
 
     /// The steps the bake thread has run.
+    #[cfg(test)]
     pub(crate) fn steps(&self) -> u64 {
         self.shared.steps.load(Ordering::Acquire)
     }
 
     /// Whether a message waits for the bake thread.
+    #[cfg(test)]
     pub(crate) fn waiting(&self) -> bool {
         Shared::<M, O>::lock(&self.shared.inbox).is_some()
     }
@@ -172,9 +177,27 @@ where
     }
 
     /// Stops the thread and joins it: the bake half back, or the panic that ended it.
+    #[cfg(test)]
     pub(crate) fn stop(mut self) -> Result<S, String> {
         self.halt()
             .unwrap_or_else(|| Err("the bake thread was already joined".into()))
+    }
+
+    /// Stops the thread and joins it: the bake half back with the message it had not taken and
+    /// the entries the render thread had not taken, in order; or the panic that ended it.
+    pub(crate) fn stop_all(mut self) -> Result<(S, Option<M>, Vec<O>), String> {
+        let side = self
+            .halt()
+            .unwrap_or_else(|| Err("the bake thread was already joined".into()))?;
+        let msg = Shared::<M, O>::lock(&self.shared.inbox).take();
+        let out = std::mem::take(&mut Shared::<M, O>::lock(&self.shared.outbox).entries);
+        Ok((side, msg, out))
+    }
+
+    /// The message waiting for the bake thread, read in place under the inbox's lock.
+    #[cfg(test)]
+    pub(crate) fn peek<R>(&self, read: impl FnOnce(Option<&M>) -> R) -> R {
+        read(Shared::<M, O>::lock(&self.shared.inbox).as_ref())
     }
 
     fn halt(&mut self) -> Option<Result<S, String>> {

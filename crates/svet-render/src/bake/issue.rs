@@ -95,6 +95,9 @@ pub(crate) struct Issuer {
     pub(super) timed: bool,
     pub(super) timer: Option<Option<LoopTimer>>,
     pub(super) tables_at: Option<u64>,
+    /// Read-backs collected for a bake thread that stopped before it read them: handed out
+    /// first, in order, by the next collect.
+    pub(super) returned: VecDeque<ReadBack>,
 }
 
 impl Issuer {
@@ -105,6 +108,12 @@ impl Issuer {
             timed: true,
             ..Self::default()
         }
+    }
+
+    /// Read-backs taken out of flight that the bake half has not read: the next collects hand
+    /// them out first.
+    pub(crate) fn give_back(&mut self, read_backs: Vec<ReadBack>) {
+        self.returned.extend(read_backs);
     }
 }
 
@@ -155,6 +164,9 @@ impl RenderHalf for GpuHalf<'_> {
         use std::sync::atomic::Ordering;
         let device = self.run.device;
         let issuer = &mut *self.issuer;
+        if let Some(rb) = issuer.returned.pop_front() {
+            return Some(rb);
+        }
         loop {
             let front = issuer.in_flight.front()?;
             if front.ready.load(Ordering::Acquire) != 0 {

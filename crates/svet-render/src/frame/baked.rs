@@ -93,6 +93,19 @@ pub(super) struct BakeLink {
     pub(super) blocking_reads: std::sync::atomic::AtomicU64,
     /// The store's counters, copied out by [`Frame::copy_store_stats`].
     pub(super) ring: ReadbackRing,
+    /// The bake thread (ADR-0083), while it owns the queue's books, the store's copy and the
+    /// shadow; `queue` is `None` and `store` a stand-in of the same capacity then.
+    pub(super) thread: Option<crate::bake::ThreadLink>,
+    /// Whether the live queue's sliced steps run on the bake thread ([`Frame::set_bake_thread`]).
+    pub(super) thread_on: bool,
+    /// The world the bake thread lists from ([`Frame::share_bake_world`]).
+    pub(super) world: Option<std::sync::Arc<svet_world::World>>,
+    /// What a stopped bake thread left: its render-half calls not made yet, and the message it
+    /// had not read, merged into the next step's.
+    pub(super) unissued: Vec<crate::bake::Op>,
+    pub(super) leftover: Option<crate::bake::FrameMessage>,
+    /// A bake thread's panic read outside a step, for the next step to return.
+    pub(super) failed: Option<crate::bake::BakeError>,
 }
 
 /// The bake pool's buffer of `bytes`.
@@ -142,6 +155,12 @@ impl BakeLink {
             }),
             blocking_reads: std::sync::atomic::AtomicU64::new(0),
             ring: ReadbackRing::new(device, "store stats readback", STORE_STATS_BYTES),
+            thread: None,
+            thread_on: false,
+            world: None,
+            unissued: Vec::new(),
+            leftover: None,
+            failed: None,
         }
     }
 }
@@ -198,6 +217,7 @@ impl Frame {
         settings: &crate::bake::BakeSettings,
         progress: &mut dyn FnMut(&crate::bake::BakeProgress),
     ) -> Result<crate::bake::BakeReport, crate::bake::BakeError> {
+        self.join_bake(Some(queue));
         self.fit_store(true);
         hold_reach(device, queue, gpu, world, extent)?;
         self.baked.dig_boxes.clear();
@@ -250,6 +270,12 @@ impl Frame {
         settings: crate::bake::BakeSettings,
         slice_ms: f64,
     ) {
+        // The old queue's books and what its thread made are dropped with it.
+        self.join_bake(None);
+        self.baked.lists = crate::bake::Lists::default();
+        self.baked.unissued.clear();
+        self.baked.leftover = None;
+        self.baked.failed = None;
         self.fit_store(true);
         self.baked.store.start_queue(gpu.window(), settings.cell);
         self.baked.flush(queue);
@@ -291,10 +317,16 @@ impl Frame {
     /// The live queue's books, if started, as the render thread reads them
     /// ([`crate::bake::QueueRead`]: with the mailbox's arrivals counted).
     pub fn bake_queue(&self) -> Option<crate::bake::QueueRead<'_>> {
-        let queue = self.baked.queue.as_ref()?;
+        let src = match (&self.baked.queue, &self.baked.thread) {
+            (Some(queue), _) => crate::bake::ReadSource::Live {
+                queue,
+                store: &self.baked.store,
+            },
+            (None, Some(link)) => crate::bake::ReadSource::Books(&link.books),
+            (None, None) => return None,
+        };
         Some(crate::bake::QueueRead {
-            queue,
-            store: &self.baked.store,
+            src,
             inbox: &self.baked.inbox,
         })
     }
@@ -313,7 +345,7 @@ impl Frame {
         &mut self,
         set: impl FnOnce(&mut crate::bake::BakeQueue) + Send + Sync + 'static,
     ) {
-        if self.baked.queue.is_some() {
+        if self.queue_running() {
             self.baked.inbox.push_set(Box::new(set));
         }
     }
@@ -394,7 +426,7 @@ impl Frame {
         prepared: &[(ChunkCoord, svet_world::Prepared)],
         _world: &svet_world::World,
     ) {
-        if self.baked.queue.is_some() && !prepared.is_empty() {
+        if self.queue_running() && !prepared.is_empty() {
             self.baked.inbox.push_masks(prepared);
         }
     }
@@ -418,7 +450,14 @@ impl Frame {
         view: &crate::bake::QueueView,
     ) -> Option<Result<crate::bake::QueueStats, crate::bake::BakeError>> {
         let t0 = crate::bake::StepStart::now();
-        let settings = self.baked.queue.as_ref()?.settings.clone();
+        if let Some(e) = self.baked.failed.take() {
+            return Some(Err(e));
+        }
+        let settings = match (&self.baked.queue, &self.baked.thread) {
+            (Some(q), _) => q.settings.clone(),
+            (None, Some(link)) => link.settings.clone(),
+            (None, None) => return None,
+        };
         let w = gpu.window();
         let f = gpu.focus().0;
         let size = w.size();
@@ -467,7 +506,7 @@ impl Frame {
         let (sky, key) = (self.bake_sky(), self.bake_key());
         self.baked.messages += 1;
         let frame = self.baked.messages;
-        let msg = crate::bake::FrameMessage {
+        let mut msg = crate::bake::FrameMessage {
             frame,
             start: t0,
             view: view.clone(),
@@ -478,6 +517,22 @@ impl Frame {
             arrivals: self.baked.inbox.take(frame),
             landed: self.baked.lists.report(frame),
         };
+        // A sliced step with the setting on runs on the bake thread, once a stopped one's
+        // leftovers have gone through a lockstep step.
+        if self.baked.unissued.is_empty() && self.baked.leftover.is_none() {
+            self.start_bake_thread(world, view.samples.is_none());
+        }
+        if self.baked.thread.is_some() {
+            return Some(self.thread_frame(device, queue, &*gpu, params, &world_bind, msg));
+        }
+        if let Some(old) = self.baked.leftover.take() {
+            msg = old.coalesce(msg);
+        }
+        let timer = self
+            .baked
+            .queue
+            .as_ref()
+            .and_then(|q| q.settings.timer.clone());
         let gpu_run = crate::bake::GpuRun {
             device,
             queue,
@@ -493,6 +548,12 @@ impl Frame {
             issuer: &mut self.baked.issuer,
             lists: &mut self.baked.lists,
         };
+        // A stopped bake thread's calls not made yet, ahead of this step's.
+        crate::bake::replay(
+            std::mem::take(&mut self.baked.unissued),
+            &mut half,
+            timer.as_ref(),
+        );
         let q = self.baked.queue.as_mut()?;
         let out = q.step(
             &mut self.baked.shadow,
@@ -581,6 +642,7 @@ impl Frame {
         if self.baked.dig_boxes.is_empty() {
             return None;
         }
+        self.join_bake(Some(queue));
         let piece = self.baked.store.piece()?;
         let boxes = std::mem::take(&mut self.baked.dig_boxes);
         if let Err(e) = hold_reach(device, queue, gpu, world, piece) {
@@ -705,16 +767,26 @@ impl Frame {
     pub(super) fn store_stats_of(&self, bytes: &[u8]) -> crate::bake::StoreStats {
         let word =
             |i: usize| u32::from_le_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]);
+        let counts = match &self.baked.thread {
+            Some(link) => crate::bake::StoreStats {
+                missing: word(0),
+                brick_reads: word(4),
+                coarse_reads: word(8),
+                ..link.books.store_stats
+            },
+            None => self.baked.store.stats(word(0), word(4), word(8)),
+        };
         crate::bake::StoreStats {
             fallback: word(12),
             still_black: word(16),
-            ..self.baked.store.stats(word(0), word(4), word(8))
+            ..counts
         }
     }
 
     /// What a cube face with no brick value reads (ADR-0053); [`crate::bake::MissingLight::Chain`]
     /// by default.
     pub fn set_missing_light(&mut self, queue: &wgpu::Queue, mode: crate::bake::MissingLight) {
+        self.join_bake(Some(queue));
         self.baked.store.set_missing_light(mode);
         self.baked.flush(queue);
     }
@@ -731,8 +803,17 @@ impl Frame {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// The store.
+    /// The store's copy, lockstep's.
+    ///
+    /// # Panics
+    ///
+    /// With the bake thread running: the copy is its own; [`Frame::bake_queue`] and
+    /// [`Frame::read_store_block`] read its snapshot.
     pub fn store(&self) -> &crate::bake::Store {
+        assert!(
+            self.baked.thread.is_none(),
+            "the store's copy is the bake thread's while it runs"
+        );
         &self.baked.store
     }
 
@@ -743,7 +824,10 @@ impl Frame {
         queue: &wgpu::Queue,
         coord: ChunkCoord,
     ) -> Option<Vec<u32>> {
-        let (first, words) = self.baked.store.block(coord)?;
+        let (first, words) = match &self.baked.thread {
+            Some(link) => *link.books.blocks.get(&coord.0)?,
+            None => self.baked.store.block(coord)?,
+        };
         let bytes =
             crate::readback::read_buffer(device, queue, &self.baked.pool, first * 4, words * 4);
         Some(bytemuck::pod_collect_to_vec(&bytes))
@@ -765,6 +849,9 @@ impl Frame {
             .min(limits.max_buffer_size)
             & !3;
         if bytes != self.baked.store.capacity() {
+            // The pool is made again: what the bake thread made for the old one is dropped.
+            self.join_bake(None);
+            self.baked.lists.waiting.clear();
             let missing = self.baked.store.missing_light();
             self.baked.store = crate::bake::Store::new(bytes);
             self.baked.pool = pool_buffer(&self.device, bytes);

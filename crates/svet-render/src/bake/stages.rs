@@ -78,7 +78,7 @@ pub(super) const S_FADES: usize = 19;
 
 pub(super) const S_SUMMARIES: usize = 20;
 
-pub(super) const S_APPLY: usize = 21;
+pub(crate) const S_APPLY: usize = 21;
 
 /// The buffers a step's writes are counted by ([`StepStages::bytes`]): the pool's block words
 /// (a block, a fade's shown words, a dig's sky-stale marks), the chunk table's words (a block's

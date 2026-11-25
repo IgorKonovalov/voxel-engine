@@ -172,6 +172,8 @@ pub(crate) struct Lists {
     /// The landing words written that the bake half's copy may not hold yet, by chunk: the word,
     /// and the message's frame that carried it to the bake half (`None`: not sent yet).
     pub(crate) unconfirmed: std::collections::HashMap<[i32; 3], (u32, Option<u64>)>,
+    /// The newest message's frame a list applied so far was made from ([`WriteList::frame`]).
+    pub(crate) newest: u64,
 }
 
 impl Lists {
@@ -216,6 +218,7 @@ impl Lists {
             }
             let l = self.waiting.pop_front().expect("front above");
             bytes += l.bytes;
+            self.newest = self.newest.max(l.frame);
             // The bake half had read the words sent up to the list's message.
             self.unconfirmed
                 .retain(|_, (_, sent)| sent.is_none_or(|f| f > l.frame));

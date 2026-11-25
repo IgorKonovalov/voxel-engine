@@ -197,13 +197,6 @@ impl FrameMessage {
     /// `self` followed by the `newer` message the bake half had not read yet, as one: the newest
     /// view, notes' state, sky, key and settings, the change lists, arrivals and landing words
     /// appended in order.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the bake thread's inbox coalesces; until it runs, the tests"
-        )
-    )]
     pub(crate) fn coalesce(mut self, newer: FrameMessage) -> FrameMessage {
         let FrameMessage {
             frame,

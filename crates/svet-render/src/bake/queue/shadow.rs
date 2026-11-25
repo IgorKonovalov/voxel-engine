@@ -49,13 +49,6 @@ impl ShadowNotes {
     /// These notes followed by `newer`, as one: taking the result leaves the shadow as taking
     /// the two in order does. The changes append (each chunk once), the newer window, radius and
     /// lights win, and newer notes that replace the whole state replace these.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the bake thread's inbox coalesces; until it runs, the tests"
-        )
-    )]
     pub(crate) fn then(mut self, newer: ShadowNotes) -> ShadowNotes {
         if newer.whole {
             return newer;
@@ -70,12 +63,30 @@ impl ShadowNotes {
         };
         self.window = newer.window;
         self.light_radius = newer.light_radius;
-        self.chunks.extend(newer.chunks);
-        self.columns.extend(newer.columns);
+        // Each chunk's and column's newest state, once: a stalled bake half's inbox stays within
+        // the chunks and columns sent.
+        newest(&mut self.chunks, newer.chunks);
+        newest(&mut self.columns, newer.columns);
         if newer.lights.is_some() {
             self.lights = newer.lights;
         }
         self
+    }
+}
+
+/// `newer`'s entries into `have`: a key already there takes the newer value in its place, a new
+/// key goes at the end.
+fn newest<K: Copy + Eq + std::hash::Hash, V>(have: &mut Vec<(K, V)>, newer: Vec<(K, V)>) {
+    let mut at: std::collections::HashMap<K, usize> =
+        have.iter().enumerate().map(|(i, (k, _))| (*k, i)).collect();
+    for (k, v) in newer {
+        match at.get(&k) {
+            Some(&i) => have[i].1 = v,
+            None => {
+                at.insert(k, have.len());
+                have.push((k, v));
+            }
+        }
     }
 }
 

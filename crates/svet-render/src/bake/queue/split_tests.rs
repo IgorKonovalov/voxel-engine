@@ -254,8 +254,10 @@ impl Rig {
     /// The public reads as the frame makes them.
     fn read(&self) -> QueueRead<'_> {
         QueueRead {
-            queue: &self.queue,
-            store: &self.store,
+            src: ReadSource::Live {
+                queue: &self.queue,
+                store: &self.store,
+            },
             inbox: &self.inbox,
         }
     }
@@ -666,3 +668,4 @@ fn a_dig_job_is_planned_ahead_of_an_open_job_that_is_not_a_digs() {
 }
 
 mod routing;
+mod thread;

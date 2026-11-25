@@ -558,6 +558,10 @@ impl RenderSettings {
     pub const NOT_SETTINGS: &'static [(&'static str, &'static str)] = &[
         ("set_dt", "a per-frame input: the frame's step in seconds"),
         (
+            "set_bake_thread",
+            "wip (Plan 0099 Phase 3a): the bake thread's switch, until its settings row lands",
+        ),
+        (
             "set_bake_queue",
             "the route a caller's write to the live queue's books takes (a rig's order or rule \
              switch); the bake knobs that are settings have setters of their own",

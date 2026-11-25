@@ -1063,8 +1063,12 @@ impl Frame {
             // The floor's term (ADR-0081): walked and smoothed only where it can move the
             // ceiling, the anchor in force and `F_floor` over 0.
             if u.anchor > 0.0 && u.sky_share > 0.0 && a.sky_anchor_floor > 0.0 {
-                let answer = crate::bake::sky_over_floor(&self.baked.store, p.views[0].origin)
-                    .map(|(f, _)| f);
+                let eye = p.views[0].origin;
+                let answer = match &self.baked.thread {
+                    Some(link) => link.books.sky_over_floor(eye),
+                    None => crate::bake::sky_over_floor(&self.baked.store, eye),
+                }
+                .map(|(f, _)| f);
                 around.1 = around.0.step(answer, self.dt, a.sky_around_tau);
             } else {
                 around.0.reset();
