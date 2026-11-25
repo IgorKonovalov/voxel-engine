@@ -1,7 +1,8 @@
 # 0104: The wobble anchored to the owner's eye: clips he ranks, a measure that ranks them, then the remedy
 
-> **Status:** in progress: Phases 0, 1 and 2 landed (2026-11-25); Phase 4 next (Phase 3 not
-> needed: every subject anchored); approved (owner's go, 2026-11-25; drafted the same day with no interview from
+> **Status:** in progress: Phases 0, 1 and 2 landed (2026-11-25); Phase 0b, then Phase 4 as
+> amended, next ("Amended 2026-11-25 (architect, after Phases 0 and 2)"; Phase 3 does not
+> run: every subject anchored); approved (owner's go, 2026-11-25; drafted the same day with no interview from
 > Plan 0100's close; questions 1 to 3 answered (a), (a), (a), recorded under "Risks & open
 > questions"). **Order (owner, question 1 (a)):** Phases 0 to 2 and 4 run as a lane beside
 > Plan 0099 now; Phase 3 and every remedy phase start on a main that holds Plan 0099.
@@ -344,6 +345,201 @@ Every phase carries exactly one `**Owner skill:**`: `dev` or `human`.
   the owner's words beside them. **Either way the dev stops here and the architect is
   called.**
 
+## Amended 2026-11-25 (architect, after Phases 0 and 2)
+
+Three rulings on what Phases 0 and 2 read, from the readings log ("The forest soak test's
+time", "The W1 mismatch", "Phase 2") and the rig's code. No GPU run stands behind this
+section: every time below that is not quoted from the log is a projection and says so.
+**Order: Phase 0b, then Phase 4.** Phase 0b lands before this lane merges into main in any
+case: as the tree stands the weekly soak (`soak.yml`, lavapipe) would run a 12 538 s test.
+
+**One rule for every run of this plan from here on (owner, 2026-11-25):** no run is started
+that projects past 20 minutes under the perf lock. A run prints its projection from its first
+frames (the settle's samples a second against the samples the same settle took on the RTX; a
+segment's first 30 frames against its length) and the dev stops it when the projection passes
+the cap. The gate tier is the most any step runs.
+
+### Phase 0b: The forest soak test asserts on one baked store (the remedy for its time)
+- **Owner skill:** dev
+- **Why:** `the_defaults_hold_still_at_rest_and_the_far_holds` reads 771 s on the RTX and
+  12 538 s on lavapipe on a whole census (owner: "such long test is exactly what we are
+  trying to avoid"). The log's own figures say where the time goes. The test bakes six fresh
+  stores from one eye with the same knobs and asserts on two of the six arms (the rest arms,
+  `default,pin,nqueue`, at fly 180 and fly 20); the stepping and native arms are printed. It
+  reads 5 550 frames after the settles (0.131 s a frame on the RTX, 0.45 s on lavapipe), of
+  which the two asserted stops need 1 050. On lavapipe the settle draws 4 727 frames an arm
+  because the queue's sample cap a step sits at its floor there (16 384 samples: the slice
+  is sized from GPU timestamps, which lavapipe does not give), so about 77 million samples
+  go out a floor's worth a drawn frame.
+- **What:** No engine behaviour changes; `apps/flythrough/tests/` only. Three levers, all
+  three taken, in this order.
+  1. **The test runs what it asserts, on one store.** One frame, one settle, then the rest
+     protocol twice from the spawn's camera with the queue stopped (fly 180, then fly 20):
+     the exposure's pin, the still, the fly, the stop. The protocol ends at the stop: the
+     turn and the hold after it assert nothing. With the queue stopped the store does not
+     change between the two reads. The four printed arms (`default,pin` and
+     `default,pin,native` at both flies) leave the test; they are `reading::wobble` under
+     `SVET_WOBBLE`, which exists, and the test's doc comment names the specs.
+  2. **The settle's pace is not the fly-through's.** While it settles, `support::baked::
+     settle` steps the queue with a slice long enough that a step's sample cap is the
+     submit's own (`Budget::PerFrame` raised for the settle, the budget before restored at
+     its end, as `wobble_on` already does for `pre=MS`). The knobs that decide what is
+     baked (coarse samples, near and full-first radii, tiers by size on screen) stay the
+     fly-through's. This changes every rig that takes the shared settle, so it is checked:
+     see the done-when's second line.
+  3. **On a software adapter the test's frame is half each way** (640 x 360 internal, 960 x
+     540 out, the arm's `out=` token; `run_segment` sizes its buffers from the `OUT`
+     constant today and must take the arm's). It is the one lever on the cost of a read
+     frame there. The near bars are absolute and keep their constants at both sizes; the
+     far +30 bar is a constant a size (below).
+- **The far +30 bars are re-set.** `REST_FAR30` (9.98 and 11.39, plus 2) was read on a store
+  with 5 of 59 chunks baked: it measured the far landing during the stop. On a whole census
+  the same figure reads 5.44 and 4.88 on the RTX (5.64 and 4.84 on lavapipe), so the old
+  bar would let the far double before it failed. The rule is unchanged (Plan 0098 Phase 11:
+  the largest of three readings plus 2 points), the readings are new: at 1080p, the largest
+  of three RTX readings on a whole census (Phase 0's and two of this phase's); at the half
+  frame, the largest of three lavapipe readings of this phase. From Phase 0's figures alone
+  the 1080p bars would be 7.64 (fly 180) and 6.88 (fly 20); the dev writes the constants
+  from the three readings and the log holds all of them. `REST_NEAR0` and `REST_NEAR_PAIR`
+  are not moved (the readings are 0.00 to 0.05 against 2.05 and 2.5; they are Plan 0095's
+  and Plan 0098's bars as written).
+- **The 727 s on the RTX after the settles** falls with the arms (lever 1) and is not cut
+  further: what is left is the rig's reads a frame (hits, sources, classes), the instrument
+  every wobble reading shares, and a leaner second path for the test would be a second
+  instrument to keep equal to the first.
+- **Rejected:** *the RTX only, with a cheaper lavapipe proxy*: a bar no scheduled machine
+  runs goes stale unseen, and the tiers have no class for an asserting test run by hand
+  (the weekly soak on lavapipe is the soak mark's meaning); the binary's other soak test
+  (`the_far_moves_no_worse_than_the_before`, 101 s on lavapipe) asserts a different claim.
+  It is the fallback only if the bar below is missed with all three levers, and then the
+  architect rules. *Fewer asserted arms* (dropping fly 20, or a bar): each is a clause of
+  Plan 0098's contract, and lever 1 already removes every arm that asserts nothing. *A
+  smaller view on both adapters*: 1080p through FSR 2 at 1.5 is the size the contract was
+  ruled at, and the RTX pays about 150 s for it. *A shorter stop*: the bars are frame 30
+  against frame 300.
+- **Files touched:** `apps/flythrough/tests/gpu_wobble.rs`,
+  `apps/flythrough/tests/support/baked.rs`, `docs/plans/logs/0104.md`.
+- **Done when** (binary `gpu_wobble`, the test by name; it keeps `#[ignore = "soak"]`):
+  - the test asserts the three rest bars at fly 180 and fly 20 on one store whose census
+    line says whole, and fails when a census is not whole;
+  - the faster settle bakes the same store: on the RTX at 1080p the census (chunks in
+    view, settled, coarse) equals Phase 0's 60/60 with 54 coarse, and the rest figures read
+    within 1 point of Phase 0's (far +30 5.44 and 4.88; near pair and stop +0 near under
+    0.1); a difference is reported and the lever withdrawn, not tuned around;
+  - **the time bar: 180 s on the RTX and 600 s on lavapipe on the dev box**, wall time of
+    the test alone under the perf lock, the load beside it. Projected, not read: the RTX
+    about 150 s (1 050 read frames at 0.131 s, a 7 s settle, the forest's generation);
+    lavapipe has no projection worth the name until levers 2 and 3 are read, which is why
+    the first lavapipe run prints one and is stopped past 20 minutes;
+  - the log holds the settle's frames and seconds before and after lever 2 on both
+    adapters, three far +30 readings a size, the constants written from them, and the
+    reading specs that replace the printed arms. Quick tier, clippy and fmt over the
+    changed files. If the lavapipe bar is missed the dev reports the figures and stops.
+
+### The W1 mismatch: one narrower split in Phase 4, with a stop rule
+The reading (1 859 lighting pixels where the GPU's key value is under the CPU port's
+horizon, inside Plan 0100's 1 404 to 1 906; coarse 1 562, 128 to 512 voxels 1 555) is
+unexplained by its three splits, but it carries a lead the splits did not use: **every
+mismatch has the key slot's source "the mean"** (`defects::key_slot`'s 0), not "the
+horizon" (2). The port is being compared against a value that, at those pixels, the shader
+did not read from the horizon. Whether that explains it cannot be said yet, because the
+agreeing pixels were not split by source. It is kept in this plan, as one reading added to
+Phase 4, because its band (128 to 512 voxels, sunlit, darker than it should be) is where
+the owner puts his second artifact ("changing brightness on distant trees that were
+lighted").
+
+- **The split (Phase 4, first step, RTX, W1's eye, one run of seconds after its settle):**
+  all compared pixels by key slot source against agree or mismatch, by the hit's distance
+  band; and, from the shader, which path writes source 0 at 32 to 512 voxels and what it
+  averages.
+- **Stop rule.** (a) Nine tenths of the pixels with source "the mean" in the band mismatch,
+  or the path named is a filtered value the port does not model: the line is closed as a
+  difference of sources, the port's comparison is restricted to pixels whose source is the
+  horizon, and the count there is the new W1 figure. (b) The path's value can change
+  between frames at a fixed world point (it mixes a landing, a history or a jittered read):
+  it becomes a seventh candidate in "After Phase 4", and Phase 4's maps say whether the
+  owner's places lie on such pixels. (c) Neither: the tables go to
+  [`docs/backlog.md`](../backlog.md) under "Plan 0100's leftovers" as unexplained, by the
+  architect at the stop, and this plan carries it no further. No shader is changed in any
+  case.
+
+### Phase 3 does not run
+Every subject is anchored (Phase 2: T, C and S, no "not shown"). Phase 3's `--track-out`
+and `--track` flags are not built by this plan. If a remedy later needs the owner's own
+flight, the amendment that writes the remedy phases brings Phase 3 back by name.
+
+### Phase 4, amended: two artifacts, each with its own subjects
+The owner's words (Phase 2, verbatim in the log): "all wobbles were edge of light stepping
+on slopes, and dots sparkling, or maybe its changing brightness on distant trees that were
+lighted", and "it was almost good, esp Tb". Phase 4 as written predates them. Its two
+candidates do aim at the two artifacts (candidate 2 at the stepping edge, candidate 1 at a
+point's brightness), but four things in it would fail a candidate by construction at the
+places he named. Phase 4's text above stands; where this section differs, this section
+rules.
+
+- **The two artifacts and where they are anchored.**
+  - **A, an edge of light stepping on slopes:** `T a`, the top of the picture at about 3 s,
+    flying (window 2 to 4 s); `S`, the slopes, slight, in the turn. Pair: `T a` over `T b`.
+  - **B, dots sparkling or the brightness of distant sunlit trees changing** (he is not
+    sure which; both are read): `C a`, the lit trees in the top left, in the fly; `C b`,
+    the sunlit trees, in the turn. Pair: `C a` over `C b` (read from "there is wobble"
+    against "a bit", not stated as a ranking: the log says so, and so does the result).
+  - **Not classed:** `S`, the change in the shadow at the tunnel's end where it meets the
+    ground ("clearly seen"). It is named before it is measured: the dev renders `S`'s track
+    again with the queue's counters a frame and says whether the change falls on a frame
+    where a block lands or the exposure steps. A landing or an exposure step is not a
+    wobble of either kind: it goes to the stop as its own line ("Carried to the amendment"
+    already holds both sources) and is left out of both candidates' lines.
+- **A candidate is judged an artifact, not over all subjects.** Candidate 2 is tried on A's
+  subjects, candidate 1 on B's; each is also printed on the other's, as a reading. "Fails
+  one line at an anchored subject" now reads: at a subject of the artifact it is tried on.
+  The plan may leave Phase 4 with a measure for one artifact, for both, or for neither.
+- **The unit grows to what the eye can resolve.** Candidate 2 as written takes faces of at
+  least 16 display pixels, and candidate 1 a face's centre. At the top of `T a` and on
+  distant crowns a face is under a pixel, so the first would score nothing at his place and
+  the second would read the camera's motion across sub-pixel leaves. For both candidates
+  the unit is a face where it covers 16 display pixels, else the visible faces of one normal
+  inside a world cube of 2^k voxels, the smallest k at which they cover 16. Candidate 1's
+  series is the unit's mean display luma over the exposure; candidate 2's is the unit's lit
+  share. For B a second series is printed beside candidate 1: the count of the unit's
+  pixels that leave its lit median by over a tenth for one or two frames and return (the
+  dots), as a reading with no line of its own unless candidate 1 fails and it holds.
+- **Line (a), restated so a region can meet it.** His places are regions (the top third of
+  the picture; the top-left ninth), not tiles. (a) holds when, in his moment, the region
+  holds at least twice its share of the scored tiles among the top tenth by score.
+- **Line (c) is void:** no clip was answered "no". `T b` ("almost no wobble") is already
+  the lower side of line (b) at T.
+- **The turn is 40 frames (0.73 s).** `C b`'s and `S`'s moment is the turn, where a
+  one-second window does not fit: there the series is the segment and the band starts at
+  1.4 Hz.
+- **The runs, each under the cap** (RTX only, question 2 (a); one clip or one eye a hold of
+  the perf lock). Visibility of a unit a frame is read from the rig's hit positions on a
+  render of the clip's own track, not from CPU rays (a ray a face a frame over 645 frames
+  at 2530 x 1378 is hours). A render is the shared settle (6 to 15 s at these eyes, Phase
+  1's table) and at most 645 frames with one read back each: under 5 minutes a clip, a
+  guess, projected from its first 30 frames and stopped past the cap. The scoring is CPU
+  work outside the lock; its units are sampled by a stride the dev picks so a clip scores
+  in under 5 minutes, and the stride is logged. Plan 0100 Phase 8b's stage rows, read
+  again only under a candidate that holds, run one arm a hold under the same rule.
+- **What "almost good" changes.** The defaults (`T b`) are close to accepted, and A's
+  clearest anchor (`T a`) is not a default: it is the no-upscaler arm. The anchors under
+  the defaults are `C a` and `S`. Phase 4 runs as amended either way, since a measure is
+  what every later light plan lacks; whether a remedy follows is question 4.
+- **Done when**, added to Phase 4's: the W1 split with its stop rule's letter; `S`'s shadow
+  change named (a landing, an exposure step, or neither) with the frame; for each artifact
+  and candidate the lines (a) and (b) as **holds** or **fails** at that artifact's
+  subjects; every run's projection and wall time beside its figures.
+
+### Question for the owner (added)
+
+4. **After Phase 4, does a remedy follow?** You called the defaults "almost good, esp Tb".
+   (a) Phase 4 runs, then you are shown its maps over your screenshots and decide: a small
+   remedy at the canopy and the slot, or the plan closes with the measure and the wobble
+   accepted as it is. (b) Stop now: close the plan after Phase 0b with no measure. (c)
+   Remedy phases whatever Phase 4 reads. **Recommended: (a).** Phase 4 is rig work on the
+   RTX with no window, and it leaves a figure shown to follow your eye, which the next
+   light plan needs whether or not this one builds anything.
+
 ## After Phase 4: the stop, and the candidate remedies
 
 **The plan stops for the architect after Phase 4** (or earlier, where Phase 2 anchors
@@ -496,7 +692,8 @@ his 2026-11-12 rule that cheap unpicked modes stay settings, for these settings)
 | 0: the wobble rigs read a baked store | dev | done: the shared settle (`support/baked.rs`); both soak tests pass on a whole census on the RTX and lavapipe (the forest one 12 538 s on lavapipe); W1 unexplained; readings in [`logs/0104.md`](logs/0104.md) | 565bdee2, this commit |
 | 1: the owner's move as clips | dev | done: six files under `live/anchor/`, readings in [`logs/0104.md`](logs/0104.md) | this commit |
 | 2: the owner watches the clips | human | done: T, C, S anchored; T and C orders confirmed blind; answers in [`logs/0104.md`](logs/0104.md) | this commit |
-| 3: the owner's own flight, recorded and rendered again (only for a subject not shown) | dev | not started | |
+| 0b: the forest soak test asserts on one baked store ("Amended 2026-11-25") | dev | not started | |
+| 3: the owner's own flight, recorded and rendered again (only for a subject not shown) | dev | does not run: every subject anchored ("Amended 2026-11-25"; row marked by the architect) | |
 | 4: a measure that ranks what the owner ranked | dev | not started | |
 | the stop: the architect's amendment (the remedy phases) | - | not written | |
 
