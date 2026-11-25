@@ -1,6 +1,6 @@
 # 0099: The bake step off the main thread: a bake thread, write lists the render thread applies, and the in-view drain
 
-> **Status:** in-progress (Phases 1, 2, 2b and 2c landed 2026-11-25); approved (owner, 2026-11-22; his answers are under "Risks & open questions":
+> **Status:** in-progress (Phases 1, 2, 2b, 2c and 3a landed 2026-11-25); approved (owner, 2026-11-22; his answers are under "Risks & open questions":
 > the recommended option in each, question 2 by his own words). **After: 0096, 0098, 0087** (owner, 2026-11-22:
 > drafted now, the lane after the rename; then 0089 and 0093, 0091, ...).
 > **Re-read 2026-11-24** after Plan 0098 (v0.72.0) and the rename (v0.73.0): Phases 1 to 3 are
@@ -1064,7 +1064,7 @@ Readings, gate counts and attempts: [`logs/0099.md`](logs/0099.md).
 | 2: the queue in two halves, in lockstep | dev | done; done-whens 1 to 5 and 7 to 10 pass; (6) re-read at the last commit at load 1.94 at the start, 2.25 at the end: step p50 10.73 ms against Phase 1's 13.77; the frame message carries boxes and masks through a mailbox the public reads consult; the knob setters stay direct writes (log) | `f0d06f1a` |
 | 2b: the cap prices a slice by a fixed part and a sample's cost | dev | done; (a) RENOIR fit 0.823 ms + 12.61 ns (the stop did not fire), RTX no fixed part resolvable; RENOIR drained A ring 1 before 1, 4, 3 (D+1 8, D+3 8, D+4 8), after 1, 2, 2 (D+1 9, D+2 15), every dig-2/3 cap over the floor; RTX drained and RENOIR waiting 1, 2, 1 before and after; the drain's end still overdraws; the estimate keeps the slope and re-reads the level (a deviation, Notes) (log) | committed with this row |
 | 2c: a dig job takes a free slot ahead of every other job's rounds | dev | done; (1), (2), (4), (5) pass; (3) no row with `other` in flight while a dig job waits with a slot free, digs 2 and 3's ring chunks D+11 to 14 (before 20 to 26), ring 1 1, 2, 2 in six of eight and 1, 3, 2 in two; (6) quiet RENOIR fit 0.630 ms + 15.18 ns, drained B ring 1 D+2 14 of 48: **the stop fired**, reported to the architect (log) | committed with this row |
-| 3: the bake half on its own thread | dev | 3a in progress, checkpointed: the routings, the thread, the wiring and the setting (off in every profile); done-whens (1) to (4), (5a), (6) restated, (9) to (12) pass, the GPU re-read on lavapipe passes; readings (7) and (8) left (log, resume notes) | `dc2394ef`, `53a29dbf`, `647fcb6f`, `68cacf9f`, `aba47e60`, `0a8e71c8`, `99c08238` |
+| 3: the bake half on its own thread | dev | 3a done (3b waits for question 6): done-whens (1) to (4), (5a), (6) restated, (9) to (12) pass; (7) quiet, eight runs a side: RTX forest share p50/p99 0.601/1.118 ms (max p99 1.153), wall p50 7.83 ms while in view waits; RENOIR 0.449/0.800, wall p50 24.29 (Phase 1 33.68); (8) fade share 0.61 RTX at 134 fps, 0.82 at the window's size, 1.00 RENOIR; in-view drain 32.9 to 24.2 s RTX, 17.3 to 12.9 s RENOIR; setting off by default (log) | `dc2394ef`, `53a29dbf`, `647fcb6f`, `68cacf9f`, `aba47e60`, `0a8e71c8`, `99c08238`, `e2c269df`, `69fcabf8`, committed with this row |
 | 4: the bake thread keeps the slice fed | dev | not started | |
 | 5: the owner's window | human | not started | |
 | 6: the lines, the defaults and the documents | dev | not started | |
@@ -1136,6 +1136,8 @@ Readings, gate counts and attempts: [`logs/0099.md`](logs/0099.md).
   (the render thread's start underflowed the thread-local byte counts; found by done-when 4).
 - (dev, Phase 3a) A profile switched in the fly-through's menu sets `bake_thread` to the
   profile's value (off), as it does the tiers and the drain.
+- (dev, Phase 3a) The readings of (7) and (8) added teardown lines (`bake thread render laps`, `fade steps`, the snapshot's longest run) and fixed the fly-through's census request, which went through `bake_queue_mut()` (`None` with the thread on) and froze the in-view count; it goes through `Frame::set_bake_queue` now. The RTX runs are 7200 frames, not Phase 1's 3600, so the thread's faster frames reach the residency's end; both sides take 7200.
+- (dev, Phase 3a) (8)'s fade share at 60 fps is derived, not read: no headless run is paced, and the share falls with the frame time (log).
 - (architect, at the draft) The backlog entry "The bake step off the main thread" exists on
   `plan-0096` only; at that plan's merge it is marked taken by this plan.
 
