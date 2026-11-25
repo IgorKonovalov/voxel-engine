@@ -25,6 +25,10 @@ mod coarse;
 mod cover;
 #[path = "gpu_wobble/fsr.rs"]
 mod fsr;
+#[path = "gpu_wobble/keys.rs"]
+mod keys;
+#[path = "gpu_wobble/measure.rs"]
+mod measure;
 #[path = "gpu_wobble/owner_move.rs"]
 mod owner_move;
 mod support;

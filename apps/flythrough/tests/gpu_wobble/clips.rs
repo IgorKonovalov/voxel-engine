@@ -22,6 +22,7 @@
 //! not given). Frames stream to `ffmpeg` (`libx264rgb -qp 0`, Matroska) as `<stem>.mkv`; beside
 //! it `<stem>.txt` (a frame a line: eye, yaw, pitch, exposure, the queue's chunks baked so far
 //! and blocks fading), frame 1 as `<stem>-f1.png` and raw `<stem>-f1.rgb`. `SVET_CLIP=search` picks the canopy start (see [`search`]).
+//! A fourth field takes [`clip`]'s options (Plan 0104 Phase 4: `keys`, `pin<N>`).
 
 use super::owner_move::{FLY_VOX_S, POSES, Pose, camera_of, class_map, clear};
 use super::*;
@@ -350,8 +351,10 @@ fn load1() -> String {
         .unwrap_or_default()
 }
 
-/// One clip.
-fn clip(subject: &str, arm_name: &str, stem: &str) {
+/// One clip. `opts` (Plan 0104 Phase 4), comma-separated: `keys` writes `<stem>.keys` beside it
+/// (`keys.rs`); `pin<N>` pins the exposure from frame `N + 1` on at the value metered after
+/// frame `N` (`lighting.exposure` manual).
+fn clip(subject: &str, arm_name: &str, stem: &str, opts: &str) {
     let (pose, cam0) = subject_pose(subject);
     let world = world_at(&pose, cam0.position.to_array(), 8);
     let path = plan_path(&world, &cam0);
@@ -469,9 +472,30 @@ fn clip(subject: &str, arm_name: &str, stem: &str) {
     let mut side = header.clone();
     side.push_str("frame eye_x eye_y eye_z yaw pitch exposure baked fading\n");
     let mut sh = Vec::new();
+    let mut keys = opts
+        .split(',')
+        .any(|o| o == "keys")
+        .then(|| super::keys::Keys::create(&dir.join(format!("{stem}.keys")), WINDOW));
+    let pin: Option<usize> = opts
+        .split(',')
+        .find_map(|o| o.strip_prefix("pin"))
+        .map(|n| n.parse().expect("pin<frame>"));
     let t1 = std::time::Instant::now();
     for (i, cam) in path.cams.iter().enumerate() {
         let q = frame_at(rig, &mut s, cam);
+        if let Some(k) = keys.as_mut() {
+            k.frame(rig, &s.frame, cam);
+        }
+        if i == 30 {
+            // The owner's cap: project the run from its first 30 frames, stop past 20 minutes.
+            let proj = t1.elapsed().as_secs_f64() * path.cams.len() as f64 / 31.0;
+            println!(
+                "projection after 31 frames: {proj:.0} s for {} frames (settle {:.1} s before)",
+                path.cams.len(),
+                t1.duration_since(t0).as_secs_f64()
+            );
+            assert!(proj < 1200.0, "projected past 20 minutes: stopped");
+        }
         let rgba = match &presenter {
             Some(p) => presented(rig, p, s.frame.target()),
             None => svet_render::debug::read_rgba8(&rig.device, &rig.queue, s.frame.target()),
@@ -495,6 +519,15 @@ fn clip(subject: &str, arm_name: &str, stem: &str) {
             32,
         );
         let e = svet_render::ExposureState::from_bytes(&st).current;
+        if pin == Some(i) {
+            let mut set = s.frame.settings();
+            set.lighting.exposure = svet_render::Exposure::Manual(e);
+            let ch = s.frame.apply_settings(&rig.device, &rig.queue, &set);
+            println!(
+                "exposure pinned at {e:.6e} after frame {i}: live {:?} settled {:?} rebuild {:?}",
+                ch.live, ch.settled, ch.rebuild
+            );
+        }
         let p = cam.position.to_array();
         side.push_str(&format!(
             "{i} {:.3} {:.3} {:.3} {:.3} {:.3} {e:.6e} {} {}\n",
@@ -511,6 +544,15 @@ fn clip(subject: &str, arm_name: &str, stem: &str) {
         }
     }
     drop(pipe);
+    if let Some(k) = keys {
+        println!(
+            "keys: {} units, {} samples a frame, {:.1} s spent",
+            k.units(),
+            k.samples,
+            k.secs
+        );
+        k.finish();
+    }
     let st = ff.wait().expect("ffmpeg ends");
     assert!(st.success(), "ffmpeg failed");
     std::fs::write(dir.join(format!("{stem}.txt")), &side).expect("the side file");
@@ -668,6 +710,6 @@ mod reading {
         let stem = it
             .next()
             .map_or_else(|| format!("{subject}-{arm}"), str::to_owned);
-        clip(&subject, &arm, &stem);
+        clip(&subject, &arm, &stem, it.next().unwrap_or(""));
     }
 }

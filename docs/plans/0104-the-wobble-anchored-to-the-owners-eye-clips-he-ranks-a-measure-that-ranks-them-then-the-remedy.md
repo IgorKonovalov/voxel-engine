@@ -1,7 +1,8 @@
 # 0104: The wobble anchored to the owner's eye: clips he ranks, a measure that ranks them, then the remedy
 
-> **Status:** in progress: Phases 0, 1, 2 and 0b landed (2026-11-25); Phase 4 as
-> amended in progress (checkpointed before its measures) ("Amended 2026-11-25 (architect, after Phases 0 and 2)"; Phase 3 does not
+> **Status:** in progress: Phases 0, 1, 2, 0b and 4 landed (2026-11-25); stopped for the
+> architect after Phase 4 (neither candidate holds at its artifact; candidate 7's drop rule
+> fires; the maps for the owner's question 4 in `live/p4/index.md`) ("Amended 2026-11-25 (architect, after Phases 0 and 2)"; Phase 3 does not
 > run: every subject anchored); approved (owner's go, 2026-11-25; drafted the same day with no interview from
 > Plan 0100's close; questions 1 to 3 answered (a), (a), (a), recorded under "Risks & open
 > questions"). **Order (owner, question 1 (a)):** Phases 0 to 2 and 4 run as a lane beside
@@ -793,7 +794,7 @@ his 2026-11-12 rule that cheap unpicked modes stay settings, for these settings)
 | 2: the owner watches the clips | human | done: T, C, S anchored; T and C orders confirmed blind; answers in [`logs/0104.md`](logs/0104.md) | f8dd1fac, a183ddd6 |
 | 0b: the forest soak test asserts on one baked store ("Amended 2026-11-25") | dev | done: one store, two rest protocols; settle at the submit's cap; half frame on lavapipe; 113 to 146 s RTX, 250 to 255 s lavapipe (410 s loaded); far +30 bars 5.52 / 4.88 (1080p), 8.99 / 8.30 (960x540); readings in [`logs/0104.md`](logs/0104.md) | 127e7672 |
 | 3: the owner's own flight, recorded and rendered again (only for a subject not shown) | dev | does not run: every subject anchored ("Amended 2026-11-25"; row marked by the architect) | |
-| 4: a measure that ranks what the owner ranked | dev | in progress, checkpointed: the store's tally (equal with and without lever 2), the W1 split by source, `S`'s change named; the two measures and the maps not started; readings in [`logs/0104.md`](logs/0104.md) | committed with this row (wip) |
+| 4: a measure that ranks what the owner ranked | dev | done: the store's tally (equal with and without lever 2), the W1 split by source (exit (a), (b)), `S`'s change named; step 3: the tracks rendered again with world units (`keys.rs`), both candidates scored on his files (`measure.rs`): candidate 2 holds (a) at `T a` and `S` but fails (b) at T (0.01507 against 0.01515), candidate 1 fails (a) at `C a` and (b) at C (0.04399 against 0.04858); candidate 7: no source 0 sample in any clip, its drop rule fires; `S`'s control: outlines change under the pinned exposure (light, read as a reading); maps and `index.md` under `live/p4/`; readings in [`logs/0104.md`](logs/0104.md) | 13605f9e (wip), committed with this row |
 | the stop: the architect's amendment (the remedy phases) | - | not written | |
 
 ### Notes
