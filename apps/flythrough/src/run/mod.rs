@@ -157,9 +157,7 @@ pub(crate) struct GfxPlan {
     output: [u32; 2],
     internal: [u32; 2],
     kind: UpscalerKind,
-    jitter: bool,
     probe_spacing: u32,
-    sharpen: f32,
     lighting: Lighting,
     resolution: LightingResolution,
     /// The streamed world's LOD rule; `None` on a level.
@@ -212,7 +210,7 @@ pub(crate) fn build_gfx(
         frame.frame_bytes()
     ));
     built.fetch_add(FRAME_UNITS, Ordering::Relaxed);
-    set_plan(&mut frame, device, queue, &plan);
+    set_plan(&mut frame, device, &plan);
     diag(format_args!(
         "lighting set, {} B of targets",
         frame.frame_bytes()
@@ -252,13 +250,11 @@ pub(crate) fn build_gfx(
     gfx
 }
 
-/// `plan`'s settings on `frame`: the probe spacing, the jitter, the upscaler and its
-/// sharpening, the lighting and its resolution, and the LOD rule (the default on a level).
-fn set_plan(frame: &mut Frame, device: &wgpu::Device, queue: &wgpu::Queue, plan: &GfxPlan) {
+/// `plan`'s settings on `frame`: the probe spacing, the upscaler (FSR 2's sharpening in its
+/// settings), the lighting and its resolution, and the LOD rule (the default on a level).
+fn set_plan(frame: &mut Frame, device: &wgpu::Device, plan: &GfxPlan) {
     frame.set_probe_spacing(device, plan.probe_spacing);
-    frame.set_jitter(device, plan.jitter);
     frame.set_upscaler_kind(device, plan.kind);
-    frame.set_sharpness(queue, plan.sharpen);
     frame.set_lighting(plan.lighting);
     frame.set_resolution(device, plan.resolution);
     frame.set_lod(plan.lod.unwrap_or_default());
@@ -366,7 +362,7 @@ impl Run {
     /// What [`build_gfx`] builds the run's GPU objects from, read from the run and the device.
     fn gfx_plan(&self, gpu: &Gpu) -> GfxPlan {
         let output = self.args.output_size(gpu.size);
-        let (kind, scale, jitter) = self.args.upscaler_settings(self.modes.upscaler.mode);
+        let (kind, scale) = self.args.upscaler_settings(self.modes.upscaler.mode);
         let streamed = self.stream.is_some();
         let mirror = if streamed {
             MirrorConfig {
@@ -385,9 +381,7 @@ impl Run {
             output,
             internal: scale.internal(output),
             kind,
-            jitter,
             probe_spacing: self.args.light.probe_spacing,
-            sharpen: self.args.look.sharpen,
             lighting: self.modes.lighting,
             resolution: self.modes.resolution,
             lod: streamed.then_some(LodParams {
@@ -445,7 +439,7 @@ impl Run {
         if let Some(gfx) = self.gfx.as_mut()
             && gfx.frame.output_size() != output
         {
-            let (_, scale, _) = self.args.upscaler_settings(self.modes.upscaler.mode);
+            let (_, scale) = self.args.upscaler_settings(self.modes.upscaler.mode);
             gfx.frame
                 .set_sizes(&gpu.device, scale.internal(output), output);
         }

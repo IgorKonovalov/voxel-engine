@@ -365,18 +365,12 @@ mod tests {
     }
 
     #[test]
-    fn the_composed_sharpen_and_present_sources_hold_no_walk() {
-        let sharpen = PASSES
-            .iter()
-            .find(|p| p.label == "sharpen")
-            .expect("a sharpen pass")
-            .source();
-        for (label, source) in [
-            ("sharpen", sharpen.as_str()),
-            ("present", crate::present::PRESENT_WGSL),
-        ] {
-            assert_eq!(count(source, "fn descend("), 0, "{label} holds the walk");
-        }
+    fn the_present_source_holds_no_walk() {
+        assert_eq!(
+            count(crate::present::PRESENT_WGSL, "fn descend("),
+            0,
+            "present holds the walk"
+        );
     }
 
     #[test]

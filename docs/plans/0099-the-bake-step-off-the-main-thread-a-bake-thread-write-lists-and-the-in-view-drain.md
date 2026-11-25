@@ -3,6 +3,10 @@
 > **Status:** approved (owner, 2026-11-22; his answers are under "Risks & open questions":
 > the recommended option in each, question 2 by his own words). **After: 0096, 0098, 0087** (owner, 2026-11-22:
 > drafted now, the lane after the rename; then 0089 and 0093, 0091, ...).
+> **Re-read 2026-11-24** after Plan 0098 (v0.72.0) and the rename (v0.73.0): Phases 1 to 3 are
+> amended under "Amended 2026-11-24 (architect re-read)", which wins over the phases' text where
+> the two differ; **question 6 (the dig's held record with the thread on) is open with the
+> owner** and holds Phase 3's dig clause only. Phases 1 and 2 start without it.
 > **Created:** 2026-11-22
 > **Milestone:** M10 (the outdoor scenes are where the queue is deep) and cross-cutting, like
 > [Plan 0096](done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md):
@@ -143,8 +147,8 @@ follows the tree and notes it. Phase 1 re-reads the base, because Plan 0096's Ph
 Plan 0098 both move it.
 
 **Inherited from Plan 0098** (added 2026-11-24 by the architect at that plan's close, v0.72.0;
-facts of the base, no phase changed: **the architect's re-read of Phases 1 to 3 against them is
-owed before the lane starts**). Plan 0098 closed after this plan was approved and changed the
+facts of the base; the architect's re-read of Phases 1 to 3 against them is the section "Amended
+2026-11-24 (architect re-read)"). Plan 0098 closed after this plan was approved and changed the
 dig's path through `bake/queue/`:
 
 - **A dig's ring 1 is a job of its own.** `open_digs` splits a dug chunk: the bricks the box
@@ -384,6 +388,141 @@ are asserted equal, so no phase is exploration and no golden is expected to move
   gates; its wall is recorded against section 7. (4) No golden moved; one that did is
   reported with the frame it differs in, not re-blessed.
 
+## Amended 2026-11-24 (architect re-read): Phases 1 to 3 against the tree
+
+Read against `be97152a` (v0.73.0), the code and not this plan's memory of it. The phases'
+intent stands. What follows restates only the What, Files touched and Done when that change;
+where it differs from the phase's text above, this section wins. Phase 4 on is not re-read,
+with one name fixed: its order test is
+`the_opened_jobs_are_the_nearest_of_their_band_whatever_the_depth`.
+
+**Names the tree has.** The queue's GPU tests are `apps/flythrough/tests/gpu_queue.rs` and
+`gpu_queue_reach.rs` (no `crates/svet-render/tests/gpu_queue.rs`); `gpu_sun` is under
+`crates/svet-render/tests/`. `gpu_bake`'s dug-emitter test
+(`a_dug_emitter_leaves_the_near_ring_at_once`) digs through the blocking `Frame::rebake_digs`
+and never enters the live queue, so it is not the dig's base or bar: the queue's dig rigs are
+`gpu_queue::a_dig_jumps_every_open_job_and_withdraws_its_stale_one` and `gpu_outdoor`'s
+`dig_line::reading::dig_timeline` (`SVET_LINE`, sequences A and B, stepped by
+`support::defects::Stepper`). The flag lands in `apps/flythrough/src/cli/queue_flags.rs`, the
+render settings under `crates/svet-render/src/frame/settings/`. Every other path the three
+phases name exists.
+
+**Where a dig's path lives.** In lockstep (Phase 2) all of it runs in the edit's step, as today,
+so ring 1 still lands 1 or 2 frames on. On the thread (Phase 3) each row is a frame or more
+later unless question 6 is answered (a).
+
+| piece (the tree's name) | Phase 2: which half | Phase 3: which thread | guarded by |
+|---|---|---|---|
+| the box's intake (`Frame::invalidate`, `BakeQueue::invalidate`) | the render half puts the box in the frame's message; the books' part (sealed, masks, facelessness) is the bake half's | bake thread, ahead of the opening | Phase 2 (7), Phase 3 (5a) |
+| `take_boxes`: `withdraw_at`, the sky-stale marks, `list_dug` with `held_visibilities`, the provisional and held block's put | bake half; its writes are that step's list; the world under read locks | bake thread | Phase 2 (7); `bake::held::tests`; the soak image test by name |
+| `open_digs`, `open_now`, ring 2's wait on ring 1's fade | bake half | bake thread | Phase 2 (8); `gpu_queue`'s dig test |
+| ring 1 promoted, `close_ended`, its rounds planned first | bake half plans; the render half writes the slot's candidate table and issues the submit after the sync | the plan on the bake thread, the issue on the render thread a list later | Phase 2 (7), Phase 3 (5b) |
+| the read-back, `Placement::place`, `refade` over `DIG_FADE` | the render half collects the map; the bake half places | bake thread | Phase 2 (2), `gpu_queue_reach` |
+| `advance_fades` | bake half, by the message's frame number | bake thread | Phase 2 (4) and (8) |
+
+### Phase 1, amended
+
+- **What, added.** (a) The dig base is read on the queue's own rig, `dig_timeline`, drained and
+  waiting, sequences A and B, both adapters; `gpu_bake` is not read for it. (b) **The rig's
+  stepper waits on the device once a frame** (as `support::queue`'s rig does, standing for the
+  fly-through's present), as a mode the dig readings use; a gate test that takes the mode has
+  its binary run in this phase. Without it the rig's queue never drains and "drained" is a
+  waiting queue (`docs/backlog.md`, "Plan 0098's leftovers"). (c) The dig frame's step (D+0) is
+  read with **at least eight runs a sequence and adapter**, with its `boxes` and `digs` laps
+  and the new `render` and `movable` sums. (d) `render` counts the candidate tables' writes
+  (`JobLoop::refresh_tables`), the parameters' write and a dig's block writes with the rest.
+- **Files touched, added:** `apps/flythrough/tests/support/defects.rs`,
+  `apps/flythrough/tests/gpu_outdoor/dig_line.rs`.
+- **Done when, added.** (5) With the stepper's mode on, the rig's `drained` state reaches 0
+  chunks in view waiting on the RTX and on the RENOIR, the frame it does so logged. **A stop:**
+  if it does not, dev reports the read-backs a frame to the architect before the dig base is
+  read. (6) The readings log holds, per adapter and sequence, eight runs' D+0 step in ms with
+  the mean and the range, the `boxes` and `digs` laps, and ring 1's landing in frames for
+  every dig on the drained and on the waiting queue; a landing that is not the 1 or 2 frames
+  of `docs/nfr/04-edits.md` is reported to the architect before Phase 2. **No later bar or
+  comparison is held against a dig-frame figure with fewer than eight alternated runs a
+  side.** (4) reads `--binaries gpu_queue gpu_queue_reach gpu_bake`.
+
+### Phase 2, amended
+
+- **What, added.** The message's list above is not the whole of what the step reads today.
+  1. **The message also carries** the edit boxes since the last one, the bake's sky bits and
+     key light, the settings the frame sets each step (the column wait, the key step, the
+     landing fade, `dig hold`, the far-normal band, the knobs) and the stream workers'
+     prepared masks. `QueueView::resident` is a borrowed closure; the bake half takes the
+     streamer's residency as owned data.
+  2. **The shadow answers every mirror read the bake half makes**, not membership alone:
+     held full, LOD-only, **waiting to upload** (`is_pending`, `pending_chunks`, and with them
+     `column_final`), **each chunk column's lowest top** (`column_lowest`, the record by rule),
+     and per chunk **whether it holds an exposed emitter and whether its light range is
+     current** (`emitters_near`, `lights_ready_near`). A light range's change is not in the
+     mirror's change list (`take_changes` notes membership and uploads); the render half adds
+     the chunks whose range or dirty mark changed, and the columns a change touched with their
+     new lowest top. The rule is answered on the snapshot; a later change relists the zero
+     record as it does today.
+  3. **The candidate tables stay with the render half**: a pure function of the mirror's light
+     ranges, written for the slots a prepared submit names as it goes out and again when the
+     ranges move. It is not a rule of the queue's.
+  4. **A first block's landing word is the frame its list is applied in, plus one.** The shader
+     fades a block's source by that word (Plan 0098 Phase 6b), so the word of the frame the
+     bake half made the list in would start the fade part-way. The list marks the word; the
+     render half writes it at apply.
+  5. **A submit's stamp is the newest message the bake half had read when it planned it**, not
+     the frame the render half issued it in: a change in any later message inside the job's
+     reach stales it.
+  6. **`Fade` says it is a dig's** (a flag set where `refade` takes a dug block), and
+     `open_digs` reads the flag in place of `frames == DIG_FADE`.
+  7. **An edit's writes are never carried.** The step that takes a box puts the sky-stale
+     marks and every held and provisional block in its list whole, whatever their size, and
+     they count against the frame's cap first; landings wait for the room that is left.
+- **Files touched, added:** `crates/svet-render/src/gpu_world/` (change notes and snapshot
+  reads only; nothing of `sync` moves), `crates/svet-render/src/bake/held.rs`,
+  `apps/flythrough/tests/{gpu_queue,gpu_queue_reach}.rs`. New code goes to new files:
+  `bake/queue/mod.rs` and `bake/job_loop.rs` are near the size gate.
+- **Done when, changed and added.** (2) gains a case: a submit planned from the frame 4
+  message and issued in frame 6 is staled by a change in the frame 5 message. (3) reads, over
+  a sequence that also holds light ranges written, moved and dropped, uploads queued and done,
+  and a dig that lowers a column's top: the shadow's held-full, LOD-only, **pending,
+  column-final, lowest-top, emitters-near** and lights-ready answers equal the mirror's after
+  every message. (7) `a_dig_is_served_whole_in_the_edits_step` (CPU, under 2 s; the bake half
+  against a recording applier): a box in a chunk that holds a block, with landings over the cap
+  already waiting: the list of the step that took the box holds, for each touched chunk, its
+  sky-stale marks and its held block's words with its table word, all applied in that frame;
+  that step's prepared submit plans ring 1's rounds ahead of every other job's; the landings
+  are the ones carried. (8) `ring_two_waits_out_a_dig_fade_whose_steps_are_skipped` (CPU, under
+  1 s): ring 1 of a split chunk placed at frame 10, bake steps at frames 11, 13 and 14: ring 2
+  opens at neither 11 nor 13 and opens at 14; a chunk under a 16-frame landing fade opens its
+  dig's bricks in the first step. (9) `a_first_blocks_landing_word_is_the_frame_it_is_applied_in`
+  (CPU, under 1 s): a first block whose list was made at frame 5 and applied at frame 7 holds
+  8 at its landing word; a refinement applied at frame 9 keeps 8. (10) The dig's tests pass
+  unchanged in lockstep: `--binaries gpu_queue gpu_queue_reach gpu_bake gpu_sun`, and the soak
+  image test `flicker::a_fresh_hole_holds_its_value_until_its_light_lands` by name, once.
+
+### Phase 3, amended
+
+- **What, changed.** The dig's box is in the message since Phase 2. **A step in progress admits
+  no further candidate once a box waits in the inbox**, and the next step takes the box first;
+  this holds under either answer to question 6. Whether the edit's frame then waits for that
+  step's list is question 6; dev builds (a) or (b) as answered and **does not start the dig
+  clause before the answer**. Every dig test that reads an image or a record before the drain
+  stays in lockstep (the plan's rule), so the thread's dig is guarded by (5) alone.
+- **Files touched, changed:** `apps/flythrough/tests/gpu_queue.rs` in place of the
+  `crates/svet-render/tests/` path; `apps/flythrough/tests/gpu_outdoor/dig_line.rs` and
+  `support/defects.rs` (the mode as the rig's parameter).
+- **Done when, changed.** (5) is three parts. (5a) `a_waiting_box_ends_the_opening` (CPU, under
+  2 s): 32 candidates ready and a test hook that posts a box after the second listing: the
+  step lists at most 3, and the next list is the dig's (its held block and table word). (5b)
+  On `gpu_queue`'s dig rig with the mode as a parameter (lavapipe, at the wall the tree's test
+  has), thread on: ring 1's block is applied within Phase 1's base frame count plus 2. (5c)
+  **Under answer (a):** on the same rig, the pool read back after the edit's own frame holds
+  the held block for every touched brick (no frame between the edit and the held record).
+  **Under answer (b):** the frames from the edit to the held record's apply are logged, at most
+  2 on that rig. (8) gains, on the forest in regime B with the thread on, both adapters,
+  sequences A and B, eight runs alternated with lockstep: the frames from a dig to its held
+  record applied and to ring 1 applied, the dig frame's wall against Phase 1's, and the share
+  of dig fades that moved in all 4 of their frames. (7)'s bars are read on runs with no edit.
+  `--binaries gpu_queue gpu_queue_reach gpu_bake gpu_sun`.
+
 ## Data shapes
 
 ```rust
@@ -449,6 +588,31 @@ keeping fade length"; the other four: "agreed on other recommended".
    reading, a projection only. (c) Hold the line until a 4-core machine is on hand.
 5. **The window.** (a) As Phase 5 is written: the RTX's forest both modes, the hills, the
    digs, one RENOIR run. (b) RTX only.
+
+6. **Open (owner; added by the re-read of 2026-11-24). The dig's held record with the bake
+   thread on.** Image stability, so it takes no answer by default. Today the edit's step
+   writes the held record over the dug bricks before that frame's light pass reads the store:
+   no frame shows the hole without it, the picture accepted at Plan 0098's window 98e. As
+   Phase 3 was written, the box goes to the bake thread in that frame's message and the held
+   record comes back in a later frame's list; until then the hole's new faces read the old
+   block, which holds no record for them (the picture before `dig hold`). How many frames is
+   not read. Arithmetic: a regime B step is 26 to 43 ms on its thread, 2 to 3 frames at
+   70 fps, and the dig's own work reads `boxes` 2.2 to 2.4 ms and `digs` under 0.5 on the RTX
+   (Plan 0098's log); ring 1's landing is later by about twice that, the box in and the
+   read-back in.
+   (a) **The edit's frame waits for the dig** (recommended). A frame that carries a box does
+   not return from the bake call until the bake side has served it, and applies that list in
+   the same frame, as lockstep does. The wait is one listing in progress plus the dig's own
+   work: a guess of 3 to 6 ms on the RTX, on dig frames only, against today's 14.5 to 25.9 ms
+   dig-frame step. ADR-0083 already gives lockstep "a dig's ring where the consumer asks for it
+   at once"; this makes it what the thread does by default, and "the render thread never
+   waits" gains that one exception (an Outcome line on the ADR).
+   (b) **As written:** the held record arrives when the bake thread reaches the box, the owner
+   judges the frames without it at Phase 5 (c), and (a) is the fix pass if he sees it. No
+   hitch; the picture he rejected at windows 98c and 98d may be back for a few frames a dig.
+   (c) **Lockstep while a dig waits or bakes:** the whole step returns to the render thread
+   for those frames (about 28 ms each in regime B). The simplest; a dig in a deep queue
+   drops the frame rate for as long as its rings take.
 
 **Risks.**
 

@@ -6,9 +6,7 @@
 
 use crate::bake::{Budget, MissingLight, ReachMode};
 use crate::exposure::Metering;
-use crate::frame::{
-    Lighting, LightingResolution, LodParams, LookParams, MAX_LIGHTS, RenderScale, Upscaler,
-};
+use crate::frame::{Lighting, LightingResolution, LodParams, LookParams, MAX_LIGHTS, RenderScale};
 use crate::fsr2::{Fsr2Settings, UpscalerKind};
 use crate::gpu_world::{MirrorConfig, Window};
 
@@ -35,25 +33,22 @@ impl ApplyClass {
     }
 }
 
-/// Which upscaler a frame runs, without its tuning ([`RenderSettings::fsr2`] and
-/// [`RenderSettings::own`] carry that).
+/// Which upscaler a frame runs, without its tuning ([`RenderSettings::fsr2`] carries that).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum UpscalerChoice {
-    /// No upscaler: at equal sizes the composite's image is the frame's.
+    /// No upscaler: the frame renders at its output size and the composite's image is the
+    /// frame's ([`RenderSettings::scale`] applies as 1).
     #[default]
     Off,
-    /// The upscaler of ADR-0024.
-    Own,
     /// FSR 2.
     Fsr2,
 }
 
 impl UpscalerChoice {
-    /// The [`UpscalerKind`] this choice runs with `own`'s or `fsr2`'s tuning.
-    pub fn kind(self, own: Upscaler, fsr2: Fsr2Settings) -> UpscalerKind {
+    /// The [`UpscalerKind`] this choice runs with `fsr2`'s tuning.
+    pub fn kind(self, fsr2: Fsr2Settings) -> UpscalerKind {
         match self {
             Self::Off => UpscalerKind::Off,
-            Self::Own => UpscalerKind::Own(own),
             Self::Fsr2 => UpscalerKind::Fsr2(fsr2),
         }
     }
@@ -62,7 +57,6 @@ impl UpscalerChoice {
     pub fn of(kind: &UpscalerKind) -> Self {
         match kind {
             UpscalerKind::Off => Self::Off,
-            UpscalerKind::Own(_) => Self::Own,
             UpscalerKind::Fsr2(_) => Self::Fsr2,
         }
     }
@@ -203,18 +197,14 @@ pub struct RenderSettings {
     pub lod: LodParams,
     /// The lighting passes' resolution ([`crate::Frame::set_resolution`]); `Settle`.
     pub lighting_resolution: LightingResolution,
-    /// The output size over the internal size ([`crate::Frame::set_sizes`]); `Settle`.
+    /// The output size over the internal size ([`crate::Frame::set_sizes`]); `Settle`. It
+    /// applies under FSR 2 alone: with [`UpscalerChoice::Off`] the frame renders at its output
+    /// size, so the scale applies as 1 and reads back as 1 ([`RenderSettings::clamped`]).
     pub scale: RenderScale,
     /// The upscaler ([`crate::Frame::set_upscaler_kind`]); `Settle`.
     pub upscaler: UpscalerChoice,
-    /// The views' sub-pixel jitter ([`crate::Frame::set_jitter`]); `Settle`.
-    pub jitter: bool,
-    /// The own upscaler's sharpening pass, 0 to 1 ([`crate::Frame::set_sharpness`]); `Live`.
-    pub sharpness: f32,
     /// FSR 2's knobs (`UpscalerKind::Fsr2`); `Live` (a change of them keeps the history).
     pub fsr2: Fsr2Settings,
-    /// The own upscaler's tuning ([`crate::Frame::set_upscaler`]); `Live`.
-    pub own: Upscaler,
     /// Slots of the list of lights the frame shades, the headlamp's included, 1 to
     /// [`MAX_LIGHTS`] ([`crate::Frame::set_light_cap`]); `Live`.
     pub light_cap: u32,
@@ -321,13 +311,10 @@ impl RenderSettings {
             lighting_resolution: LightingResolution::Half,
             scale: RenderScale::OneHalf,
             upscaler: UpscalerChoice::Fsr2,
-            jitter: false,
-            sharpness: 0.5,
             fsr2: Fsr2Settings {
                 sharpness: 0.5,
                 ..Fsr2Settings::default()
             },
-            own: Upscaler::default(),
             light_cap: MAX_LIGHTS as u32,
             metering: Metering::default(),
             field_split: true,
@@ -501,19 +488,12 @@ impl RenderSettings {
         ("lighting_resolution", Settle),
         ("scale", Settle),
         ("upscaler", Settle),
-        ("jitter", Settle),
-        ("sharpness", Live),
         ("fsr2.sharpness", Live),
         ("fsr2.reactive_translucent", Live),
         ("fsr2.reactive_light", Live),
         ("fsr2.metres_per_voxel", Live),
         ("fsr2.jitter_phases", Live),
         ("fsr2.dither", Live),
-        ("own.alpha", Live),
-        ("own.alpha_moving", Live),
-        ("own.change_rel", Live),
-        ("own.change_abs", Live),
-        ("own.change_frames", Live),
         ("light_cap", Live),
         ("metering", Live),
         ("field_split", Live),
@@ -552,10 +532,7 @@ impl RenderSettings {
         ("set_look", &["look."]),
         ("set_lod", &["lod."]),
         ("set_resolution", &["lighting_resolution"]),
-        ("set_upscaler_kind", &["upscaler", "fsr2.", "own."]),
-        ("set_jitter", &["jitter"]),
-        ("set_sharpness", &["sharpness"]),
-        ("set_upscaler", &["own."]),
+        ("set_upscaler_kind", &["upscaler", "fsr2."]),
         ("set_light_cap", &["light_cap"]),
         ("set_metering", &["metering"]),
         ("set_field_split", &["field_split"]),
@@ -738,9 +715,7 @@ impl RenderSettings {
                 LightingResolution::Half,
             ),
             "scale" => other(&mut s.scale, RenderScale::OneHalf, RenderScale::Two),
-            "upscaler" => other(&mut s.upscaler, UpscalerChoice::Own, UpscalerChoice::Off),
-            "jitter" => flip(&mut s.jitter),
-            "sharpness" => s.sharpness = if s.sharpness == 0.25 { 0.5 } else { 0.25 },
+            "upscaler" => other(&mut s.upscaler, UpscalerChoice::Fsr2, UpscalerChoice::Off),
             "fsr2.sharpness" => {
                 s.fsr2.sharpness = if s.fsr2.sharpness == 0.25 { 0.5 } else { 0.25 }
             }
@@ -755,11 +730,6 @@ impl RenderSettings {
                 }
             }
             "fsr2.dither" => flip(&mut s.fsr2.dither),
-            "own.alpha" => s.own.alpha /= 2.0,
-            "own.alpha_moving" => s.own.alpha_moving /= 2.0,
-            "own.change_rel" => s.own.change_rel *= 2.0,
-            "own.change_abs" => s.own.change_abs *= 2.0,
-            "own.change_frames" => s.own.change_frames = s.own.change_frames / 2 + 1,
             "light_cap" => s.light_cap = if s.light_cap == 4 { 16 } else { 4 },
             "metering" => {
                 s.metering = match s.metering {
@@ -848,6 +818,16 @@ impl RenderSettings {
             _ => return None,
         }
         Some(s)
+    }
+
+    /// `self` as a frame applies it: under [`UpscalerChoice::Off`] the scale is 1 (the frame
+    /// renders at its output size), the other fields as they are.
+    pub fn clamped(&self) -> Self {
+        let mut s = self.clone();
+        if s.upscaler == UpscalerChoice::Off {
+            s.scale = RenderScale::One;
+        }
+        s
     }
 
     /// The class of the field `name` names, `None` for no field.

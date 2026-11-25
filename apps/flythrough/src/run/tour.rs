@@ -39,7 +39,7 @@ impl Run {
         else {
             return;
         };
-        let (_, scale, _) = self.args.upscaler_settings(self.modes.upscaler.mode);
+        let (_, scale) = self.args.upscaler_settings(self.modes.upscaler.mode);
         let sizes = self
             .gfx
             .as_ref()

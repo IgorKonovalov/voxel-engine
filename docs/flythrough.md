@@ -82,7 +82,7 @@ row showing the new value.
 |-------|-----|------|
 | moving | `G` | Toggle fly and walk mode (bounded worlds only) |
 | camera and paths | `T` | On a `--path ... --path-mode tour` run: resume the path from its nearest point after a key took the camera |
-| upscaler | `F10` | Cycle the upscaler: off, own, fsr2 |
+| upscaler | `F10` | Cycle the upscaler: off, fsr2 |
 | upscaler | `F4` | The next render profile: floor, portable, performance, high (`--profile`) |
 | lighting | `F7` | Toggle the headlamp |
 | lights | `1` | Drop a point light of the picked colour (intensity 600) 2 voxels off the looked-at surface (20 voxels ahead on a miss); the banner names `lights <n>/16`. Sixteen slots, the headlamp's among them while it is on; a drop into a full list prints a line and adds nothing |
@@ -355,9 +355,8 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--translucent-layers N` | Translucent voxels composited before the hit [4; 0 ignores them] |
 | `--cutaway auto\|on\|off` | The cutaway view's start state [auto: on while the camera is in rock] |
 | `--internal-scale 1\|1.5\|2` | The output size over the internal size [1.5] |
-| `--jitter on\|off` | The primary rays' sub-pixel jitter (selects the `own` upscaler) |
-| `--sharpen S` | The upscaler's sharpening, 0 to 1 [0.5] |
-| `--upscaler off\|own\|fsr2` | The upscaler [fsr2, or own with `--jitter`, or off at scale 1 but under `--profile high`] |
+| `--sharpen S` | FSR 2's sharpening, 0 to 1 [0.5] |
+| `--upscaler off\|fsr2` | The upscaler; `off` renders at the output size [fsr2, or off at scale 1 but under `--profile high`] |
 | `--pan DEG_PER_S` | Turn the camera at a constant yaw rate (`.` stops and starts it) |
 | `--jitter-phases N` | FSR 2's jitter phase count, 1 to 1024 |
 | `--dither on\|off` | FSR 2's static one-level dither [off] |
@@ -480,7 +479,8 @@ from the next frame, and the profile row names the fields that wait for a restar
 ### Removed flags
 
 Flags from earlier plans (`--steady`, `--sampler`, `--emissive-history` and others from Plan
-0057; `--light`, `--preload` and others from Plan 0059) are refused with a message that names
+0057; `--light`, `--preload` and others from Plan 0059; `--jitter` and `--upscaler own` from
+Plan 0102, which removed the engine's own upscaler) are refused with a message that names
 the plan. `--help` lists them.
 
 ## Recording clips

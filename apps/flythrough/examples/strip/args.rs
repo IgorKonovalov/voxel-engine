@@ -53,7 +53,7 @@ pub struct Args {
     pub camera: Option<[f32; 5]>,
     pub view: ViewMode,
     pub size: [u32; 2],
-    /// `fsr2`, `own` or `off`.
+    /// `fsr2` or `off`.
     pub upscaler: &'static str,
     pub look: Option<LookPreset>,
     pub far: Option<[f32; 2]>,
@@ -417,13 +417,13 @@ fn frame_flags() -> Vec<Flag<Args>> {
         ),
         Flag::value(
             &["--upscaler"],
-            "fsr2|own|off",
-            "fsr2 (default) or own at --scale with sharpening --sharpen, or off at scale 1 with no jitter",
+            "fsr2|off",
+            "fsr2 (default) at --scale with sharpening --sharpen, or off at scale 1 with no jitter",
             |a: &mut Args, v| {
-                a.upscaler = v.word(
-                    &[("fsr2", "fsr2"), ("own", "own"), ("off", "off")],
-                    "fsr2, own or off",
-                )?;
+                if v.text == "own" {
+                    return Err(flythrough::cli::gone_since_0102("--upscaler own"));
+                }
+                a.upscaler = v.word(&[("fsr2", "fsr2"), ("off", "off")], "fsr2 or off")?;
                 Ok(())
             },
         ),
@@ -596,7 +596,7 @@ fn read_flags() -> Vec<Flag<Args>> {
         num(
             &["--phases"],
             "N",
-            "the fold's phases (default: FSR 2's jitter phases, own's JITTER_PHASES, 18 for off)",
+            "the fold's phases (default: FSR 2's jitter phases, 18 for off)",
             |a, v| a.phases = Some(v),
         ),
         Flag::value(

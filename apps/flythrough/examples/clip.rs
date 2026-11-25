@@ -6,7 +6,7 @@
 //! [--ahead D] [--facing DEG] [--orbit DIST,HEIGHT,ANGLE] [--aim H] [--at X,Y,Z] [--yaw DEG]
 //! [--pitch DEG] [--exposure auto|E] [--size WxH] [--fps N] [--loops N | --seconds S]
 //! [--settle N] [--warmup N] [--out-dir DIR] [--adapter SUBSTRING] [--look PRESET]
-//! [--internal-scale 1|1.5|2] [--jitter on|off] [--sharpen S] [lighting flags]`;
+//! [--internal-scale 1|1.5|2] [--sharpen S] [lighting flags]`;
 //! `--help` lists every flag.
 //!
 //! The world is the hero's (`--source`, `--shot`, `--seed`; the showcase's `hall` by default)
@@ -35,7 +35,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use flythrough::cli::table::{Flag, Section, Table, Val};
-use flythrough::cli::{GONE_SINCE_0057, LightingArgs, gone_since_0057, lighting_flags};
+use flythrough::cli::{
+    GONE_SINCE_0057, GONE_SINCE_0102, LightingArgs, gone_since_0057, gone_since_0102,
+    lighting_flags,
+};
 use flythrough::showcase::{SHOTS, Shot};
 use flythrough::viewer::{Viewer, placed};
 use svet_entity::{EntitySet, sample};
@@ -94,7 +97,6 @@ struct Args {
     out_dir: Option<PathBuf>,
     light: LightingArgs,
     internal_scale: RenderScale,
-    jitter: Option<bool>,
     sharpen: f32,
     adapter: Option<String>,
     look: flythrough::LookPreset,
@@ -129,6 +131,7 @@ fn value(
 fn table() -> Table<Args> {
     let mut light = lighting_flags(|a: &mut Args| &mut a.light);
     light.push(Flag::refused(GONE_SINCE_0057, gone_since_0057));
+    light.push(Flag::refused(GONE_SINCE_0102, gone_since_0102));
     Table {
         usage: "clip [FLAGS]: records a rig's clip as PNG frames (see the example's doc comment)",
         sections: vec![
@@ -368,15 +371,6 @@ fn world_flags() -> Vec<Flag<Args>> {
             },
         ),
         value(
-            &["--jitter"],
-            "on|off",
-            "our upscaler, jittered or not",
-            |a, v| {
-                a.jitter = Some(v.on_off()?);
-                Ok(())
-            },
-        ),
-        value(
             &["--sharpen"],
             "S",
             "the upscaler's sharpening, 0 to 1",
@@ -429,7 +423,6 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         out_dir: None,
         light,
         internal_scale: flythrough::cli::DEFAULT_SCALE,
-        jitter: None,
         sharpen: flythrough::cli::DEFAULT_SHARPEN,
         adapter: None,
         look: flythrough::LookPreset::DEFAULT,
@@ -600,7 +593,6 @@ fn main() -> Result<(), String> {
     let mut frame = FrameSetup {
         size: args.size,
         internal_scale: args.internal_scale,
-        jitter: args.jitter,
         sharpen: args.sharpen,
         probe_spacing: args.light.probe_spacing,
         lighting: Lighting {

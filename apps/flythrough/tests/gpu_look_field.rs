@@ -942,18 +942,23 @@ fn the_split_walk_moves_no_hit_record() {
     assert_eq!(all_unsplit, 0, "unsplit against face, every row crisp");
 }
 
-/// `Frame::frame_bytes` of the default frame at 1080p output from 1280 x 720 internal, after
-/// a render in its default look over the thin rig mirrored without band slots: main 28948a5's
-/// figure (DEFAULT_MAIN) plus the split walk's 32-byte stub list and 16-byte dispatch words,
-/// no hand-off list, and in place of the screen's emissive history and reservoirs the store,
-/// whose pool no bake has allocated (STORE_LESS: - 3 686 400 - 7 372 800, `gpu_upscale.rs`'s
+/// `Frame::frame_bytes` of a frame at 1280 x 720 with no upscaler, after a render in its
+/// default look over the thin rig mirrored without band slots: main 28948a5's figure
+/// (DEFAULT_MAIN, read at 1080p output from 1280 x 720 under the engine's former upscaler)
+/// less that upscaler's histories and output growth (OWN_UPSCALER), plus the split walk's
+/// 32-byte stub list and 16-byte dispatch words, no hand-off list, and in place of the
+/// screen's emissive history and reservoirs the store, whose pool no bake has allocated
+/// (STORE_LESS: - 3 686 400 - 7 372 800, `svet-render`'s `gpu_frame.rs`
 /// `frame_bytes_hold_the_store_and_no_emissive_history`), and the direct pair: the direct
 /// target and its two accumulations, 8 B each a lighting pixel at 640 x 360 (DIRECT_PAIR,
-/// `gpu_upscale.rs`'s `frame_bytes_hold_the_direct_pair`), and the entity mirror at its default
+/// `gpu_frame.rs`'s `frame_bytes_hold_the_direct_pair`), and the entity mirror at its default
 /// pool with its marks (ENTITY_MIRROR: the tree, 512 instances and 8 MiB, ADR-0050; the marks
 /// buffer's 4096 B, ADR-0074), and the visibility pair and its samples (VIS_PAIR, 20 B a
-/// lighting pixel, ADR-0070, `gpu_upscale.rs`'s `frame_bytes_hold_the_visibility_pair`).
-const DEFAULT_FRAME_BYTES: u64 = 124_737_616 + VIS_PAIR + ENTITY_MIRROR + EXPOSURE_GROWTH;
+/// lighting pixel, ADR-0070, `gpu_frame.rs`'s `frame_bytes_hold_the_visibility_pair`).
+const DEFAULT_FRAME_BYTES: u64 = 86_952_016 + VIS_PAIR + ENTITY_MIRROR + EXPOSURE_GROWTH;
+/// The former upscaler's two `rgba16float` histories at 1080p and its `rgba8unorm` output's
+/// growth from 1280 x 720 to 1080p.
+const OWN_UPSCALER: u64 = 2 * 8 * 1920 * 1080 + 4 * (1920 * 1080 - 1280 * 720);
 const VIS_PAIR: u64 = (2 * 8 + 4) * 640 * 360;
 const ENTITY_MIRROR: u64 = 4096 + 65_536 + (8 << 20) + 4096;
 const DEFAULT_MAIN: u64 = 130_267_168;
@@ -961,7 +966,7 @@ const STORE_LESS: u64 = 3_686_400 + 7_372_800;
 const DIRECT_PAIR: u64 = 3 * 8 * 640 * 360;
 
 /// The split walk's hand-off list (16 B of header and 16 B a pixel) is allocated only by a
-/// frame that splits: on lavapipe the default frame (internal 1280 x 720, output 1920 x 1080)
+/// frame that splits: on lavapipe a frame at 1280 x 720 with no upscaler
 /// rendered in its default look over a mirror without band slots reads `DEFAULT_FRAME_BYTES`,
 /// as before the render; the thin rig's frame in the field look with its wood crisp grows by
 /// exactly the list at its size on its first render, and not again on its second.
@@ -978,7 +983,7 @@ fn only_a_split_frame_allocates_the_split_list() {
     gpu.sync_now(&wood, &device, &queue)
         .expect("mirror fits the adapter");
     assert!(!gpu.field_surface(), "a mirror without band slots");
-    let frame = svet_render::Frame::with_sizes(&device, [1280, 720], [1920, 1080]);
+    let frame = svet_render::Frame::new(&device, 1280, 720);
     let before = frame.frame_bytes();
     frame.render(
         &device,
@@ -989,13 +994,13 @@ fn only_a_split_frame_allocates_the_split_list() {
     );
     let default = frame.frame_bytes();
     println!(
-        "default frame_bytes at 1080p from 1280x720: {before} B before a render, {default} B after; main 28948a5 {DEFAULT_MAIN} B"
+        "default frame_bytes at 1280x720: {before} B before a render, {default} B after; main 28948a5 {DEFAULT_MAIN} B"
     );
     assert_eq!(before, default, "a render without the split walk");
     assert_eq!(default, DEFAULT_FRAME_BYTES);
     assert_eq!(
         default,
-        DEFAULT_MAIN + 32 + 16 - STORE_LESS
+        DEFAULT_MAIN - OWN_UPSCALER + 32 + 16 - STORE_LESS
             + DIRECT_PAIR
             + VIS_PAIR
             + ENTITY_MIRROR

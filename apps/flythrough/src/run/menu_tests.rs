@@ -369,7 +369,7 @@ fn a_shortcut_still_acts_and_shows() {
     for (k, row, closed_word) in [
         (KeyCode::F7, HudRow::Lighting, "lamp off"),
         (KeyCode::F9, HudRow::Look, "view"),
-        (KeyCode::F10, HudRow::Upscaler, "upscaler own"),
+        (KeyCode::F10, HudRow::Upscaler, "upscaler fsr2"),
         (KeyCode::KeyX, HudRow::Controls, "cutaway on"),
     ] {
         let before = run.modes.row(row);

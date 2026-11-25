@@ -155,7 +155,6 @@ impl Args {
         self.look.upscaler =
             (s.scale == svet_render::RenderScale::One).then_some(match s.upscaler {
                 UpscalerChoice::Off => crate::hud::UpscalerMode::Off,
-                UpscalerChoice::Own => crate::hud::UpscalerMode::Own,
                 UpscalerChoice::Fsr2 => crate::hud::UpscalerMode::Fsr2,
             });
         self.residency = s.build.residency;
@@ -242,7 +241,7 @@ impl Args {
     /// are the floor's but for the fly-through's own `build.record_chunks` (sized to the
     /// residency) and `output_hint` (none: a window's size, or 1280 x 720 headless).
     pub fn render_settings(&self) -> RenderSettings {
-        let (kind, scale, jitter) = self.upscaler_settings(self.start_upscaler());
+        let (kind, scale) = self.upscaler_settings(self.start_upscaler());
         let fsr2 = match self.upscaler_settings(crate::hud::UpscalerMode::Fsr2).0 {
             UpscalerKind::Fsr2(s) => s,
             _ => unreachable!("the FSR 2 mode runs FSR 2"),
@@ -258,10 +257,7 @@ impl Args {
             lighting_resolution: self.light.resolution,
             scale,
             upscaler: UpscalerChoice::of(&kind),
-            jitter,
-            sharpness: self.look.sharpen,
             fsr2,
-            own: svet_render::Upscaler::default(),
             light_cap: self.light_cap,
             metering: self.light.metering,
             field_split: true,

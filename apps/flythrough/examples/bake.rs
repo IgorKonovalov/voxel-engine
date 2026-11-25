@@ -430,7 +430,6 @@ fn view_rig(view: &ReadView, size: [u32; 2], adapter: &str) -> (ReadRig, ChunkEx
             .expect("the mirror fits the adapter");
     }
     let mut frame = Frame::new(&device, size[0], size[1]);
-    frame.set_jitter(&device, false);
     frame.set_resolution(&device, LightingResolution::Full);
     frame.set_lighting(reference_lighting(false));
     frame.set_dt(1.0 / 60.0);
@@ -769,7 +768,6 @@ fn queue_dig_readings(args: &Args) {
     let size = [192, 108];
     let mut rig = read_rig(Scene::Level, eye, &args.adapter);
     rig.frame = Frame::new(&rig.device, size[0], size[1]);
-    rig.frame.set_jitter(&rig.device, false);
     rig.frame
         .set_resolution(&rig.device, LightingResolution::Full);
     rig.frame.set_lighting(Lighting {
@@ -1069,7 +1067,6 @@ fn resolution_readings(args: &Args) {
                 None => {
                     rig.frame
                         .set_upscaler_kind(&rig.device, svet_render::UpscalerKind::Off);
-                    rig.frame.set_jitter(&rig.device, false);
                     rig.frame.set_sizes(&rig.device, NATIVE, NATIVE);
                 }
                 Some(k) => {
@@ -1218,7 +1215,6 @@ fn rest_readings(args: &Args) {
                 } else {
                     rig.frame
                         .set_upscaler_kind(&rig.device, svet_render::UpscalerKind::Off);
-                    rig.frame.set_jitter(&rig.device, false);
                     rig.frame.set_sizes(&rig.device, size, size);
                 }
                 rig.frame.set_look(svet_render::LookParams {

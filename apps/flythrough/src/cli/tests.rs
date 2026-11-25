@@ -766,16 +766,13 @@ fn lighting_flags_parse_and_refuse_unknown_values() {
     }
 }
 
-/// `--internal-scale`, `--jitter` and `--sharpen` parse their values, default to 1.5, off
-/// and 0.5, and refuse an unknown value.
+/// `--internal-scale` and `--sharpen` parse their values, default to 1.5 and 0.5, and refuse
+/// an unknown value.
 #[test]
-fn internal_scale_and_jitter_parse_and_refuse_unknown_values() {
+fn internal_scale_and_sharpen_parse_and_refuse_unknown_values() {
     let parse = |a: &[&str]| parse_args_from(argv(a));
     let d = parse(&[]).unwrap();
-    assert_eq!(
-        (d.look.internal_scale, d.look.jitter, d.look.jitter_set),
-        (RenderScale::OneHalf, false, false)
-    );
+    assert_eq!(d.look.internal_scale, RenderScale::OneHalf);
     assert_eq!(d.look.sharpen, 0.5);
     assert_eq!(parse(&["--sharpen", "0"]).unwrap().look.sharpen, 0.0);
     assert_eq!(parse(&["--sharpen", "0.8"]).unwrap().look.sharpen, 0.8);
@@ -784,11 +781,9 @@ fn internal_scale_and_jitter_parse_and_refuse_unknown_values() {
         ("1.5", RenderScale::OneHalf),
         ("2", RenderScale::Two),
     ] {
-        let a = parse(&["--internal-scale", name, "--jitter", "on"]).unwrap();
-        assert_eq!((a.look.internal_scale, a.look.jitter), (scale, true));
+        let a = parse(&["--internal-scale", name]).unwrap();
+        assert_eq!(a.look.internal_scale, scale);
     }
-    assert!(!parse(&["--jitter", "off"]).unwrap().look.jitter);
-    assert!(parse(&["--jitter", "on"]).unwrap().look.jitter);
     assert_eq!(
         RenderScale::OneHalf.internal([1920, 1080]),
         [1280, 720],
@@ -807,86 +802,75 @@ fn internal_scale_and_jitter_parse_and_refuse_unknown_values() {
             "1.0",
             "--internal-scale takes 1, 1.5 or 2, not 1.0",
         ),
-        ("--jitter", "x", "--jitter takes on or off, not x"),
         ("--sharpen", "1.5", "--sharpen takes 0 to 1, not 1.5"),
         ("--sharpen", "x", "--sharpen takes 0 to 1, not x"),
-        (
-            "--upscaler",
-            "fsr",
-            "--upscaler takes off, own or fsr2, not fsr",
-        ),
+        ("--upscaler", "fsr", "--upscaler takes off or fsr2, not fsr"),
     ] {
         assert_eq!(parse(&[flag, v]).err().as_deref(), Some(err), "{flag} {v}");
     }
 }
 
-/// `--upscaler` picks the frame's upscaler, scale and jitter: `off` is scale 1 with the
-/// jitter off whatever `--internal-scale` says; `own` jitters unless `--jitter off`; FSR 2
-/// takes `--internal-scale` and `--sharpen`. Without it the scale and `--jitter` decide:
-/// no flag is `fsr2` at 1.5 with sharpening 0.5; `--internal-scale 1` is Plan 0024's frame;
-/// `--upscaler own` is ours at 1.5, jittered; `--jitter` with no `--upscaler` is ours.
+/// `--upscaler` picks the frame's upscaler and scale: `off` is scale 1 whatever
+/// `--internal-scale` says; FSR 2 takes `--internal-scale` and `--sharpen`. Without it the
+/// scale decides: no flag is `fsr2` at 1.5 with sharpening 0.5; `--internal-scale 1` is
+/// `off`.
 #[test]
-fn upscaler_picks_the_kind_scale_and_jitter() {
+fn upscaler_picks_the_kind_and_scale() {
     let parse = |a: &[&str]| parse_args_from(argv(a));
     let settings = |a: &[&str]| {
         let args = parse(a).unwrap();
-        let (kind, scale, jitter) = args.upscaler_settings(args.start_upscaler());
-        (kind.name(), scale, jitter)
+        let (kind, scale) = args.upscaler_settings(args.start_upscaler());
+        (kind.name(), scale)
     };
-    assert_eq!(settings(&[]), ("fsr2", RenderScale::OneHalf, false));
+    assert_eq!(settings(&[]), ("fsr2", RenderScale::OneHalf));
     let none = parse(&[]).unwrap();
     match none.upscaler_settings(none.start_upscaler()).0 {
         UpscalerKind::Fsr2(s) => assert_eq!(s.sharpness, 0.5),
         k => panic!("{k:?}"),
     }
     assert_eq!(
-        settings(&["--upscaler", "own"]),
-        ("own", RenderScale::OneHalf, true)
-    );
-    assert_eq!(
         settings(&["--internal-scale", "2"]),
-        ("fsr2", RenderScale::Two, false)
+        ("fsr2", RenderScale::Two)
     );
     assert_eq!(
         settings(&["--internal-scale", "1"]),
-        ("off", RenderScale::One, false)
+        ("off", RenderScale::One)
     );
-    assert_eq!(
-        settings(&["--upscaler", "off"]),
-        ("off", RenderScale::One, false)
-    );
-    assert_eq!(
-        settings(&["--internal-scale", "1", "--jitter", "on"]),
-        ("own", RenderScale::One, true)
-    );
-    assert_eq!(
-        settings(&["--internal-scale", "1.5", "--jitter", "off"]),
-        ("own", RenderScale::OneHalf, false)
-    );
+    assert_eq!(settings(&["--upscaler", "off"]), ("off", RenderScale::One));
     assert_eq!(
         settings(&["--upscaler", "off", "--internal-scale", "1.5"]),
-        ("off", RenderScale::One, false)
-    );
-    assert_eq!(
-        settings(&["--upscaler", "own", "--internal-scale", "1.5"]),
-        ("own", RenderScale::OneHalf, true)
-    );
-    assert_eq!(
-        settings(&["--upscaler", "own", "--jitter", "off"]),
-        ("own", RenderScale::OneHalf, false)
+        ("off", RenderScale::One)
     );
     assert_eq!(
         settings(&["--upscaler", "fsr2", "--internal-scale", "1.5"]),
-        ("fsr2", RenderScale::OneHalf, false)
+        ("fsr2", RenderScale::OneHalf)
     );
     let args = parse(&["--upscaler", "fsr2", "--sharpen", "0.2"]).unwrap();
     match args.upscaler_settings(hud::UpscalerMode::Fsr2).0 {
         UpscalerKind::Fsr2(s) => assert_eq!(s.sharpness, 0.2),
         k => panic!("{k:?}"),
     }
-    // Cycled to with `F10` from `off`, our upscaler jitters.
-    let args = parse(&["--upscaler", "off"]).unwrap();
-    assert!(args.upscaler_settings(hud::UpscalerMode::Own).2);
+}
+
+/// The engine's own upscaler is gone: `--upscaler own` and `--jitter` are refused at the parse,
+/// before a device is asked for, with a line that names the removal and the two values left.
+#[test]
+fn the_own_upscalers_flags_are_refused_with_the_removal() {
+    for (a, flag) in [
+        (&["--upscaler", "own"][..], "--upscaler own"),
+        (&["--jitter", "on"][..], "--jitter"),
+        (&["--jitter", "off"][..], "--jitter"),
+    ] {
+        let want = format!(
+            "{flag} is gone since Plan 0102: the engine's own upscaler is removed (ADR-0086); \
+             --upscaler takes off or fsr2"
+        );
+        assert_eq!(
+            parse_args_from(argv(a)).err().as_deref(),
+            Some(want.as_str()),
+            "{a:?}"
+        );
+    }
 }
 
 /// The owner's picks (Plan 0055 Phase 4, the far normal's band Plan 0098's): no flag starts in
@@ -901,11 +885,8 @@ fn the_start_look_and_upscaler_are_the_owners_picks() {
         look_line(&look, &a.look.preset),
         "look face (normals face, face mix 0, far normal 4..8), view shaded"
     );
-    let (kind, scale, jitter) = a.upscaler_settings(a.start_upscaler());
-    assert_eq!(
-        (kind.name(), scale, jitter),
-        ("fsr2", RenderScale::OneHalf, false)
-    );
+    let (kind, scale) = a.upscaler_settings(a.start_upscaler());
+    assert_eq!((kind.name(), scale), ("fsr2", RenderScale::OneHalf));
     match kind {
         UpscalerKind::Fsr2(s) => assert_eq!(s.sharpness, 0.5),
         k => panic!("{k:?}"),
