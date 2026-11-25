@@ -71,6 +71,14 @@ mod seal;
 mod stages;
 mod store;
 mod summary;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the frame starts the bake thread once its setting lands"
+    )
+)]
+mod thread;
 mod writes;
 
 pub use self::around::*;
