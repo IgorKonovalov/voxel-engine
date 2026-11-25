@@ -4,6 +4,7 @@
 
 pub mod aliasing;
 pub mod bake;
+pub mod cover;
 pub mod defects;
 pub mod lights;
 pub mod look;

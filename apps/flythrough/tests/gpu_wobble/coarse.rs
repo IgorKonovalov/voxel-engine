@@ -64,7 +64,7 @@ const BINS: [&str; 5] = [
 
 /// The live queue stepped as the fly-through's: the view's half angles and focal length, so the
 /// tiers by size on screen apply.
-fn step_queue(rig: &mut Rig, f: &mut Frame, cam: &Camera) -> svet_render::QueueStats {
+pub(super) fn step_queue(rig: &mut Rig, f: &mut Frame, cam: &Camera) -> svet_render::QueueStats {
     let size = f.output_size();
     let aspect = size[0] as f32 / size[1] as f32;
     let view = svet_render::QueueView {

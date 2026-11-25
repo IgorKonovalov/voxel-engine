@@ -562,7 +562,7 @@ says otherwise; 3, 4 and 5, the recommended options.
 | 2: The bake's key ray at its cap | dev | done: the closed cave's floor reads key 0 on 64 of 64, the open one 255 on 64, the slab's 64 lit before and after, the rule's 9 chunks equal the job's; no test's bytes moved | committed with this row |
 | 3: The coarse tier's wobble, a reading | dev | read; the stop rule holds (held coarse 0.01 % at weight 0 a still pair, landed 0.00 %, both adapters; what moves is the landings); readings in [`logs/0100.md`](logs/0100.md) | committed with this row |
 | 4: The coarse tier held still | dev | not built: Phase 3's stop rule (the pose does not hold the fault) | |
-| 5: Sun under cover, the candidates read | dev | not started | |
+| 5: Sun under cover, the candidates read | dev | read; the stop rule fires (the horizon reads 1 where the reference reads under 0.5 on more faces than the ramp holds: W1's pose 1 054 against 480, the slot 146 against 62; W3's 5 against 63); readings in [`logs/0100.md`](logs/0100.md) | committed with this row |
 | 6: Sun under cover, the arms | dev | not started | |
 | 7: The window rehearsed headless | dev | not started | |
 | 8: The owner's window | human | not started | |
@@ -622,6 +622,18 @@ each. Empty is fine.)_
 - Phase 1b: `lighting.key_filter` not built: `calm,nofilter`'s display count read 0.82 (W2) and
   1.91 (W3) of `calm`'s, over the three quarters the amendment sets.
 - Phase 1b: every terraces row was read loaded (3.9 to 15.1); no quiet row was taken.
+- Phase 5: the reading is `gpu_wobble/cover.rs` with the pass in `tests/support/cover.rs` (and
+  `pub mod cover` in `support/mod.rs`); `coarse::step_queue` became `pub(super)`. The reference
+  and every candidate but the horizons' GPU check are computed on the CPU over the world's voxels,
+  the column map and the store read back; `approach` is a CPU copy of the probes, not the
+  shader's bytes.
+- Phase 5: W3's view is the rig's rule (the ground 40 voxels north of the eye); W1's eye looks at
+  that same point; the slot is the inside spawn facing out at 12:00 with trees sparse.
+- Phase 5: "over 4 levels" is read through `G`, the display's levels a unit of key visibility on
+  pixels the horizon lights whole (key on against key off, by face direction), not by rendering
+  each candidate.
+- Phase 5: the landing of the key words is the rig's frames with the queue stepped every frame,
+  in wall seconds, not the fly-through's drain.
 
 ### Close triggers
 

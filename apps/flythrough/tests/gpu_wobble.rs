@@ -18,6 +18,8 @@
 
 #[path = "gpu_wobble/coarse.rs"]
 mod coarse;
+#[path = "gpu_wobble/cover.rs"]
+mod cover;
 #[path = "gpu_wobble/fsr.rs"]
 mod fsr;
 mod support;
