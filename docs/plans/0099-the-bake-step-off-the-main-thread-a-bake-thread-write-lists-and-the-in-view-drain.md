@@ -1968,6 +1968,9 @@ The held record is in the edit's frame under either option once Phase 3c is in.
   dig readings taken again.
 The lane does not wait: (a) is what the tree does, and (b) changes only the dig's frame.
 
+**Answered 2026-11-25 (owner): (a).** The wait stays as built; no Phase 3e is written. Phase
+3d's figures go beside the window, and Phase 5 (c) judges the dig frame's stall by eye.
+
 ### The order: 3c, 3d, 4c2, 4d, then Phase 5
 
 One lane, one dev at a time. **3c first**: it is the image fault, and every dig reading after
