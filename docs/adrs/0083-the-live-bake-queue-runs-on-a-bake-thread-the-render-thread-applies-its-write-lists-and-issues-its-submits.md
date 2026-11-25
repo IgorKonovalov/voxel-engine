@@ -1,7 +1,8 @@
 # ADR-0083: The live bake queue runs on a bake thread; the render thread applies its write lists and issues its submits
 
 > **Status:** proposed (2026-11-22, with Plan 0099; amended while proposed, 2026-11-25: the
-> edit's frame waits, the owner's answer to that plan's question 6)
+> edit's frame waits, the owner's answer to that plan's question 6; lists apply in the order
+> made, an edit's with those before it)
 > **Date:** 2026-11-22
 > **Related plan(s):** [Plan 0099](../plans/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md).
 > Extends [ADR-0017](0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md)
@@ -70,13 +71,17 @@ does them at one fixed point in the frame, from lists the bake thread prepared.*
   shows a hole without it. The wait is the rest of the step in progress, which admits no
   further candidate once a box is sent, plus the dig's own step. It has no timeout; it ends on
   the list, on the thread's panic or on the stop. That frame also issues the dig's submit
-  behind any submit carried from an earlier frame, so it may issue two. No other frame waits,
-  and a dig's read-back crosses as every read-back does.
+  behind every submit planned before it and not yet issued (the one the step before planned,
+  and one carried from an earlier frame), so it issues two as a rule and at most the thread's
+  depth. No other frame waits, and a dig's read-back crosses as every read-back does.
 - **Results cross as write lists.** One bake step emits one ordered list of buffer writes
   (a block's words, its table word, the summary and parent words, a fade's shown words, the
   store's window when it moves) and at most one prepared submit (the planned rounds and the
   entry table's bytes). The render thread applies whole lists, in order, each inside one frame,
-  up to a byte cap the bake thread sizes its lists to; what does not fit waits a frame. It then
+  up to a byte cap the bake thread sizes its lists to; what does not fit waits a frame. **An
+  edit's list is never carried, and never passes a list made before it: the frame it reaches
+  applies every list up to it, whatever the cap** (amended 2026-11-25: applied first, it was
+  written over by an older step's writes to the same chunk). It then
   encodes and issues the prepared submit after the frame's sync, where the step issues it
   today. **A block's words and its table word are always in the same list, so no frame reads
   one without the other.** The outbox is bounded and the bake thread waits when it is full.
