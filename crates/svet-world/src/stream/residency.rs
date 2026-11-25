@@ -49,6 +49,10 @@ pub(super) struct ResidencyPlan {
     pub(super) resident: HashMap<ChunkCoord, Tier>,
     /// The `Tier::Full` entries of `resident`, kept by count so `stats` walks nothing.
     pub(super) resident_full: usize,
+    /// The `Tier::Full` entries of `resident` as a set shared copy-on-write: a reader's snapshot
+    /// ([`super::Streamer::full_chunks`]) is a reference count, and a change copies the set
+    /// only while a snapshot is still held.
+    pub(super) full: Arc<HashSet<ChunkCoord>>,
     /// Chunks with a load or demotion job queued or running, and the tier it produces.
     pub(super) in_flight: HashMap<ChunkCoord, Tier>,
     pub(super) load_failed: HashSet<ChunkCoord>,
@@ -81,6 +85,7 @@ impl ResidencyPlan {
             sweep: false,
             resident: HashMap::new(),
             resident_full: 0,
+            full: Arc::default(),
             in_flight: HashMap::new(),
             load_failed: HashSet::new(),
             wanted_since: HashMap::new(),
@@ -431,12 +436,24 @@ impl ResidencyPlan {
         let old = self.resident.insert(coord, tier);
         self.resident_full += usize::from(tier == Tier::Full);
         self.resident_full -= usize::from(old == Some(Tier::Full));
+        match (old == Some(Tier::Full), tier == Tier::Full) {
+            (false, true) => {
+                Arc::make_mut(&mut self.full).insert(coord);
+            }
+            (true, false) => {
+                Arc::make_mut(&mut self.full).remove(&coord);
+            }
+            _ => {}
+        }
     }
 
     /// Makes `coord` not resident, keeping the full count.
     pub(super) fn unset_resident(&mut self, coord: ChunkCoord) {
         let old = self.resident.remove(&coord);
         self.resident_full -= usize::from(old == Some(Tier::Full));
+        if old == Some(Tier::Full) {
+            Arc::make_mut(&mut self.full).remove(&coord);
+        }
     }
 }
 
@@ -450,6 +467,27 @@ mod tests {
             r_lod,
             hysteresis: 1,
         })
+    }
+
+    /// The full set follows every tier change, and a snapshot taken before a change keeps its
+    /// answers.
+    #[test]
+    fn the_full_set_is_the_full_tier_and_a_snapshot_keeps_its_answers() {
+        let mut p = plan(2, 2);
+        let (a, b) = (ChunkCoord([0, 0, 0]), ChunkCoord([1, 0, 0]));
+        p.set_resident(a, Tier::Full);
+        p.set_resident(b, Tier::LodOnly);
+        let snap = p.full.clone();
+        p.set_resident(b, Tier::Full);
+        p.set_resident(a, Tier::LodOnly);
+        assert!(
+            snap.contains(&a) && !snap.contains(&b),
+            "the snapshot is unchanged"
+        );
+        assert!(!p.full.contains(&a) && p.full.contains(&b));
+        p.unset_resident(b);
+        assert!(p.full.is_empty());
+        assert_eq!(p.resident_full, 0);
     }
 
     #[test]

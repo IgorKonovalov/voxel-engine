@@ -9,7 +9,7 @@ use svet_render::{Band, Bands, QueueView, in_view_census};
 const VFOV: f32 = 70.0 * std::f32::consts::PI / 180.0;
 
 /// A view from the centre of chunk (0, 0, 0) looking down +x, at 1080p.
-fn view() -> QueueView<'static> {
+fn view() -> QueueView {
     QueueView {
         eye: [32.0, 32.0, 32.0],
         forward: [1.0, 0.0, 0.0],

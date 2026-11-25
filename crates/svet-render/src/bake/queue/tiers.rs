@@ -76,7 +76,7 @@ impl BakeQueue {
     /// camera's chunk `eye`: when they change, every block whose band changed is touched (its
     /// candidacy read again) and every pending job above its new band's count is withdrawn, its
     /// chunk listed again.
-    pub(super) fn retier(&mut self, store: &mut Store, view: &QueueView<'_>, eye: [i32; 3]) {
+    pub(super) fn retier(&mut self, store: &mut Store, view: &QueueView, eye: [i32; 3]) {
         let bands = view.focal_px.map(|focal_px| Bands {
             focal_px,
             lo: self.far_normal[0],
@@ -164,7 +164,7 @@ impl BakeQueue {
     /// shell) or the pool changed since the last read and [`WAITING_EVERY`] steps have passed.
     /// A read walks the pool and the jobs once, scoring each by its angle term alone
     /// ([`angle_term`]), into the set's kept allocation.
-    pub(super) fn refresh_waiting(&mut self, store: &Store, view: &QueueView<'_>, force: bool) {
+    pub(super) fn refresh_waiting(&mut self, store: &Store, view: &QueueView, force: bool) {
         let eye = view.eye.map(|v| (v / 64.0).floor() as i32);
         let key = (
             eye,

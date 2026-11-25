@@ -6,6 +6,7 @@ mod digs;
 mod fade_clock;
 mod keys;
 mod list;
+mod message;
 mod open;
 mod reach;
 mod rule;
@@ -15,6 +16,8 @@ mod stats;
 mod step;
 mod tiers;
 
+pub use self::message::Residency;
+pub(crate) use self::message::{FrameMessage, Inbox, StepSettings};
 pub use self::open::in_view_census;
 use self::reach::reach_of;
 pub(crate) use self::shadow::{LightNote, Shadow, notes};
@@ -161,13 +164,14 @@ pub(super) struct DigChunk {
 }
 
 /// What the frame hands the queue's step.
-pub struct QueueView<'a> {
+#[derive(Clone)]
+pub struct QueueView {
     /// The camera's position and forward direction, in voxels.
     pub eye: [f32; 3],
     pub forward: [f32; 3],
-    /// Whether a chunk is resident full (a streamed world); `None` for a bounded world, whose
-    /// mirror holds every chunk it has and whose absent chunks are empty.
-    pub resident: Option<&'a dyn Fn(ChunkCoord) -> bool>,
+    /// Which chunks are resident full (a streamed world), owned; `None` for a bounded world,
+    /// whose mirror holds every chunk it has and whose absent chunks are empty.
+    pub resident: Option<Residency>,
     /// Samples this step draws at most; `None` sizes it by [`BakeQueue::budget`].
     pub samples: Option<u64>,
     /// The last frame's interval in seconds, which a per-second budget sizes the slice by
@@ -289,6 +293,9 @@ pub struct BakeQueue {
     pub(super) lp: JobLoop,
     pub(super) prepared: std::collections::HashMap<[i32; 3], Arc<PreparedMasks>>,
     pub(super) prepared_bytes: usize,
+    /// The render half's mailbox: edits and stream results since the last step, which the
+    /// next step's message carries ([`BakeQueue::invalidate`], [`BakeQueue::take_prepared`]).
+    pub(crate) inbox: Inbox,
     /// The camera's chunk at the last step.
     pub(super) eye: [i32; 3],
     /// The steps at which the camera's chunk changed, counted since the queue started.
@@ -446,15 +453,10 @@ pub struct BakeQueue {
 /// reach) is mirrored full and current, or known empty: in a bounded world (`resident` `None`) a
 /// chunk the mirror does not wait to upload; in a streamed one a chunk resident full whose
 /// record is current. And every column over the reach is final ([`reach_columns_final`]).
-pub(super) fn reach_ready(
-    run: &BakeRun<'_>,
-    coord: ChunkCoord,
-    lr: i32,
-    view: &QueueView<'_>,
-) -> bool {
-    let held = held_by_streamer(view.eye, view.lod_radius, view.resident);
+pub(super) fn reach_ready(run: &BakeRun<'_>, coord: ChunkCoord, lr: i32, view: &QueueView) -> bool {
+    let held = held_by_streamer(view.eye, view.lod_radius, view.resident_fn());
     let held = held.as_ref().map(|h| h as &dyn Fn(ChunkCoord) -> bool);
-    reach_of(run, coord, lr, view.resident, true) == Reach::Ready
+    reach_of(run, coord, lr, view.resident_fn(), true) == Reach::Ready
         && reach_columns_final(coord, lr, |x, y| run.mirror.column_final(x, y, held))
 }
 
@@ -488,9 +490,9 @@ pub fn finality_blockers(
     gpu: &GpuWorld,
     coord: ChunkCoord,
     lr: i32,
-    view: &QueueView<'_>,
+    view: &QueueView,
 ) -> Vec<(ChunkCoord, bool)> {
-    let held = held_by_streamer(view.eye, view.lod_radius, view.resident);
+    let held = held_by_streamer(view.eye, view.lod_radius, view.resident_fn());
     let w = gpu.window();
     let mut out = Vec::new();
     reach_columns_final(coord, lr, |x, y| {
@@ -564,6 +566,7 @@ impl BakeQueue {
             },
             prepared: Default::default(),
             prepared_bytes: 0,
+            inbox: Inbox::default(),
             eye: [0; 3],
             eye_moves: 0,
             job_eye: Default::default(),
@@ -746,7 +749,7 @@ impl BakeQueue {
         run: &BakeRun<'_>,
         coord: ChunkCoord,
         lr: i32,
-        view: &QueueView<'_>,
+        view: &QueueView,
         eye: [i32; 3],
     ) -> Option<(bool, bool)> {
         let partial = self.bakeable_reach(run, coord, lr, view, eye)?;
@@ -771,9 +774,9 @@ impl BakeQueue {
         run: &BakeRun<'_>,
         coord: ChunkCoord,
         lr: i32,
-        view: &QueueView<'_>,
+        view: &QueueView,
     ) -> bool {
-        let held = held_by_streamer(view.eye, view.lod_radius, view.resident);
+        let held = held_by_streamer(view.eye, view.lod_radius, view.resident_fn());
         let held = held.as_ref().map(|h| h as &dyn Fn(ChunkCoord) -> bool);
         let memo = &mut self.columns_final;
         reach_columns_final(coord, lr, |x, y| {
@@ -786,7 +789,7 @@ impl BakeQueue {
     /// The catch-up (ADR-0070's amendment of the second window): each provisional block whose
     /// columns turned final is due for one more bake, behind the first bakes. Runs when the
     /// mirror changed (`changed`, or untracked) and a block is provisional.
-    pub(super) fn catch_up(&mut self, run: &BakeRun<'_>, view: &QueueView<'_>, changed: bool) {
+    pub(super) fn catch_up(&mut self, run: &BakeRun<'_>, view: &QueueView, changed: bool) {
         if !changed || self.provisional.is_empty() {
             return;
         }
@@ -878,7 +881,7 @@ impl BakeQueue {
 
     /// Where `c` lies against `view` from the camera's chunk `eye`: [`VIEW_SHELL`],
     /// [`VIEW_IN`] or [`VIEW_OUT`].
-    pub(super) fn view_class(&self, c: [i32; 3], eye: [i32; 3], view: &QueueView<'_>) -> usize {
+    pub(super) fn view_class(&self, c: [i32; 3], eye: [i32; 3], view: &QueueView) -> usize {
         let o = [0, 1, 2].map(|k| c[k] - eye[k]);
         if in_near_shell(o, self.near) {
             VIEW_SHELL
@@ -907,9 +910,12 @@ impl BakeQueue {
             ("dig_open", self.dig_open.contains_key(&c)),
             ("reach", self.reach.contains(&c)),
             ("listed", self.listed.contains_key(&c)),
-            ("faceless", self.faceless.contains(&c)),
-            ("sealed", self.sealed.holds(c)),
-            ("blocked", self.blocked.contains_key(&c)),
+            ("faceless", self.faceless_now(c)),
+            ("sealed", self.sealed_now(c)),
+            (
+                "blocked",
+                self.blocked.contains_key(&c) && !self.inbox.unknown(c),
+            ),
             ("job_coarse", self.job_coarse.contains_key(&c)),
             ("stale", self.stale.contains_key(&c)),
             ("partial", self.partial.contains(&c)),
@@ -934,6 +940,7 @@ impl BakeQueue {
             && self.counted_idle
             && self.stats.depth == 0
             && self.boxes.is_empty()
+            && !self.inbox.has_box()
             && self.digs.is_empty()
             && self.reach.is_empty()
             && self.partial_due.is_empty()
@@ -942,12 +949,13 @@ impl BakeQueue {
 
     /// Whether an edit box waits for the next step.
     pub fn boxes_waiting(&self) -> bool {
-        !self.boxes.is_empty()
+        !self.boxes.is_empty() || self.inbox.has_box()
     }
 
     /// No edit box, dig brick or ring-3 chunk waits, and no dig job runs.
     pub fn digs_settled(&self) -> bool {
         self.boxes.is_empty()
+            && !self.inbox.has_box()
             && self.digs.is_empty()
             && self.dig_open.is_empty()
             && self.reach.is_empty()
@@ -957,8 +965,8 @@ impl BakeQueue {
     /// (`absent`) no chunk.
     pub fn settled(&self, store: &Store, c: ChunkCoord, absent: bool) -> bool {
         ((store.blocks.contains_key(&c.0) && !self.lesser(store, c.0))
-            || self.faceless.contains(&c.0)
-            || self.sealed.holds(c.0)
+            || self.faceless_now(c.0)
+            || self.sealed_now(c.0)
             || absent)
             && !self.lp.chunks().any(|j| j == c)
             && !self.digs.contains_key(&c.0)
@@ -971,9 +979,19 @@ impl BakeQueue {
     /// no face, or its reach or lights were not ready at its last check.
     pub fn passed(&self, store: &Store, c: ChunkCoord) -> bool {
         store.blocks.contains_key(&c.0)
-            || self.faceless.contains(&c.0)
-            || self.sealed.holds(c.0)
-            || self.blocked.contains_key(&c.0)
+            || self.faceless_now(c.0)
+            || self.sealed_now(c.0)
+            || (self.blocked.contains_key(&c.0) && !self.inbox.unknown(c.0))
+    }
+
+    /// Whether `c` is known faceless, with the mailbox's arrivals taken.
+    fn faceless_now(&self, c: [i32; 3]) -> bool {
+        self.faceless.contains(&c) && !self.inbox.unknown(c)
+    }
+
+    /// Whether `c` is held sealed, with the mailbox's boxes taken.
+    fn sealed_now(&self, c: [i32; 3]) -> bool {
+        self.sealed.holds(c) && !self.inbox.near(c)
     }
 
     /// [`face_classes`] of `materials`, made again only when a row's translucency changed.
@@ -989,83 +1007,18 @@ impl BakeQueue {
         self.classes.as_ref().expect("made above").1.clone()
     }
 
-    /// Takes the stream workers' results; one made under other classes than `materials`' is
-    /// dropped.
-    pub fn take_prepared(
-        &mut self,
-        prepared: &[(ChunkCoord, svet_world::Prepared)],
-        materials: &MaterialTable,
-    ) {
-        let classes = self.classes(materials);
-        let classes = classes.as_slice();
-        for (c, p) in prepared {
-            let Ok(m) = p.0.clone().downcast::<PreparedMasks>() else {
-                continue;
-            };
-            self.stats.hook_chunks += 1;
-            self.stats.hook_ns += m.ns;
-            self.stats.hook_max_ns = self.stats.hook_max_ns.max(m.ns);
-            self.stats.seal_ns += m.seal_ns;
-            self.stats.seal_max_ns = self.stats.seal_max_ns.max(m.seal_ns);
-            if m.classes.as_slice() != classes {
-                continue;
-            }
-            let changed = self.sealed.take(&m);
-            self.touched.extend(changed);
-            self.prepared_bytes += m.masks.bytes();
-            if let Some(old) = self.prepared.insert(c.0, m) {
-                self.prepared_bytes -= old.masks.bytes();
-            }
-            self.faceless.remove(&c.0);
-            self.touched.insert(c.0);
-            self.blocked.remove(&c.0);
-        }
-        if self.prepared_bytes > PREPARED_BYTES_MAX {
-            // The farthest from the last step's eye go first, to nine tenths of the cap.
-            let eye = self.eye;
-            let mut by: Vec<(i64, [i32; 3])> = self
-                .prepared
-                .keys()
-                .map(|c| {
-                    let d: i64 = (0..3).map(|k| i64::from(c[k] - eye[k]).pow(2)).sum();
-                    (d, *c)
-                })
-                .collect();
-            by.sort_unstable();
-            while self.prepared_bytes > PREPARED_BYTES_MAX / 10 * 9 {
-                let Some((_, c)) = by.pop() else { break };
-                if let Some(m) = self.prepared.remove(&c) {
-                    self.prepared_bytes -= m.masks.bytes();
-                }
-            }
-        }
+    /// Takes the stream workers' results into the next step's message; one made under other
+    /// classes than the step's material table is dropped there.
+    pub fn take_prepared(&mut self, prepared: &[(ChunkCoord, svet_world::Prepared)]) {
+        self.inbox.push_masks(prepared);
     }
 
-    /// An edit's box (`min ..= max`, voxels): the chunks within a voxel of it lose their prepared
-    /// masks and their known facelessness, and a running job's block for them is thrown away; the
-    /// box's rings are read at the next step.
+    /// An edit's box (`min ..= max`, voxels) into the next step's message, which takes it
+    /// first: the chunks within a voxel of it lose their prepared masks and their known
+    /// facelessness, and a running job's block for them is thrown away; the box's rings are
+    /// read in that step. The public reads answer as if it were taken now.
     pub fn invalidate(&mut self, min: [i32; 3], max: [i32; 3]) {
-        self.boxes.push([min, max]);
-        self.sealed.forget(min, max);
-        let lo = min.map(|v| (v - 1).div_euclid(64));
-        let hi = max.map(|v| (v + 1).div_euclid(64));
-        for z in lo[2]..=hi[2] {
-            for y in lo[1]..=hi[1] {
-                for x in lo[0]..=hi[0] {
-                    let c = [x, y, z];
-                    if let Some(m) = self.prepared.remove(&c) {
-                        self.prepared_bytes -= m.masks.bytes();
-                    }
-                    self.faceless.remove(&c);
-                    self.touched.insert(c);
-                    self.blocked.remove(&c);
-                    if self.lp.chunks().any(|j| j.0 == c) {
-                        // The box goes in the next frame message.
-                        self.stale.insert(c, self.steps + 1);
-                    }
-                }
-            }
-        }
+        self.inbox.push_box(min, max);
     }
 }
 

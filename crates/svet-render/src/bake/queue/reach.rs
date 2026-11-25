@@ -132,7 +132,7 @@ impl BakeQueue {
         run: &BakeRun<'_>,
         coord: ChunkCoord,
         lr: i32,
-        view: &QueueView<'_>,
+        view: &QueueView,
         eye: [i32; 3],
     ) -> Option<bool> {
         // ADR-0080 rule 4: a mid or far chunk bakes from the chunks resident; a near one keeps
@@ -140,7 +140,7 @@ impl BakeQueue {
         let mode = self
             .reach_mode
             .for_band(self.band_of(coord.0) == Band::Near);
-        let reach = self.reach_cached(run, coord, lr, view.resident, mode == ReachMode::Full);
+        let reach = self.reach_cached(run, coord, lr, view.resident_fn(), mode == ReachMode::Full);
         let crosses = view
             .full_radius
             .is_some_and(|r| reach_crosses(coord, eye, lr, r));

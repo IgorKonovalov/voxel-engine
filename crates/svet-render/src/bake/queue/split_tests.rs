@@ -145,6 +145,8 @@ struct Rig {
     queue: BakeQueue,
     store: Store,
     half: Half,
+    /// The settings each message carries: the queue's own at its start.
+    settings: StepSettings,
 }
 
 impl Rig {
@@ -162,14 +164,24 @@ impl Rig {
         let _ = store.take_direct();
         let mut half = Half::default();
         half.lists.cap = cap;
+        let queue = BakeQueue::new(settings, 4.0);
+        let step_settings = StepSettings {
+            column_wait: queue.column_wait,
+            key_step: queue.key_step,
+            landing_fade: queue.landing_fade,
+            dig_store_hold: queue.dig_store_hold,
+            landed_word: queue.landed_word,
+            far_normal: queue.far_normal,
+        };
         Self {
             world: world(),
             mirror,
             shadow: Shadow::default(),
             seen: (None, None),
-            queue: BakeQueue::new(settings, 4.0),
+            queue,
             store,
             half,
+            settings: step_settings,
         }
     }
 
@@ -180,15 +192,7 @@ impl Rig {
         let first = window.is_none();
         let n = notes(&self.mirror, (!first).then_some(changed), *window, key);
         *window = n.window;
-        self.shadow.take(&n);
-        self.queue.changes_in = n.changed;
         self.half.frame += 1;
-        let run = BakeRun {
-            mirror: &self.shadow,
-            world: &self.world,
-            sky: 0,
-            key: None,
-        };
         let view = QueueView {
             eye: [32.0, 32.0, 32.0],
             forward: [1.0, 0.0, 0.0],
@@ -202,12 +206,21 @@ impl Rig {
             lod_radius: None,
             focal_px: None,
         };
+        let msg = FrameMessage {
+            start: StepStart::now(),
+            view,
+            notes: n,
+            sky: 0,
+            key: None,
+            settings: self.settings,
+            arrivals: self.queue.inbox.take(),
+        };
         self.queue
             .step(
-                &run,
+                &mut self.shadow,
+                &self.world,
                 &mut self.store,
-                &view,
-                StepStart::now(),
+                msg,
                 &mut self.half,
             )
             .expect("the step runs");
@@ -421,5 +434,74 @@ fn a_dig_is_served_whole_in_the_edits_step() {
     assert!(
         first_other.is_none_or(|o| last_ring.is_some_and(|r| r < o)),
         "ring 1's rounds ahead of every other job's: {slots:?}"
+    );
+}
+
+/// The public reads between an edit and the next step answer as they did when the box went into
+/// the books at the edit: a queue whose box waits in the mailbox against the same queue with the
+/// box taken at once, over every chunk within two of the box. A faceless chunk the box touches
+/// reads unsettled and not passed until the step, and the dig reads waiting.
+#[test]
+fn an_edit_reads_unsettled_before_the_next_step() {
+    let ready = |r: &Rig| {
+        (0..CHUNKS[0]).all(|x| r.store.block(ChunkCoord([x, 0, 0])).is_some())
+            && r.half.flights.is_empty()
+            && r.queue.digs_settled()
+    };
+    let (mut waits, mut eager) = (Rig::new(None), Rig::new(None));
+    waits.until("every chunk holds a block", ready);
+    eager.until("every chunk holds a block", ready);
+    // A chunk beside the slab, known faceless and blocked: the box reaches it within a voxel.
+    let beside = [-1, 0, 0];
+    for r in [&mut waits, &mut eager] {
+        r.queue.faceless.insert(beside);
+        r.queue.blocked.insert(beside, Default::default());
+    }
+    assert!(waits.queue.settled(&waits.store, ChunkCoord(beside), false));
+    let (lo, hi) = ([0, 20, 4], [3, 23, 7]);
+    waits.carve(lo, hi);
+    eager.carve(lo, hi);
+    let arrivals = eager.queue.inbox.take();
+    eager
+        .queue
+        .take_message(eager.settings, arrivals, eager.world.materials());
+    let (w, e) = (&waits.queue, &eager.queue);
+    assert_eq!(w.digs_settled(), e.digs_settled());
+    assert_eq!(w.boxes_waiting(), e.boxes_waiting());
+    assert_eq!(w.empty(), e.empty());
+    assert!(!w.digs_settled() && w.boxes_waiting(), "the dig waits");
+    for z in -2..=2 {
+        for y in -2..=3 {
+            for x in -2..=4 {
+                let c = ChunkCoord([x, y, z]);
+                for absent in [false, true] {
+                    assert_eq!(
+                        w.settled(&waits.store, c, absent),
+                        e.settled(&eager.store, c, absent),
+                        "settled {c:?} {absent}"
+                    );
+                }
+                assert_eq!(
+                    w.passed(&waits.store, c),
+                    e.passed(&eager.store, c),
+                    "passed {c:?}"
+                );
+                assert_eq!(w.tracks(c), e.tracks(c), "tracks {c:?}");
+            }
+        }
+    }
+    assert!(
+        !w.settled(&waits.store, ChunkCoord(beside), false),
+        "the box's faceless neighbour reads unsettled"
+    );
+    assert!(!w.passed(&waits.store, ChunkCoord(beside)));
+    // The step takes the box: the books then stand as the eager queue's.
+    waits.step();
+    assert!(waits.queue.inbox.take().is_empty());
+    assert!(!waits.queue.faceless.contains(&beside) && !waits.queue.blocked.contains_key(&beside));
+    eager.step();
+    assert!(
+        waits.queue.digs.keys().eq(eager.queue.digs.keys()),
+        "the same dig bricks"
     );
 }

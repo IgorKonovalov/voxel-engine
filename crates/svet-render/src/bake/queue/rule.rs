@@ -166,7 +166,7 @@ impl BakeQueue {
     pub(super) fn note_rule_missed(
         &mut self,
         gpu: &Shadow,
-        view: &QueueView<'_>,
+        view: &QueueView,
         eye: [i32; 3],
         c: [i32; 3],
         class: u8,

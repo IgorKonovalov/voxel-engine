@@ -738,12 +738,7 @@ impl Run {
         }
         mirror.set_focus(voxel_of(camera.position));
         let stream = self.stream.as_ref();
-        let resident_fn = |c: ChunkCoord| {
-            stream.is_some_and(|s| s.streamer.tier(c) == Some(svet_world::Tier::Full))
-        };
-        let resident: Option<&dyn Fn(ChunkCoord) -> bool> = stream
-            .is_some()
-            .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool);
+        let resident = stream.map(|s| svet_render::Residency::of_chunks(s.streamer.full_chunks()));
         let (forward, _, _) = camera.basis();
         let (half_angle, frustum, focal) = queue_view_angles(camera.vfov, frame.output_size());
         let view = svet_render::QueueView {

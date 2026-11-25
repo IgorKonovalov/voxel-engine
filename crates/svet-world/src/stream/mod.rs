@@ -607,6 +607,12 @@ impl Streamer {
         self.plan.resident.get(&coord).copied()
     }
 
+    /// The chunks resident in [`Tier::Full`], a snapshot: owned, so another thread may read it
+    /// while the streamer moves on; it costs a reference count until the next change.
+    pub fn full_chunks(&self) -> std::sync::Arc<std::collections::HashSet<ChunkCoord>> {
+        self.plan.full.clone()
+    }
+
     /// Whether `coord` is held by persistence, in RAM or in a spill file.
     pub fn is_persisted(&self, coord: ChunkCoord) -> bool {
         let p = lock(&self.shared.persisted);

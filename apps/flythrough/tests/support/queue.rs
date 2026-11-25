@@ -193,14 +193,10 @@ impl Q {
                 .sync_now(&self.world, &self.device, &self.queue)
                 .expect("the mirror fits");
         }
-        let resident = self.resident;
-        let resident_fn = move |c: ChunkCoord| resident.is_some_and(|f| f(c));
         let view = QueueView {
             eye,
             forward: self.camera.basis().0.to_array(),
-            resident: resident
-                .is_some()
-                .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool),
+            resident: self.resident.map(svet_render::Residency::of_rule),
             samples: self.samples,
             // A fixed 60 Hz frame: a per-second budget sizes the slice repeatably.
             interval_s: 1.0 / 60.0,

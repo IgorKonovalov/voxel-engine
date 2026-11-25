@@ -95,7 +95,7 @@ impl BakeQueue {
         &mut self,
         run: &BakeRun<'_>,
         store: &mut Store,
-        view: &QueueView<'_>,
+        view: &QueueView,
         cap: u64,
     ) -> Result<(), BakeError> {
         let Some((dir, radius)) = run.key else {

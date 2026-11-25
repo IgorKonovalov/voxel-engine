@@ -205,7 +205,7 @@ impl QueueRun {
 fn print_listing_census(
     gfx: &mut crate::run::Gfx,
     world: &svet_world::World,
-    view: &svet_render::QueueView<'_>,
+    view: &svet_render::QueueView,
     q: &mut QueueRun,
 ) {
     if !std::mem::take(&mut q.listing_due) {
@@ -521,12 +521,7 @@ impl Run {
         };
         let (forward, _, _) = self.fly.camera.basis();
         let stream = self.stream.as_ref();
-        let resident_fn = |c: ChunkCoord| {
-            stream.is_some_and(|s| s.streamer.tier(c) == Some(svet_world::Tier::Full))
-        };
-        let resident: Option<&dyn Fn(ChunkCoord) -> bool> = stream
-            .is_some()
-            .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool);
+        let resident = stream.map(|s| svet_render::Residency::of_chunks(s.streamer.full_chunks()));
         let (half_angle, frustum, focal) =
             queue_view_angles(self.fly.camera.vfov, gfx.frame.output_size());
         let t_step = ms_since(self.start);

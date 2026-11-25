@@ -622,7 +622,7 @@ mod flicker {
         fn flicker_dig_streamed() {
             use std::cell::RefCell;
             use svet_render::{GpuWorld, MirrorConfig, QueueView, Window};
-            use svet_world::{ChunkCoord, PersistConfig, StreamConfig, Streamer, Tier, World};
+            use svet_world::{PersistConfig, StreamConfig, Streamer, World};
             let residency = flythrough::RESIDENCY;
             let budget = svet_render::DEFAULT_BUDGET_BYTES;
             let Some((device, queue, adapter)) = support::reading_device(budget) else {
@@ -681,11 +681,10 @@ mod flicker {
                     .sync(&rig.world, &rig.queue, &mut enc)
                     .expect("the mirror fits");
                 rig.queue.submit([enc.finish()]);
-                let resident_fn = |c: ChunkCoord| st.tier(c) == Some(Tier::Full);
                 let view = QueueView {
                     eye: cam.position.to_array(),
                     forward: cam.basis().0.to_array(),
-                    resident: Some(&resident_fn),
+                    resident: Some(svet_render::Residency::of_chunks(st.full_chunks())),
                     samples: None,
                     interval_s: 1.0 / 60.0,
                     hold: Some(residency.r_full + rig.gpu.light_radius() + 1),

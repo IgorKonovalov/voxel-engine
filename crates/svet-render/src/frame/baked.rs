@@ -372,16 +372,18 @@ impl Frame {
             .is_none_or(|q| chunks.iter().all(|&c| q.passed(&self.baked.store, c)))
     }
 
-    /// Hands the live queue the stream workers' prepared masks ([`crate::bake::FacePrep`]).
+    /// Hands the live queue the stream workers' prepared masks ([`crate::bake::FacePrep`]),
+    /// into the next step's message; that step judges them against its world's material table,
+    /// so `_world` is not read here.
     pub fn take_prepared(
         &mut self,
         prepared: &[(ChunkCoord, svet_world::Prepared)],
-        world: &svet_world::World,
+        _world: &svet_world::World,
     ) {
         if let Some(q) = self.baked.queue.as_mut()
             && !prepared.is_empty()
         {
-            q.take_prepared(prepared, world.materials());
+            q.take_prepared(prepared);
         }
     }
 
@@ -404,7 +406,7 @@ impl Frame {
         queue: &wgpu::Queue,
         gpu: &mut GpuWorld,
         world: &svet_world::World,
-        view: &crate::bake::QueueView<'_>,
+        view: &crate::bake::QueueView,
     ) -> Option<Result<crate::bake::QueueStats, crate::bake::BakeError>> {
         let t0 = crate::bake::StepStart::now();
         let settings = self.baked.queue.as_ref()?.settings.clone();
@@ -431,16 +433,37 @@ impl Frame {
                 &self.pipes.world_layout,
             ));
         }
-        // The frame's message to the bake half: the mirror's changes and its state for them.
+        // The frame's message to the bake half, one owned value: the view, the mirror's changes
+        // and its state for them, the sky and key, the settings, and the mailbox's arrivals.
         let (last_window, last_key) = &mut self.baked.shadow_seen;
         let notes = crate::bake::notes(&*gpu, gpu.take_changes(), *last_window, last_key);
         *last_window = notes.window;
-        self.baked.shadow.take(&notes);
-        let run = crate::bake::BakeRun {
-            mirror: &self.baked.shadow,
-            world,
-            sky: self.bake_sky(),
-            key: self.bake_key(),
+        let lighting = &self.state.lighting;
+        let settings = crate::bake::StepSettings {
+            column_wait: lighting.column_wait,
+            key_step: lighting.key_step,
+            landing_fade: lighting.landing_fade,
+            dig_store_hold: lighting.dig_hold == crate::DigHold::On,
+            // The frame's number for a first block's landing word (a pre-roll's step, which
+            // draws a fixed sample count, writes 0).
+            landed_word: lighting.source_fade.then(|| {
+                if view.samples.is_some() {
+                    0
+                } else {
+                    self.state.frame.wrapping_add(1)
+                }
+            }),
+            far_normal: self.state.look.far_normal,
+        };
+        let (sky, key) = (self.bake_sky(), self.bake_key());
+        let msg = crate::bake::FrameMessage {
+            start: t0,
+            view: view.clone(),
+            notes,
+            sky,
+            key,
+            settings,
+            arrivals: self.baked.queue.as_mut()?.inbox.take(),
         };
         let gpu_run = crate::bake::GpuRun {
             device,
@@ -458,22 +481,13 @@ impl Frame {
             lists: &mut self.baked.lists,
         };
         let q = self.baked.queue.as_mut()?;
-        q.changes_in = notes.changed;
-        q.column_wait = self.state.lighting.column_wait;
-        q.key_step = self.state.lighting.key_step;
-        q.landing_fade = self.state.lighting.landing_fade;
-        q.dig_store_hold = self.state.lighting.dig_hold == crate::DigHold::On;
-        // The frame's number into the queue for a first block's landing word (a pre-roll's
-        // step, which draws a fixed sample count, writes 0).
-        q.landed_word = self.state.lighting.source_fade.then(|| {
-            if view.samples.is_some() {
-                0
-            } else {
-                self.state.frame.wrapping_add(1)
-            }
-        });
-        q.far_normal = self.state.look.far_normal;
-        Some(q.step(&run, &mut self.baked.store, view, t0, &mut half))
+        Some(q.step(
+            &mut self.baked.shadow,
+            world,
+            &mut self.baked.store,
+            msg,
+            &mut half,
+        ))
     }
 
     /// The bake's sky-ray bits ([`crate::bake::BakeRun::sky`]): none with no sky set, else on

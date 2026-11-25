@@ -81,7 +81,7 @@ impl BakeQueue {
     pub(in crate::bake) fn note_starved(
         &mut self,
         run: &BakeRun<'_>,
-        view: &QueueView<'_>,
+        view: &QueueView,
         eye: [i32; 3],
         mut next: usize,
         checks: usize,

@@ -12,14 +12,36 @@ impl BakeQueue {
     ///
     /// The bake half's writes go into write lists ([`ListMaker`]), which the render half
     /// (`render`, ADR-0083) applies at the step's end, in lockstep the same frame.
+    ///
+    /// The step reads nothing of the frame but `msg` (ADR-0083): its arrivals and settings go
+    /// into the books first, then its mirror notes into the bake half's `shadow`.
     pub(crate) fn step(
         &mut self,
-        run: &BakeRun<'_>,
+        shadow: &mut Shadow,
+        world: &World,
         store: &mut Store,
-        view: &QueueView<'_>,
-        t0: StepStart,
+        msg: FrameMessage,
         half: &mut dyn RenderHalf,
     ) -> Result<QueueStats, BakeError> {
+        let FrameMessage {
+            start: t0,
+            view,
+            notes,
+            sky,
+            key,
+            settings,
+            arrivals,
+        } = msg;
+        self.take_message(settings, arrivals, world.materials());
+        shadow.take(&notes);
+        self.changes_in = notes.changed;
+        let run = &BakeRun {
+            mirror: shadow,
+            world,
+            sky,
+            key,
+        };
+        let view = &view;
         self.laps = Laps::new(t0);
         // Summary time spent outside a step (a one-shot bake, a dig's ring) is not this step's.
         store.take_summary_ms();
@@ -61,7 +83,7 @@ impl BakeQueue {
         run: &BakeRun<'_>,
         half: &mut dyn RenderHalf,
         store: &mut Store,
-        view: &QueueView<'_>,
+        view: &QueueView,
         t0: StepStart,
     ) -> Result<(), BakeError> {
         self.laps.lap(S_SETUP);
@@ -105,7 +127,7 @@ impl BakeQueue {
         &mut self,
         run: &BakeRun<'_>,
         store: &mut Store,
-        view: &QueueView<'_>,
+        view: &QueueView,
     ) -> (Option<Vec<ChunkCoord>>, Vec<[i32; 3]>) {
         self.steps += 1;
         // In lockstep the message is this frame's, its number the step's.
@@ -266,7 +288,7 @@ impl BakeQueue {
         &mut self,
         run: &BakeRun<'_>,
         store: &mut Store,
-        view: &QueueView<'_>,
+        view: &QueueView,
     ) -> Result<(u64, bool), BakeError> {
         let dig = !self.digs.is_empty() || !self.dig_open.is_empty();
         self.refresh_waiting(store, view, false);
@@ -307,7 +329,7 @@ impl BakeQueue {
         run: &BakeRun<'_>,
         half: &mut dyn RenderHalf,
         store: &mut Store,
-        view: &QueueView<'_>,
+        view: &QueueView,
         cap: u64,
     ) {
         // Nothing waits on the GPU in a sliced step: the submits read back are those whose
@@ -487,7 +509,7 @@ impl BakeQueue {
         &mut self,
         run: &BakeRun<'_>,
         store: &mut Store,
-        view: &QueueView<'_>,
+        view: &QueueView,
         t0: StepStart,
         opened_step: bool,
     ) {

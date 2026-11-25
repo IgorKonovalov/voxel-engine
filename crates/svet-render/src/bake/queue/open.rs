@@ -10,7 +10,7 @@ impl BakeQueue {
         &mut self,
         run: &BakeRun<'_>,
         store: &mut Store,
-        view: &QueueView<'_>,
+        view: &QueueView,
         cap: u64,
     ) -> Result<(), BakeError> {
         let gpu = run.mirror;
@@ -207,7 +207,7 @@ impl BakeQueue {
     }
 
     /// The squared chunk distance of the nearest candidate in the view cone or the near shell.
-    fn nearest_in_view(&self, eye: [i32; 3], view: &QueueView<'_>) -> Option<i64> {
+    fn nearest_in_view(&self, eye: [i32; 3], view: &QueueView) -> Option<i64> {
         let (order, near) = (self.order, self.near);
         self.pool
             .iter()
@@ -224,7 +224,7 @@ impl BakeQueue {
         &mut self,
         run: &BakeRun<'_>,
         store: &mut Store,
-        view: &QueueView<'_>,
+        view: &QueueView,
         eye: [i32; 3],
     ) {
         let gpu = run.mirror;
@@ -294,7 +294,7 @@ impl BakeQueue {
         &mut self,
         run: &BakeRun<'_>,
         eye: [i32; 3],
-        view: &QueueView<'_>,
+        view: &QueueView,
         cands: &[Cand],
     ) {
         if self.steps < self.reach_census_at + VIEW_REACH_EVERY && self.reach_census_at > 0 {
@@ -330,7 +330,7 @@ impl BakeQueue {
         &mut self,
         run: &BakeRun<'_>,
         store: &mut Store,
-        view: &QueueView<'_>,
+        view: &QueueView,
     ) {
         if !self.withdraw || view.samples.is_some() {
             return;
@@ -424,7 +424,7 @@ impl BakeQueue {
     pub(in crate::bake) fn view_census(
         &mut self,
         eye: [i32; 3],
-        view: &QueueView<'_>,
+        view: &QueueView,
         cands: &[Cand],
         jobs: &[([i32; 3], u8, bool)],
         lr: i32,
@@ -510,7 +510,7 @@ impl BakeQueue {
         &mut self,
         c: [i32; 3],
         eye: [i32; 3],
-        view: &QueueView<'_>,
+        view: &QueueView,
         nearest: Option<i64>,
     ) {
         let o = [0, 1, 2].map(|k| c[k] - eye[k]);
@@ -537,7 +537,7 @@ impl BakeQueue {
         &mut self,
         gpu: &GpuWorld,
         world: &World,
-        view: &QueueView<'_>,
+        view: &QueueView,
     ) -> ListingCensus {
         let t = stopwatch();
         let classes = self.classes(world.materials());
@@ -569,7 +569,7 @@ impl BakeQueue {
                 .collect()
         });
         let eye = view.eye.map(|v| (v / 64.0).floor() as i32);
-        let held = held_by_streamer(view.eye, view.lod_radius, view.resident);
+        let held = held_by_streamer(view.eye, view.lod_radius, view.resident_fn());
         let held = held.as_ref().map(|h| h as &dyn Fn(ChunkCoord) -> bool);
         let bands = view.focal_px.map(|focal_px| Bands {
             focal_px,
@@ -652,7 +652,7 @@ pub(in crate::bake) fn is_reach_bound(
 /// nothing and is skipped. The band is [`Bands::of_chunk`] at `view`'s focal length and
 /// `far_normal`; every chunk is near without a focal length.
 pub fn in_view_census(
-    view: &QueueView<'_>,
+    view: &QueueView,
     near: i32,
     far_normal: [f32; 2],
     chunks: impl IntoIterator<Item = ([i32; 3], u8, bool, u64)>,
