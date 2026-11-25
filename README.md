@@ -128,7 +128,7 @@ and says so.
 | Path | Owns |
 |------|------|
 | [`crates/svet-world`](crates/svet-world) | Voxel storage, materials, edit ops and results, spatial queries, prefabs and stamping, collapse, streaming, the op log and its wire encoding. Headless and deterministic: no GPU, no wall clock, no unseeded RNG. |
-| [`crates/svet-render`](crates/svet-render) | `wgpu`: the GPU mirror and its upload, compute ray marching, the baked light store and its live queue, the light list, the sun and sky, denoise, FSR 2 and our upscaler, exposure, voxel-model entities, the loading screen, the text overlay, render settings and profiles. All WGSL lives here. |
+| [`crates/svet-render`](crates/svet-render) | `wgpu`: the GPU mirror and its upload, compute ray marching, the baked light store and its live queue, the light list, the sun and sky, denoise, FSR 2, exposure, voxel-model entities, the loading screen, the text overlay, render settings and profiles. All WGSL lives here. |
 | [`crates/svet-app`](crates/svet-app) | Thin, optional `winit` shell: window, input, surface, frame loop, a splash before the world loads. |
 | [`crates/svet-sim`](crates/svet-sim) | Cylinder sweeps and the character controller. Depends on `svet-world` only. |
 | [`crates/svet-assets`](crates/svet-assets) | `.vox` parsing and writing and the palette-to-material map, producing `svet-world` prefabs; `.rig` files to `svet-entity` models and clips; voxels drawn as text (`.voxtext`). |
