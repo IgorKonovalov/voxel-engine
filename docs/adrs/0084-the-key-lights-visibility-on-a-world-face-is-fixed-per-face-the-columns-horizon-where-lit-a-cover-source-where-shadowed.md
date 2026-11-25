@@ -2,7 +2,9 @@
 
 > **Status:** proposed (2026-11-23, with Plan 0100; the mechanism under cover is the owner's
 > pick at that plan's window, so the Decision names the rule and the recommended arm, and the
-> Outcome at acceptance names what was picked)
+> Outcome at acceptance names what was picked). **Amended 2026-11-25, still proposed,** on
+> Plan 0100 Phase 5's reading: the horizon's "lit" is not exact as built; see "Amendment
+> (2026-11-25)" and Alternatives E and F. The text below is as amended.
 > **Date:** 2026-11-23
 > **Related plan(s):** [Plan 0100](../plans/0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md)
 > (builds it); [Plan 0098](../plans/done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md)
@@ -46,10 +48,17 @@ and named three things it does not do (W3, 2026-11-23; his words are in
   a distance the same as near, and present before the surface comes into view and after a
   turn. A screen history gives none of the three.
 
-Two facts bound the choice. **The column map's "lit" is exact and its "shadow" is not:** a
-point whose ray clears every column top on the way to the sun is lit, whatever is below those
-tops; a point the horizon shadows may be lit by a ray that passes under the top (an overhang,
-a canopy's underside, a slot). So the horizon errs only dark, and only where it reads shadow.
+Two facts bound the choice. **A height map's "lit" is exact for the point it is asked about
+and its "shadow" is not:** a point whose ray clears every column top on the way to the sun
+is lit, whatever is below those tops; a point the horizon shadows may be lit by a ray that
+passes under the top (an overhang, a canopy's underside, a slot). **The horizon as built
+(ADR-0079) falls short of that twice** (Plan 0100 Phase 5, against 64 rays a face): it reads
+the map at 12 distances and 8 cells of one interval, so a top between two distances is
+missed; and it asks about a point lifted 2.5 voxels along the face's normal (the lift keeps
+a face out of its own 2-voxel map cell), so a caster within the lift casts nothing and every
+shadow starts `2.5 / tan e` voxels late. It read lit where the truth is shadow on 0.3 to 2.3
+% of the key-lit pixels at the three poses read. The first is sampling and is repaired by
+walking every cell; the second is the form of a 2-voxel height map.
 **The baked key record leaks:** ADR-0079's bake counts a key ray lit when it ends at its cap
 in air, and Plan 0096 Phase 10c read 64 of 64 floor faces lit under a closed roof taller than
 the cap; the record's blend between brick-direction cells put 12 225 px bright where the truth
@@ -67,7 +76,8 @@ A ray on every near face is that cost back; `docs/nfr.md` section 2's lighting l
 
 **On an opaque cube face the key light's visibility is a function of the face, not of the
 pixel, and of nothing kept on screen. It is the column map's horizon evaluated at the face's
-centre; where that reads fully lit it is the answer. Where it reads under 1 a cover source may
+centre, walked over every map cell on the way to the sun where the setting says so; where
+that reads fully lit it is the answer. Where it reads under 1 a cover source may
 only add light: near (the far normal's weight under one half) one ray from the face's centre
 toward the key light's disc centre, times its transmittance, cast every frame with no mean;
 far, the store's baked key visibility where its cell holds a fresh one. The shown value is the
@@ -89,11 +99,21 @@ top.**
   centre ray alone, binary but for the leaves' transmittance.
 - **The cover source far is the record, because a ray per far pixel is the far trees'
   wobble** (a face under a pixel has no stable centre) **and the far has no budget for it.**
-  A brick direction's value over 0.8 m is under the band's pixel size there. Until a far
+  A brick direction's value is 0.8 m wide: at the band's half (6 pixels a voxel) that is 48
+  internal pixels, in front of the eye, and smaller than a pixel only far beyond it; the seam
+  where the ray gives way to the record is the window's to judge. Until a far
   face's record lands it shows the horizon alone, which is rule 6's coarse, stable answer;
   the landing is the one fade ADR-0079 gave the key slot.
-- **The cover source only adds.** The horizon's lit is exact, so nothing may darken it; a
-  record's leak can then brighten a true shadow but never punch a hole in a lit face.
+- **The cover source only adds.** A record's leak can then brighten a true shadow but never
+  punch a hole in a lit face, and no cover source repairs a face the horizon lights wrongly.
+- **The horizon is walked whole** (`lighting.key_horizon walk`; `march` is ADR-0079's form
+  and today's image): every map cell on the sun's line, through a coarse level of largest
+  tops so the cost stays near the march's, so its "lit" is the height map's own.
+- **What the lift hides stays hidden, unless the owner picks the contact ray** (Plan 0100's
+  question 7): a caster within 2.5 voxels of a face. The one source that could close it
+  darkens: a ray a few voxels long from a near face's centre, the single exception "only
+  adds" would take. Until picked it is not part of this decision, and the limit is named
+  under Negative.
 - **The bake's cap.** With the column clause at the cap a floor under a closed roof bakes 0,
   as ADR-0080's zero record already says it should. It changes record bytes wherever a key
   ray ends in air under a top.
@@ -146,6 +166,12 @@ the two sources apart there.
   reached the sun past it: a low sun under a tall canopy with a short reach. The horizon
   from the end point is the refinement if a reading shows it.
 - Every sunlit golden moves at the pick, and tests of the record's bytes move with the cap.
+- **A caster within the lift casts no shadow, and every shadow starts late** (2.5 voxels at
+  a 45-degree sun, 4.3 at 30): a rim or a step beside a sunlit face, one- and two-voxel
+  steps on a slope. Steady in the world, and in ADR-0082's picture already; "only adds"
+  cannot repair it. At the tunnel's slot it is 126 faces after the walk.
+- **The walked horizon reads more texels a lit pixel than the march's 21**; Plan 0100 Phase
+  5b counts them and reads the pass on both adapters before any profile takes it.
 
 ## Alternatives considered
 
@@ -177,6 +203,35 @@ the face's size.
 `light history on`, confined to shadowed faces. It is the arm W3 showed: grain at the
 patches' edges, the wobble back, light that arrives as one looks. Rejected by the owner, and
 by ADR-0076 rule 2.
+
+### Alternative E: The near ray decides wherever it reaches, the horizon only beyond
+Drop "only adds" near: one ray from every near face's centre, lit or not, is the answer, and
+the horizon is the far's alone. Exact near, the lift's hole and the march's misses both
+gone there. It is the ray Plan 0098 Phase 13 stopped casting, on every near sunlit face: the
+RENOIR's light pass read 6.0 to 11.3 ms with it against 1.6 to 2.1 without, at Floor, over
+the lighting line on the adapter with the least room. It leaves the far to the same horizon,
+and on a stepped slope it is one binary ray a face, the edges Plan 0100's Phases 1 and 1b
+read wobbling. Decisive: the cost, for a fault that is steady. The contact ray of question
+7 is its bounded form.
+
+### Alternative F: A smaller lift
+Ask the horizon about a point nearer the face (0.5 or 1.5 voxels), so a rim within 2.5
+voxels shadows it. A face whose air-side point then shares a 2-voxel map cell with a higher
+voxel reads 0 by the own-cell rule: stripes a voxel wide at the map's parity on walls and on
+every stepped slope, which is why Plan 0086 set the lift past the cell. A map of one-voxel
+cells removes the parity at four times the map and the march. Decisive: it trades a missing
+shadow for a striped one. Plan 0100 Phase 5b reads the stripes as a count on its CPU pass.
+
+## Amendment (2026-11-25, Plan 0100 Phase 5's reading)
+
+What changed in the text above, while proposed: the Context's "the column map's lit is
+exact" is restated for the horizon as built, with what Phase 5 read; the Decision gains the
+walked horizon and names the lift's limit, with the contact ray left to the owner's question
+7 in Plan 0100; the record's cell at the band is 48 pixels, not under a pixel; two negatives
+and Alternatives E and F are added. "Only adds" stands for the cover source. The reading is
+in `docs/plans/logs/0100.md`, "Phase 5" and "The architect's code reading after Phase 5's
+stop". If the window picks the walked horizon, this ADR at acceptance also supersedes the
+march's form in ADR-0079 ("`COLUMN_KEY_STEPS` (12, a guess) geometric distances").
 
 ## Outcome
 

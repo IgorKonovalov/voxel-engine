@@ -764,3 +764,140 @@ holds the terraces' shadow still. What then?
     fault goes to the backlog naming FSR 2's resolve; the plan's other two subjects go on.
   - **Recommended:** (a) if `calm,full,nofilter` passed, else (c). Not (b): the slow adapter
     has the least room under the lighting line.
+
+## Amended 2026-11-25 (architect, code reading after Phase 5's stop)
+
+Phase 5 met its stop rule: the horizon reads lit where the reference reads shadow on more
+faces than its ramp holds, at W1's pose and at the slot. This is a reading of the code the
+tables stand on, with nothing run; the long form, with file and line, is in
+[`logs/0100.md`](logs/0100.md), "The architect's code reading after Phase 5's stop".
+ADR-0084 is amended with it (it is proposed, not accepted).
+
+**Findings.**
+
+- **Two faults, of different kinds.** The horizon (`column_key_visibility`, `pair.wgsl:93`)
+  reads one map cell at each of 12 distances to 512 voxels and walks 8 cells of one interval:
+  at most 21 of the 256 to 362 cells on its line. That is sampling, and it misses a canopy
+  between two distances (W1). And it answers for a point lifted 2.5 voxels along the face's
+  normal, so a caster within the lift, and the first `2.5 / tan e` voxels of any shadow, are
+  not there (the slot). That is the heightfield's form.
+- **The 12 distances are a guess nothing protects** ("`COLUMN_KEY_STEPS` (12, a guess)", Plan
+  0095 Phase 4), made when the horizon was the far's estimate alone; Plan 0098 made it the
+  shadow at every distance. No reading, wobble or pass time set it.
+- **The lift protects walls and stepped slopes from stripes.** A face whose air-side point
+  shares a 2-voxel map cell with a higher voxel reads 0 by the own-cell rule (Plan 0086 call
+  1; "not tuned, the bars met on it"). A smaller lift brings those back, and with them the
+  true shadows of one- and two-voxel steps: more of the hard edges Phases 1 and 1b could not
+  calm. It is not shortened in the shader.
+- **The record's leak is mostly the measure.** The leak's line (a key visibility of 0.02) is
+  two lit rays of a cell's 64, so it counts the area a cell's mean touches. In total the
+  record holds less light than the reference at both forest poses (0.062 against 0.098 at
+  W1). The slot's 64.5 % is a cell's mean against a face's centre at a near pose, where the
+  record was never the source. `record` stays the far arm; it is neither cleared nor
+  disqualified by this table.
+- **The bars.** `G` is the display's response on lit pixels applied to shadowed ones, and the
+  leak counts only pixels whose reference is exactly 0 (`disc` puts nearly half its light on
+  faces the reference holds part lit, uncounted). "The ramp's faces" is a tolerance, not a
+  clean baseline; the every-cell row is the clean one. The port's check differs from the GPU
+  on 1 888 lighting pixels at W1, unexplained, up to 45 % of the breaks' area there.
+- **A figure of ADR-0084 corrected:** where `ray-record` switches (6 pixels a voxel) a record's
+  cell spans 48 internal pixels, not "under the band's pixel size".
+
+**Decision.** Of the dev's options: not (a), a ray on every near sunlit face (the cost Plan
+0098 Phase 13 removed). (b) in part: **the march becomes a walk over every cell, as an arm**
+(Phase 5b), default off; the smaller lift is read on the CPU only. For the lift's hole, (c)
+holds until the owner answers question 7: it is the heightfield's limit, in today's approved
+picture, steady in the world. "Only adds" stands for the cover source.
+
+### Phase 5b: The horizon walked whole, and the lift's hole read (exploration)
+- **Owner skill:** dev
+- **What:** In this order.
+  1. **The reading, on Phase 5's CPU pass, no production code.** Phase 5's three poses and the
+     noon terraces at W3's eye (Phase 1's pose: what the lift protects). First the port's
+     mismatches at W1 are placed (by distance, by class, inside the breaks or not). Then a row
+     a horizon: `march` (as built); `walk` (every cell, `horizon_exact`); `walk` at lifts 1.5
+     and 0.5; `walk` with a **contact ray** (a voxel walk from the face's centre toward the
+     disc's centre, 4, 8 and 16 voxels long; blocked reads 0) on near faces only (the far
+     normal's weight under one half). A column each: the breaks (the row reads 1, the
+     reference under 0.5, the centre ray blocked) in faces, in pixels and as a share of the
+     key-lit pixels; its ramp's faces; **the new dark** (faces the row reads under 0.5 where
+     `walk` at 2.5 reads 1 and the reference at least 0.5). A CPU port of the **levelled walk**
+     (a coarse map of the largest top of each 8 x 8 cells, entered only where its bound can
+     raise the horizon; a third level if the counts ask) is asserted equal to `walk` on every
+     face, and the texel reads a face are counted for `march`, `walk` and each levelled form
+     (mean, p99, largest; lit and shadowed apart). The record's rows, per pose: the mean
+     value it adds on truly shadowed pixels and the shares over 0.02, 0.1 and 0.5; every
+     candidate's light over the reference, summed; the own cell against the reference pooled
+     over that cell's visible faces of the direction; W1 split by coarse and full blocks.
+  2. **`lighting.key_horizon`**, `march` (the default, today's image to the byte) and `walk`:
+     the levelled form whose reads were fewest in step 1, to the window's side, ending early
+     where the visibility is 0 or no top can reach the disc. The coarse tops are written with
+     the map's tiles. The banner and the HUD's lighting row name `key horizon walk`; the debug
+     page flips it; `--key-horizon march|walk`. Every profile holds `march` until Phase 9.
+  3. **The contact ray as an arm** (`lighting.key_contact`), only on the owner's answer to
+     question 7.
+- **Files touched:** `apps/flythrough/tests/support/cover.rs`,
+  `apps/flythrough/tests/gpu_wobble/cover.rs`, `apps/flythrough/tests/gpu_wobble.rs` (a
+  `keyhorizon=` token), `crates/svet-render/src/shaders/pair.wgsl` (or a new file),
+  `crates/svet-render/src/gpu_world/columns.rs`, the group 0 layout's files if the coarse map
+  is a texture of its own, `crates/svet-render/src/frame/{settings,encode,compose}.rs`,
+  `crates/svet-render/src/frame/settings/{sky_light,tests}.rs`,
+  `crates/svet-render/src/{settings,lib}.rs`, `crates/svet-render/src/settings/tests.rs`,
+  `apps/flythrough/src/cli/{mod,outdoor}.rs`, `apps/flythrough/src/cli/tests/outdoor.rs`,
+  `apps/flythrough/src/toggles.rs`, `apps/flythrough/src/hud/modes.rs`, `docs/flythrough.md`,
+  `docs/plans/logs/0100.md`.
+- **Done when:**
+  - Step 1's table is in the log, with one line a row. **Stop rules.** If the levelled walk's
+    mean reads on lit faces are over four times `march`'s at any pose, the dev reports the
+    counts and step 2 waits for the architect (four marches is `face-smooth`'s cost, the
+    largest the RENOIR has been read at). If a lift row reads no new dark at the terraces and
+    passes Phase 5's rule at the slot, the dev reports it and builds nothing from it. The
+    contact rows are the figures question 7 is answered on.
+  - Step 2: at Phase 5's three poses the GPU's key value under `walk` is the CPU `walk`'s
+    within 2/255 at every lighting pixel but the placed mismatches; the premise's table with
+    the `walk` row from the shader. The terraces rig once, `calm,keyhorizon=walk` beside
+    `calm`, both poses at a still camera: the share over 4 levels and the whole-display count
+    (the walk adds shadow edges; the log says by how much the class grows or that it does
+    not).
+  - The temporal and light passes' times, `march` and `walk`, the three scenes, RTX at Floor
+    and RENOIR at Portable (Phase 1's script and protocol), the light pass against section
+    2's 4.0 ms and the temporal pass's rise stated beside the Denoise line it is already over
+    there; the GPU frame against Portable's 33.3 ms. The log says, a profile, whether `walk`
+    is proposed for Phase 9's row or the profile keeps `march`.
+  - The coarse map's bytes are stated against section 3 (1/64 of the map's by arithmetic).
+  - CPU (under 1 s): the flag parses, the settings table lists `lighting.key_horizon`
+    (`Live`), every profile at `march`, the lighting row names it off its default. Quick tier,
+    clippy, fmt, the file-size gate. No image test (exploration).
+
+**How the later phases follow.** Order: 5b's steps 1 and 2, then 6, 7, 8, 9; none waits for
+question 7. **Phase 6** is built as written, with these readings changed: every row is read
+under `key horizon march` and `walk`; the record's read is the own cell; the leak is read
+off the rendered frames (the arm less `key cover off`, exposure pinned, on the truly
+shadowed pixels: the mean in levels and the shares over 4, 16 and 64), not through `G`, and
+the light an arm puts over the reference on part-lit faces is printed beside it; one still
+an arm where the ray gives way to the record on the forest floor. **Phases 7 and 8:** runs 1,
+3 and 4 flip `key horizon`; run 4 asks one more thing, whether a shadow is missing at the
+slot's rim and steps. **Phase 9:** if `walk` is picked, the claim that sees the fault on the
+old arm (a slab between two of the march's distances: lit under `march`, shadowed under
+`walk`) is written by the architect at the pick, and ADR-0084 then supersedes the march's
+form in ADR-0079.
+
+**Question for the owner, 7.** The sun's shadow from the height map cannot see a caster
+within 2.5 voxels of a face: a rim or a step beside a sunlit face casts nothing on it, and
+every shadow starts up to 4 voxels late (the tunnel's slot: 146 faces lit that should be in
+shadow, 126 once the walk is in; today about 2 % of the sunlit picture, the same every
+frame, in the defaults as they are).
+What should close it?
+  - (a) The near ray decides wherever it reaches, the horizon only beyond. Exact near. Cost:
+    the ray Plan 0098 Phase 13 removed, on every near sunlit face (the RENOIR's light pass
+    read 6.0 to 11.3 ms with it, 1.6 to 2.1 without, at Floor).
+  - (b) A contact ray: on near sunlit faces a ray a few voxels long from the face's centre
+    may darken what the horizon lights (ADR-0084's "only adds" gains that one exception). It
+    closes the rim and the steps; cost a guess, a fraction of (a)'s, read before the window.
+    It also draws the true shadows of one- and two-voxel steps, hard edges of the kind that
+    wobble on the noon terraces today.
+  - (c) Nothing: the limit stays, named in ADR-0084; sun under cover goes on as designed.
+  - **Recommended:** (c) as the default, and (b) built as an arm, off, shown at the window on
+    the slot and the terraces beside it, picked there by eye. Not (a). A stable image is the
+    first priority, the missing shadow is steady, and (b)'s edges are not yet.
+  - **Before he answers** the lane builds Phase 5b's steps 1 and 2 and Phase 6; step 3 waits.
