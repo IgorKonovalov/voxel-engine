@@ -1064,7 +1064,7 @@ Readings, gate counts and attempts: [`logs/0099.md`](logs/0099.md).
 | 2: the queue in two halves, in lockstep | dev | done; done-whens 1 to 5 and 7 to 10 pass; (6) re-read at the last commit at load 1.94 at the start, 2.25 at the end: step p50 10.73 ms against Phase 1's 13.77; the frame message carries boxes and masks through a mailbox the public reads consult; the knob setters stay direct writes (log) | `f0d06f1a` |
 | 2b: the cap prices a slice by a fixed part and a sample's cost | dev | done; (a) RENOIR fit 0.823 ms + 12.61 ns (the stop did not fire), RTX no fixed part resolvable; RENOIR drained A ring 1 before 1, 4, 3 (D+1 8, D+3 8, D+4 8), after 1, 2, 2 (D+1 9, D+2 15), every dig-2/3 cap over the floor; RTX drained and RENOIR waiting 1, 2, 1 before and after; the drain's end still overdraws; the estimate keeps the slope and re-reads the level (a deviation, Notes) (log) | committed with this row |
 | 2c: a dig job takes a free slot ahead of every other job's rounds | dev | done; (1), (2), (4), (5) pass; (3) no row with `other` in flight while a dig job waits with a slot free, digs 2 and 3's ring chunks D+11 to 14 (before 20 to 26), ring 1 1, 2, 2 in six of eight and 1, 3, 2 in two; (6) quiet RENOIR fit 0.630 ms + 15.18 ns, drained B ring 1 D+2 14 of 48: **the stop fired**, reported to the architect (log) | committed with this row |
-| 3: the bake half on its own thread | dev | 3a in progress, checkpointed: the routings, the thread's frame and the wiring (wip, the thread off by default and not yet a setting), done-whens (1), (2), (3), (9) to (11) and (12) on the rig pass; the setting, (4), (5a), (6), (7), (8) and the GPU re-read left (log, resume notes) | `dc2394ef`, `53a29dbf`, `647fcb6f` |
+| 3: the bake half on its own thread | dev | 3a in progress, checkpointed: the routings, the thread, the wiring and the setting (off in every profile); done-whens (1) to (4), (5a), (6) restated, (9) to (12) pass, the GPU re-read on lavapipe passes; readings (7) and (8) left (log, resume notes) | `dc2394ef`, `53a29dbf`, `647fcb6f`, `68cacf9f`, `aba47e60`, `0a8e71c8`, `99c08238` |
 | 4: the bake thread keeps the slice fed | dev | not started | |
 | 5: the owner's window | human | not started | |
 | 6: the lines, the defaults and the documents | dev | not started | |
@@ -1114,6 +1114,28 @@ Readings, gate counts and attempts: [`logs/0099.md`](logs/0099.md).
 - (dev, Phase 2b) Not met: the first steps after the view drains still overdraw the line (N-2
   caps 69 979 to 93 314 against 62 132 to 84 554 before): the drain's submits are all large,
   and they read the fixed part badly. Reported to the architect.
+- (dev, Phase 3a) With the thread on, the render thread's bake share is filed whole under the
+  `apply` stage (`stages.total_ms` and `render_ms[apply]` are the render thread's wall in the
+  frame's call; the other stages are the bake thread's), so the `queue step` line's step p50
+  is the render thread's share on either side.
+- (dev, Phase 3a) The books' snapshot carries block words only for the columns within 16
+  voxels of the step's eye (its chunk and two under, and that chunk's summary): an encode
+  whose eye has moved past that before the next snapshot reads no sky over the floor (at rest
+  the image is the same). Read per frame (`Frame::bake_snapshot_reach`, the teardown's
+  `bake thread snapshot:` line): on the RTX outdoor path (`--path outdoor --path-mode bench`,
+  Floor 1080p) 4404 frames, 19 with the eye past the reach (the frames before the first
+  snapshot among them; consecutive runs not read), 0 with the answer lost. Not widened.
+- (dev, Phase 3a) `Frame::store()` asserts while the thread runs; `fit_store` drops waiting
+  lists when it rebuilds the pool; a drained queue still makes one small outbox entry a step
+  (its books' snapshot).
+- (dev, Phase 3a) A waiting box (Phase 3 as amended): the render side counts the messages it
+  sends with a box and stamps each with the count, the bake side keeps the newest count it
+  took; a threaded opening that reads a box waiting admits no further candidate and leaves the
+  listed-but-unpushed in the pool. Nothing else of the dig clause is built.
+- (dev, Phase 3a) The bake thread's step starts its laps on its own clock and `wgpu` call tally
+  (the render thread's start underflowed the thread-local byte counts; found by done-when 4).
+- (dev, Phase 3a) A profile switched in the fly-through's menu sets `bake_thread` to the
+  profile's value (off), as it does the tiers and the drain.
 - (architect, at the draft) The backlog entry "The bake step off the main thread" exists on
   `plan-0096` only; at that plan's merge it is marked taken by this plan.
 
