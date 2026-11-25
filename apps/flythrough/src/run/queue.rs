@@ -935,7 +935,7 @@ impl Run {
 /// pool's guard stopped.
 fn print_slice_line(t: f64, st: &svet_render::QueueStats, p50: f64, projected: f64) {
     println!(
-        "bake queue slice: at {:.1} s, granted {:.2} ms ({}, {} in view waiting for their tier), drawn p50 {:.2} ms, plans stopped at the cap {} at the batch {} out of rounds {} ({} with no table slot free), steps with every submit slot unread {} of {}, the in-view set read {} times, mean {:.3} ms, max {:.3} ms, projected at the draw p50 {:.2} caps, fill world {:.3} masks {:.3}, pool guard {}",
+        "bake queue slice: at {:.1} s, granted {:.2} ms ({}, {} in view waiting for their tier), drawn p50 {:.2} ms, plans stopped at the cap {} at the batch {} out of rounds {} ({} with no table slot free), steps with every submit slot unread {} of {}, the in-view set read {} times, mean {:.3} ms, max {:.3} ms, projected at the draw p50 {:.2} caps, fill world {:.3} masks {:.3}, pool guard {}, wasted samples {} of {} drawn",
         t / 1e3,
         st.slice_ms,
         if st.draining { "drain" } else { "line" },
@@ -954,6 +954,8 @@ fn print_slice_line(t: f64, st: &svet_render::QueueStats, p50: f64, projected: f
         st.fill[0],
         st.fill[1],
         st.pool_guard,
+        st.read_back[1],
+        st.read_back[0] + st.read_back[1],
     );
 }
 

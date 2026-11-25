@@ -543,6 +543,7 @@ impl BakeQueue {
         self.stats.plan_stops = self.lp.plan_stops;
         self.stats.slotless_stops = self.lp.slotless_stops;
         self.stats.steps = self.steps;
+        self.stats.read_back = [self.lp.report.samples, self.lp.report.wasted];
         self.stats.in_flight_full += u64::from(in_flight_full);
         self.stats.samples = d.samples;
         self.stats.ms = d.gpu_ms.unwrap_or(d.seconds * 1e3);

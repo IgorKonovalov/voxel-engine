@@ -47,6 +47,9 @@ pub struct QueueStats {
     pub slotless_stops: u64,
     /// Steps since the queue started.
     pub steps: u64,
+    /// The loop's samples read back: kept, and read into nothing (rounds past a face's stop,
+    /// withdrawn jobs' rounds, maps that failed).
+    pub read_back: [u64; 2],
     /// Samples since the queue started.
     pub total_samples: u64,
     /// Chunks whose block is the coarse pass, waiting for their refinement.

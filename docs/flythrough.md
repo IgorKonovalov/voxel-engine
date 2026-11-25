@@ -452,7 +452,9 @@ over their bounds, for chunks listed from the world and from prepared masks; 1 u
 kind returned) and `pool guard G` (the openings stopped by the pool's limit of 64 candidates).
 Its `out of rounds N (K with no table slot free)` counts the submits whose plan ran out of
 rounds, and of them those planned with all 16 table slots held; `steps with every submit slot
-unread B of S` the steps that could send no submit for the bound in flight, of the steps taken.
+unread B of S` the steps that could send no submit for the bound in flight, of the steps taken;
+its last field, `wasted samples W of D drawn`, the samples read back into nothing (rounds past
+a face's stop, a withdrawn job's, a map that failed) of all the loop read back.
 With the bake thread on, a frame issues at most one submit and carries any later one to the
 next frame; the teardown's `frames: bake round trip:` line reads the submits issued and read,
 their round trip in frames from the issue to the frame whose message carried the read-back
