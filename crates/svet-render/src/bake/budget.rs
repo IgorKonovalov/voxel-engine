@@ -147,6 +147,13 @@ impl std::fmt::Display for Drain {
 /// edit cap, by time on the slice's own ns a sample).
 pub const DEFAULT_BAKE_EDIT_MS: f64 = 3.0;
 
+/// The live queue's ring-1 stretch ([`crate::BakeQueue::ring1_stretch`]): 1.0, the priced cap
+/// alone. A setting takes 1.0 to 2.0 ([`RING1_STRETCH_RANGE`]).
+pub const DEFAULT_RING1_STRETCH: f64 = 1.0;
+
+/// The values the ring-1 stretch takes; a value outside is clamped into it.
+pub const RING1_STRETCH_RANGE: std::ops::RangeInclusive<f64> = 1.0..=2.0;
+
 /// The least submit the live queue's cap sends, in samples.
 pub(crate) const CAP_FLOOR_SAMPLES: u64 = 16_384;
 

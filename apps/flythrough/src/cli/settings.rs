@@ -273,6 +273,7 @@ impl Args {
                 reach: b.reach,
                 edit_ms: b.edit_ms,
                 dig_reach: b.dig_reach,
+                ring1_stretch: b.ring1_stretch,
                 tiers: b.tiers,
                 drain: b.drain,
             },

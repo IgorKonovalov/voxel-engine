@@ -493,3 +493,37 @@ fn a_waiting_box_ends_the_opening() {
         "its table word"
     );
 }
+
+/// Done when (2) of Plan 0099 Phase 2e, with the thread on. The stretch set to 1.5 between
+/// frames 3 and 4 goes into the mailbox: the books on the bake thread hold 1.0 when the step on
+/// message 4 starts (no setter writes the bake half directly), and that step plans by 1.5: its
+/// dig's ring 1 (280 samples in this rig) against a cap of 200 goes whole.
+#[test]
+fn the_stretch_reaches_the_bake_thread_in_the_next_message() {
+    let seen: Arc<Mutex<Option<f64>>> = Arc::new(Mutex::new(None));
+    let s = seen.clone();
+    let hook: Hook = Box::new(move |q, m| {
+        if m.frame == 4 {
+            *s.lock().expect("one step") = Some(q.ring1_stretch);
+        }
+    });
+    let mut t = ThreadRig::new(Some(hook), OUTBOX_BYTES);
+    for s in 1..=3 {
+        t.frame_stepped(s);
+    }
+    t.rig
+        .inbox
+        .push_set(Box::new(|q: &mut BakeQueue| q.ring1_stretch = 1.5));
+    t.rig.half.hold = true;
+    t.carve([0, 20, 4], [3, 23, 7]);
+    t.rig.samples = Some(200);
+    t.frame_stepped(4);
+    let old = seen.lock().expect("read").take().expect("step 4 ran");
+    assert_eq!(old, 1.0, "the set wrote nothing before the step");
+    t.frame().expect("the frame takes step 4");
+    let books = t.link.books.clone();
+    assert_eq!(books.frame, 4, "the newest step taken read message 4");
+    let st = books.stats;
+    assert_eq!((st.cap, st.stretched), (280, true), "the step plans by 1.5");
+    assert_eq!(st.submitted, 280, "ring 1 whole");
+}

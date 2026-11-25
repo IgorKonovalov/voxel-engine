@@ -269,6 +269,10 @@ pub struct BakeQueue {
     pub edit_ms: f64,
     /// Whether a dig that touched lit bricks re-bakes the chunks within the light radius (ring 3).
     pub reach_ring: bool,
+    /// The ring-1 stretch, 1.0 to 2.0: a submit whose ring-1 dig jobs have more samples left
+    /// than its priced cap and at most this many times it plans them whole, at that count
+    /// (Plan 0099 Phase 2e). 1.0 is the priced cap alone.
+    pub ring1_stretch: f64,
     /// The order candidates open in.
     pub order: QueueOrder,
     /// Whether the queue withdraws the jobs of chunks the camera has passed (ADR-0048): at a
@@ -567,6 +571,7 @@ impl BakeQueue {
             full_first: Some(DEFAULT_NEAR),
             edit_ms: DEFAULT_BAKE_EDIT_MS,
             reach_ring: true,
+            ring1_stretch: DEFAULT_RING1_STRETCH,
             order: QueueOrder::default(),
             withdraw: true,
             boxes: Vec::new(),

@@ -154,6 +154,7 @@ impl Args {
                 queue_rule_reading: false,
                 edit_ms: svet_render::DEFAULT_BAKE_EDIT_MS,
                 dig_reach: true,
+                ring1_stretch: svet_render::DEFAULT_RING1_STRETCH,
                 thread: false,
                 read_missing: false,
                 pre_roll_drain: None,

@@ -168,6 +168,8 @@ struct Rig {
     settings: StepSettings,
     /// The render half's mailbox.
     inbox: Inbox,
+    /// The sample cap each message's view sets (`QueueView::samples`); `None` prices it.
+    samples: Option<u64>,
 }
 
 impl Rig {
@@ -211,6 +213,7 @@ impl Rig {
             half,
             settings: step_settings,
             inbox: Inbox::default(),
+            samples: None,
         }
     }
 
@@ -233,7 +236,7 @@ impl Rig {
             eye: [32.0, 32.0, 32.0],
             forward: [1.0, 0.0, 0.0],
             resident: None,
-            samples: None,
+            samples: self.samples,
             interval_s: 1.0 / 60.0,
             hold: None,
             half_angle: 1.0,
@@ -788,4 +791,5 @@ fn a_withdrawn_round_counts_in_what_the_estimate_reads() {
 }
 
 mod routing;
+mod stretch;
 mod thread;

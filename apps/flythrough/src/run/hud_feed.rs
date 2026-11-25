@@ -430,15 +430,30 @@ pub(crate) fn write_queue_banner_row(out: &mut String, args: &Args, words: &str)
     }
     let _ = write!(
         out,
-        ", full-first {}, budget {}, missing light {}, reach {}, digs +{} ms, ring 3 {}, bake thread {}; {words} (Tab: the light queue page)",
+        ", full-first {}, budget {}, missing light {}, reach {}, digs +{} ms{}, ring 3 {}, bake thread {}; {words} (Tab: the light queue page)",
         FullFirstWords(args.full_first()),
         args.bake.budget,
         args.bake.missing_light.name(),
         args.bake.reach.name(),
         args.bake.edit_ms,
+        StretchWords(args.bake.ring1_stretch, ", "),
         if args.bake.dig_reach { "on" } else { "off" },
         if args.bake.thread { "on" } else { "off" },
     );
+}
+
+/// The ring-1 stretch as the HUD and the banner name it: `stretch 1.5` after `sep` whenever
+/// it is not 1.0 (`--bake-ring1-stretch`), nothing at 1.0.
+struct StretchWords(f64, &'static str);
+
+impl std::fmt::Display for StretchWords {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0 == svet_render::DEFAULT_RING1_STRETCH {
+            Ok(())
+        } else {
+            write!(f, "{}stretch {}", self.1, self.0)
+        }
+    }
 }
 
 /// Appends the HUD store row's queue part to `out`: `, queue depth N, coarse C, jobs J, slice
@@ -588,6 +603,7 @@ impl Run {
         } else {
             "; bake thread off"
         });
+        let _ = write!(queue, "{}", StretchWords(args.bake.ring1_stretch, "; "));
         queue.push_str("; ");
         queue.push_str(words);
         match args.full_first() {

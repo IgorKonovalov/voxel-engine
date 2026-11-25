@@ -347,6 +347,15 @@ impl BakeQueue {
         self.dig_cost.cap(class, &self.cost, ms)
     }
 
+    /// The chunks of the ring-1 dig jobs in the loop ([`BakeQueue::open_digs`]).
+    pub(super) fn ring1_chunks(&self) -> ChunkSet {
+        self.dig_open
+            .iter()
+            .filter(|(_, d)| d.near)
+            .map(|(c, _)| *c)
+            .collect()
+    }
+
     /// The step's poll, collect, place and submit stages, and the stats they read: the submits
     /// read back go to the sink, and one new submit goes out within `cap` samples.
     fn submit(
@@ -376,12 +385,7 @@ impl BakeQueue {
         let ruled = std::mem::take(&mut self.ruled);
         // The ring-1 dig jobs ([`BakeQueue::open_digs`]): opened into the slots the read back
         // frees, and planned ahead of every other job.
-        let ring1: ChunkSet = self
-            .dig_open
-            .iter()
-            .filter(|(_, d)| d.near)
-            .map(|(c, _)| *c)
-            .collect();
+        let ring1 = self.ring1_chunks();
         let (cell, clamp) = (self.settings.cell, self.settings.clamp);
         let mut placement = Placement {
             gpu: run.mirror,
@@ -486,6 +490,7 @@ impl BakeQueue {
             // its block to the sink, as a pending job with nothing to draw ends at its opening.
             self.lp.close_ended(run, store, &settings, &mut sink);
         }
+        let (cap, stretched) = ring1_cap(&self.lp, self.ring1_stretch, cap, &ring1);
         let room = self.lp.in_flight() < IN_FLIGHT;
         let in_flight_full = !room && !self.lp.idle();
         let sent = room
@@ -504,6 +509,7 @@ impl BakeQueue {
             lap(&mut self.laps, S_COLLECT);
         }
         self.read_stats(&d, cap, submitted, in_flight_full);
+        self.stats.stretched = stretched;
     }
 
     /// The submit stage's stats, and the price of a submit fed with what was read back: the
@@ -859,6 +865,24 @@ impl Placement<'_> {
 /// held one (a refinement, a key re-bake, a dig), else `word` (a first block over the
 /// missing-light chain or a bare one: the frame plus one, 0 in the pre-roll); 0 with the switch
 /// off.
+/// The submit's cap with the step's ring-1 dig jobs (`ring1`) open and ahead in `lp`: the
+/// samples those open jobs have left to plan where they are over `cap` and at most `stretch`
+/// ([`BakeQueue::ring1_stretch`]) times it, so ring 1 is planned whole and no other job takes a
+/// round; else `cap`. True where it stretched.
+pub(super) fn ring1_cap(lp: &JobLoop, stretch: f64, cap: u64, ring1: &ChunkSet) -> (u64, bool) {
+    if ring1.is_empty() {
+        return (cap, false);
+    }
+    let left = lp.open_samples_left(|c| ring1.contains(c));
+    let stretch = stretch.clamp(*RING1_STRETCH_RANGE.start(), *RING1_STRETCH_RANGE.end());
+    let bound = (cap as f64 * stretch).floor() as u64;
+    if left > cap && left <= bound {
+        (left, true)
+    } else {
+        (cap, false)
+    }
+}
+
 pub(super) fn landed_word(old: Option<&[u32]>, word: Option<u32>) -> u32 {
     let Some(w) = word else {
         return 0;

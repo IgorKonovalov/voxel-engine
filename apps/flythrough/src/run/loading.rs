@@ -665,6 +665,7 @@ impl Run {
         frame.set_bake_budget(self.args.bake.budget);
         frame.set_bake_coarse(self.args.bake.coarse, self.args.bake.near);
         frame.set_bake_digs(self.args.bake.edit_ms, self.args.bake.dig_reach);
+        frame.set_bake_ring1_stretch(self.args.bake.ring1_stretch);
         frame.set_bake_reach(self.args.bake.reach);
         frame.set_bake_tiers(self.args.bake.tiers);
         frame.set_bake_drain(self.args.bake.drain);

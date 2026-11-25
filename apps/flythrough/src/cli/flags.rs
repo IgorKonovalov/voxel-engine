@@ -980,6 +980,18 @@ fn bake_tail_flags() -> Vec<Flag<Parsing>> {
             },
         ),
         Flag::value(
+            &["--bake-ring1-stretch"],
+            "X",
+            "a dig's ring 1 goes whole in a submit within X times the priced cap, 1.0 to 2.0",
+            |p: &mut Parsing, v| {
+                p.args.bake.ring1_stretch = v.parse_if(
+                    |x: &f64| svet_render::RING1_STRETCH_RANGE.contains(x),
+                    "1.0 to 2.0",
+                )?;
+                Ok(())
+            },
+        ),
+        Flag::value(
             &["--dig-reach"],
             "on|off",
             "a dig re-bakes the chunks within the light radius",

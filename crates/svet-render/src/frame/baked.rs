@@ -298,6 +298,7 @@ impl Frame {
         k.budget = q.budget;
         (q.coarse_samples, q.near, q.full_first) = (k.coarse_samples, k.near, k.full_first);
         (q.edit_ms, q.reach_ring) = (k.edit_ms, k.dig_reach);
+        q.ring1_stretch = k.ring1_stretch;
         q.tiers = k.tiers;
         q.drain = k.drain;
         q.set_reach_mode(k.reach);
@@ -411,6 +412,16 @@ impl Frame {
     pub fn set_bake_digs(&mut self, edit_ms: f64, reach_ring: bool) {
         (self.baked.knobs.edit_ms, self.baked.knobs.dig_reach) = (edit_ms, reach_ring);
         self.set_bake_queue(move |q| (q.edit_ms, q.reach_ring) = (edit_ms, reach_ring));
+    }
+
+    /// The live queue's ring-1 stretch ([`crate::bake::BakeQueue::ring1_stretch`]), clamped to
+    /// [`crate::RING1_STRETCH_RANGE`]: a dig's ring 1 goes whole in a submit while its samples
+    /// are within this many times the priced cap. It reaches the bake half in the next message.
+    pub fn set_bake_ring1_stretch(&mut self, stretch: f64) {
+        let r = crate::RING1_STRETCH_RANGE;
+        let stretch = stretch.clamp(*r.start(), *r.end());
+        self.baked.knobs.ring1_stretch = stretch;
+        self.set_bake_queue(move |q| q.ring1_stretch = stretch);
     }
 
     /// The live queue's knobs: the queue's while it runs, else the ones the next queue starts

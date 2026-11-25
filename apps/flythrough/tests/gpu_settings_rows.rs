@@ -115,6 +115,7 @@ const INERT: &[(&str, Why)] = &[
     ("bake.reach", Why::Queue),
     ("bake.edit_ms", Why::Queue),
     ("bake.dig_reach", Why::Queue),
+    ("bake.ring1_stretch", Why::Queue),
     ("bake.tiers", Why::Queue),
     ("bake.drain", Why::Queue),
     // The thread moves when a list lands, not what it holds: the image at rest is the same.

@@ -184,6 +184,7 @@ pub(super) fn hold(a: &mut crate::cli::Args, s: &RenderSettings) {
     b.reach = s.bake.reach;
     b.edit_ms = s.bake.edit_ms;
     b.dig_reach = s.bake.dig_reach;
+    b.ring1_stretch = s.bake.ring1_stretch;
     b.tiers = s.bake.tiers;
     b.drain = s.bake.drain;
     b.thread = s.bake_thread;
@@ -360,4 +361,45 @@ fn the_flag_and_the_row_name_the_mode() {
         );
     }
     assert!(crate::cli::parse_args_from(argv(&["--bake-thread", "maybe"])).is_err());
+}
+
+/// `--bake-ring1-stretch 1.5` parses to the setting, and the HUD's queue row and the banner's
+/// queue row name it as `stretch 1.5`; at the default 1.0 neither holds the word; a value outside
+/// 1.0 to 2.0 is refused (Plan 0099 Phase 2e, done-when 2).
+#[test]
+fn the_stretch_is_named_on_the_row_when_not_one() {
+    let parse = |extra: &[&str]| {
+        let mut v = vec!["--level", "--sky", "on"];
+        v.extend_from_slice(extra);
+        crate::cli::parse_args_from(argv(&v)).expect("parses")
+    };
+    for (extra, stretch) in [
+        (&["--bake-ring1-stretch", "1.5"][..], 1.5),
+        (&[][..], 1.0),
+        (&["--bake-ring1-stretch", "1.0"][..], 1.0),
+    ] {
+        let args = parse(extra);
+        assert_eq!(args.bake.ring1_stretch, stretch, "{extra:?}");
+        assert_eq!(
+            args.render_settings().bake.ring1_stretch,
+            stretch,
+            "{extra:?}"
+        );
+        let mut banner = String::new();
+        crate::run::hud_feed::write_queue_banner_row(&mut banner, &args, "");
+        let hud = hud_text(&mut run_of(args));
+        if stretch == 1.0 {
+            assert!(!banner.contains("stretch"), "{extra:?}: {banner}");
+            assert!(!hud.contains("stretch"), "{extra:?}: {hud}");
+        } else {
+            assert!(banner.contains(", stretch 1.5,"), "{extra:?}: {banner}");
+            assert!(hud.contains("; stretch 1.5"), "{extra:?}: {hud}");
+        }
+    }
+    for bad in ["0.5", "2.5", "x"] {
+        assert!(
+            crate::cli::parse_args_from(argv(&["--bake-ring1-stretch", bad])).is_err(),
+            "{bad}"
+        );
+    }
 }

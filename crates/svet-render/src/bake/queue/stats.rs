@@ -79,6 +79,9 @@ pub struct QueueStats {
     /// passes the cap by less than one entry's round.
     pub cap: u64,
     pub submitted: u64,
+    /// Whether the last step's cap was stretched to its ring-1 dig jobs' samples left
+    /// ([`BakeQueue::ring1_stretch`](crate::bake::BakeQueue::ring1_stretch)).
+    pub stretched: bool,
     /// The stream workers' results taken since the queue started, and their time on the
     /// workers in total and at most, in nanoseconds ([`FacePrep`]).
     pub hook_chunks: u64,

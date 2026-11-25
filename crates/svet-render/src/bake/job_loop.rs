@@ -289,6 +289,17 @@ impl JobLoop {
 
     /// [`JobLoop::samples_left`] of the jobs whose chunks `of` holds.
     pub(super) fn dig_samples_left(&self, of: impl Fn(&[i32; 3]) -> bool) -> u64 {
+        let pending: u64 = self
+            .pending
+            .iter()
+            .filter(|j| of(&j.coord.0))
+            .map(|j| j.samples)
+            .sum();
+        self.open_samples_left(&of) + pending
+    }
+
+    /// Samples the open jobs whose chunks `of` holds still have to plan.
+    pub(crate) fn open_samples_left(&self, of: impl Fn(&[i32; 3]) -> bool) -> u64 {
         let live = |s: &FaceState| {
             if s.done {
                 0
@@ -296,19 +307,11 @@ impl JobLoop {
                 u64::from(s.n_max.saturating_sub(s.n + s.queued))
             }
         };
-        let open: u64 = self
-            .open
+        self.open
             .iter()
             .filter(|j| of(&j.coord.0))
             .map(|j| j.states.iter().map(live).sum::<u64>())
-            .sum();
-        let pending: u64 = self
-            .pending
-            .iter()
-            .filter(|j| of(&j.coord.0))
-            .map(|j| j.samples)
-            .sum();
-        open + pending
+            .sum()
     }
 
     /// The open jobs' slots and chunks, for the render half's table refresh.

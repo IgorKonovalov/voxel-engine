@@ -425,6 +425,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--queue-census` | Read the queue's view census at every opening, its listing once |
 | `--queue-rule-reading` | Count the jobs opened for chunks the zero rule would answer (a reading) |
 | `--edit-ms MS` | The slice's growth while a dig waits, 0 to 100 ms [3] |
+| `--bake-ring1-stretch X` | A dig's ring 1 goes whole in a submit within X times the priced cap, 1.0 to 2.0; the HUD and the banner name it when not 1.0 [1.0] |
 | `--dig-reach on\|off` | A dig re-bakes the chunks within the light radius [on] |
 | `--read-missing` | Read the store's no-value count while a dig waits |
 

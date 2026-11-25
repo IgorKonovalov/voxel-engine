@@ -802,6 +802,8 @@ mod flicker {
                     "band" => look.far_normal = [2.0, 6.0],
                     "approach" => l.penumbra = svet_render::Penumbra::Approach,
                     "pin" => pin = true,
+                    // The dig timeline's: the bake's candidates at 0 (`dig_line::line_run`).
+                    "cand0" => {}
                     t if t.starts_with("hold=") => {
                         l.dig_hold = svet_render::DigHold::from_name(&t[5..]).expect("a hold");
                     }
