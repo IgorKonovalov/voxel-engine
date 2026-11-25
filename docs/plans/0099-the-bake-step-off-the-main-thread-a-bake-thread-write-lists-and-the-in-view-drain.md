@@ -617,6 +617,142 @@ larger edit, with no bound but the edit's size). (c) **Portable's `edit_ms` goes
 already read over Portable's 33.3 ms line while a dig is held. (d) **Leave it:** the line reads
 1 to 4 frames on a drained RENOIR.
 
+## Amended 2026-11-25 (architect, ruling on Phase 2b's readings)
+
+Read against `30f6b7ea`: `SampleCost` (`bake/budget.rs`), the cap (`open_step`), `open_digs`,
+`JobLoop::plan_rounds`, and Phase 2b's timelines (`live/p2bd/`). The long form is in
+[`logs/0099.md`](logs/0099.md), "Architect's ruling on Phase 2b". Where this section differs
+from the text above it wins. Most of Phase 2b's adapter readings were taken loaded (1.4 to 42).
+
+**1. The estimate's split: accepted as built, with its limits.** The slope kept and the level
+re-read is the sounder half to hold: a steady slice reads the level and cannot read the slope.
+Its limits, none of them worse than the mean's rule it replaced:
+- **No fixed part (the RTX):** the level reads at or under 0 and the price is the recent ms over
+  the recent samples, the mean's rule in effect. A rejected fit (slope under 0, or its error over
+  10 %) keeps the last slope; with none yet the price is the mean.
+- **A slice that grows** is priced right once one spread has been read (A: 1, 4, 3 to 1, 2, 2).
+  **A slice that shrinks after only large submits** is not (ruling 2).
+- **One slow small submit moves the level by a fifth of its excess** for about three read-backs
+  (36 916 samples in 4.21 ms read the fixed part 1.53 ms; the cap 211 037 cut a ring of 239 491
+  the fit's 252 000 would have carried). Within one drained B run the price at the digs read
+  0.00 ms + 11.9 ns to 1.53 ms + 14.3 ns. Whether that is the load or the estimate is not read:
+  Phase 2c (6) reads it quiet, with a stop.
+- **The slope goes stale between spreads.** It misprices only a change of slice, by its own
+  error, and a change of slice is itself the spread that re-reads it.
+
+**2. The first steps after the view drains: left, as a named limit.** The dev's (a) and (b) both
+need something read under the line before the drain (a fixed part at small sizes, a steady cap).
+The case read, the first drain of a session, has neither, so neither fixes what was measured.
+The overdraw is at most the dispatch's fixed part (0.82 ms on the RENOIR, none resolvable on the
+RTX), decays 0.8 a read-back, and is what the mean's rule did (62 132 to 84 554 then, 69 979 to
+93 314 now). Phase 2b's done-when (1) holds its second figure on exact costs only, by the CPU
+test. **Phase 4 (5) gains a reading:** the ten steps after the view drains, each submit's GPU ms
+against the line, both adapters, the first drain and one after a move. Phase 6 pins it; over the
+line by more than 1.0 ms, or for more than ten steps, it is routed as a finding with the dev's
+(a) as the candidate.
+
+**3. Ring 2 behind another job: an order fault, fixed in Phase 2c.** ADR-0046 ("rings 1 and 2
+re-bake ahead of every other job") and ADR-0048 ("digs, rings 1 and 2, stay ahead of every
+score") are the intent. The timeline (`radeon-drained-A-after-2`, D3+2 to D3+15): 15 slots free,
+6 to 10 dig jobs pending, one open job that is not a dig's drawing the whole cap of 233 000 to
+354 000 a frame, the edit's 3 ms with it. `plan_rounds` plans every open job's rounds before it
+opens a pending one, and `promote` orders open jobs only; a ring-1 job is opened at once
+(`open_now`), a ring-2 job is not. The larger cap lets the opening admit that job in the dig's
+step (`samples_left < 2 * cap`), which the mean's small cap did not. **Not a change of the
+accepted picture:** the RTX reads D+6 to 8 before and after, and the RENOIR's 20 to 26 frames
+is inside the 14 to 31 it read before; what is held longer is ring 2's own old records.
+
+**4. Owner question 7** is restated below on the readings. **5. Phase 3** is split below: 3a
+runs before question 6's answer, 3b waits for it. Also ruled: the job's stamp (the dev's Phase 2
+note) is accepted, a job reads the world at its listing, so a later change must stale it.
+
+### Phase 2c: A dig job takes a free slot ahead of every other job's rounds
+- **Owner skill:** dev
+- **What:** In lockstep, in the bake half, before Phase 3a. Every dig job `open_digs` pushes is
+  opened into a free table slot in that step, as ring 1's is, so `promote` puts its rounds ahead
+  of every job that is not a dig's. Where no slot is free a ring-2 job stays first of the
+  pending ones and withdraws nothing (only ring 1 withdraws). The fade's wait, the two-slice
+  rule, the listing a step does, the cap and every record are unchanged.
+- **Files touched:** `crates/svet-render/src/bake/queue/{digs,tests}.rs`,
+  `crates/svet-render/src/bake/job_loop.rs` only if the opening needs a caller there,
+  `docs/plans/logs/0099.md`.
+- **Done when:** (1) `a_dig_job_is_planned_ahead_of_an_open_job_that_is_not_a_digs` (CPU, under
+  1 s): one open job that is not a dig's with 4 000 000 samples left, 15 slots free, a ring-2
+  chunk out of its fade whose job is 100 000 samples, a cap of 250 000: the step's submit plans
+  the dig job's 100 000 first and no more than 150 000 and one round of the other's; with no
+  slot free the dig job is first of the pending ones and no job is withdrawn. (2) The order test,
+  `ring_two_waits_out_a_dig_fade_whose_steps_are_skipped` and `gpu_queue`'s dig test pass
+  unchanged. (3) RENOIR, drained, sequence A, eight runs: no row from a dig to its last ring
+  chunk's landing shows `other` samples in flight while a dig job is pending and a slot is free;
+  every ring chunk's landing for digs 2 and 3 is logged against 14 to 31 (the mean) and 20 to 26
+  (Phase 2b). (4) RTX drained A and RENOIR waiting A, four runs each: ring 1 at D+1, 2, 1; every
+  ring chunk's landing logged against D+6 to 8 and D+7 to 9. (5) The 5 x 5 x 5 store test reads
+  bit-identical; `--binaries gpu_queue gpu_queue_reach gpu_bake`. (6) **Quiet** (load under 1.5
+  at the lock, or the load said and the reading marked loaded): Phase 2b (a)'s fit on the RENOIR
+  again, and RENOIR drained B, eight runs, with each dig's ring-1 samples, cap and price. **A
+  stop:** more than 3 of 48 at D+2 (Phase 1's base) is reported to the architect with each one's
+  read-back; it holds Phase 3b's dig readings, not Phase 3a.
+
+### Phase 3, split: 3a before question 6's answer, 3b after it
+
+What the three answers share is everything but the edit's frame: under (b) a box takes the path
+every message takes; (a) adds a wait on the frames that carry a box; (c) adds the same wait on
+every frame while a dig waits or bakes (the render thread waits for the list made from its own
+message, which is lockstep's cost and picture without handing the bake half between threads).
+So 3a builds the path and 3b adds the wait or does not. **Two rules keep 3b additive:** the bake
+half is owned by its thread and never stepped from another; every write list names the newest
+message's frame it was made from.
+
+**Phase 3a (dev; runs now).** Phase 3's What and its amendment, less the dig clause, with the
+setting's default left `off` in a window (the rigs and tests pass `on`), so no picture is shown
+on a path the owner has not answered for. A box sent with the thread on is served when the bake
+thread reaches it, ahead of the opening. Done when, of Phase 3 as amended: **(1), (2), (3), (4),
+(5a), (7)** on runs with no edit, **(8)** less its dig readings, and **(6)** restated: the flag
+parses both ways, the HUD's row and the banner name the mode, and unset it reads `off`. Added,
+from the log's Phase 3 gotchas, all CPU and under 1 s each:
+- (9) `a_fade_ahead_of_its_landing_list_keeps_the_applied_word`: a first block's list made from
+  message 5 and a fade's `show` of that chunk made from message 6, applied in frames 8 and 9:
+  the landing word reads 9 after each.
+- (10) `a_job_and_a_box_are_stamped_by_the_messages_frame`: bake steps 1 and 2 read the messages
+  of frames 10 and 14 (11 to 13 coalesced); the job that joined in step 2 holds 14 and step 2's
+  list names 14; a box in message 15, taken in step 3, holds 15, not a step count, and stales
+  the job; a change carried in message 14 does not.
+- (11) `the_reads_count_a_box_in_flight`: the bake half held, a box sent in message 7: over
+  frames 7 to 9 every public read that consults the mailbox today (a dig waiting, drained,
+  sealed, faceless, blocked) answers as lockstep's does; they answer from the bake half's books
+  once a list made from message 7 or later is applied.
+- (12) `a_knob_set_reaches_the_bake_side_in_the_next_message`: `set_bake_digs(5.0, false)`
+  between frames 3 and 4: the step that reads message 4 sizes its cap with 5.0, and with the
+  thread on neither a setter nor `bake_queue_mut` writes the bake half's state directly.
+
+**Phase 3b (dev; waits for question 6).** The default `on` in a window ((6) as first written),
+the edit's frame as answered, **(5b), (5c)** and (8)'s dig readings, against lockstep at
+Phase 2c's order. Under (c) the architect writes its done-when at the answer.
+
+### Owner question 7, restated on the readings (open)
+
+This text replaces question 7 above. Only Phase 6's line waits on it. How "an edit's light" is
+stated where a dig's ring 1 does not fit one frame's grant. **Read** (Phase 2b, loaded; the
+quiet re-read is Phase 2c (6)): on the drained RENOIR at Portable the 4.0 ms grant, priced
+honestly, bought 256 000 to 280 000 samples at digs 2 and 3. Sequence A (rings of 180 613,
+221 595 and 275 022) landed 1, 2, 2 in seven runs of eight and 1, 2, 1 in one: D+1 9, D+2 15 of
+24, where dig 2's D+2 is the rig's making (dig 3 re-digs its chunk a frame later) and dig 3's is
+the one ring at the grant's edge. Sequence B landed D+1 42 and D+2 6 of 48. The RTX and the
+waiting RENOIR: 1, 2, 1 in all 16 runs. **Nothing read is later than D+2**: the "1 or 2 frames"
+of `docs/nfr/04-edits.md` now holds on every state read.
+(a) **Recommended, and what the readings favour: the grant stays, the line says what it buys.**
+Ring 1 lands 1 frame after the dig; 2 where the next frame digs the same chunk again, or where
+the ring is over the grant (`slice + edit_ms` less a dispatch's fixed part: about 250 000
+samples on the RENOIR at Portable). Pinned as read. No code.
+(b) **Ring 1 goes whole in the edit's submit whatever the cap.** Dig 3's seven D+2 of 24 and up
+to B's 6 of 48 land a frame sooner. By the fit the largest ring read (330 000) costs 4.98 ms,
+1.0 ms over the grant, on that dig's frame, with no bound but the edit's size.
+(c) **Portable's `edit_ms` goes from 3 to 5 ms.** Buys about 410 000 samples by the fit, over
+every ring read; the same landings as (b) on this rig, for up to 2 ms more on each RENOIR dig
+frame, which Plan 0098's window already read over Portable's 33.3 ms line while a dig is held.
+(d) **Leave the sentence without the condition.** True of everything read; an edit larger than
+this rig's breaks it unsaid.
+
 ## Data shapes
 
 ```rust
