@@ -1,6 +1,6 @@
 # 0099: The bake step off the main thread: a bake thread, write lists the render thread applies, and the in-view drain
 
-> **Status:** in-progress (Phases 1, 2, 2b, 2c, 3a, 2d, 2e, 4b and 4c landed 2026-11-25; Phase 3b built, its dig readings' stops with the architect); approved (owner, 2026-11-22; his answers are under "Risks & open questions":
+> **Status:** in-progress (Phases 1, 2, 2b, 2c, 3a, 2d, 2e, 4b and 4c landed 2026-11-25; Phase 3b built, its stops ruled 2026-11-25: Phases 3c and 3d come before 4c2, question 8 is open with the owner and holds nothing); approved (owner, 2026-11-22; his answers are under "Risks & open questions":
 > the recommended option in each, question 2 by his own words). **After: 0096, 0098, 0087** (owner, 2026-11-22:
 > drafted now, the lane after the rename; then 0089 and 0093, 0091, ...).
 > **Re-read 2026-11-24** after Plan 0098 (v0.72.0) and the rename (v0.73.0): Phases 1 to 3 are
@@ -1722,6 +1722,266 @@ done-when (2) stands as written (0.85, a miss disclosed with the stage that hold
 frame, nothing changed for it). By the projection above the RTX misses it on the step's wall;
 whether a stage of the step is cut for it is a ruling on Phase 4c2's stop (a), not Phase 4d's
 call. **No owner question:** the ruling spends no VRAM and no frame time, and loosens no bar.
+
+## Amended 2026-11-25 (architect, ruling on Phase 3b's stops)
+
+Read against `0779f503`: `render_frame`, `replay_a_frame`, `take_waiting`, `bake_step`
+(`bake/link.rs`), the thread's loop and `take_until` (`bake/thread.rs`), `ListMaker` and `Lists`
+(`bake/writes.rs`), `Store::{show, put, mark_sky_stale}` (`bake/store.rs`), `take_boxes`,
+`open_digs`, `advance_fades` (`bake/queue/digs.rs`), `step`, `step_books`, `submit`
+(`bake/queue/step.rs`), `Books::of` (`bake/queue/books.rs`), `thread_frame` and
+`read_store_block` (`frame/{bake_thread,baked}.rs`), the readers (`support/queue.rs`,
+`gpu_queue.rs`, `gpu_outdoor/dig_line.rs`) and the lane's `live/p3bd` timelines. The evidence
+by file and frame is in the log ("Architect's ruling on Phase 3b's stops"). Where this section
+differs from the text above it wins. Nothing was built or run. **Two new parts, Phase 3c (a
+fix) and Phase 3d (a reading), before Phase 4c2; one owner question (8), which holds nothing.**
+
+### Ruling 1: the held block is written, then written over: an edit's list is applied ahead of lists made before it
+
+**The cause, by the code.** It is not a refused place (`pool+0` on every row of both rigs) and
+not the order of the wait and the place. It is the order of the apply.
+- `Lists::take` puts an edit's list ahead of every landing list waiting (`writes.rs`, "ahead of
+  every landing still waiting"), and `ListMaker::finish` puts it first in its own step. That
+  is Phase 2's rule 7 as built: "they count against the frame's cap first".
+- With the wait, the edit's frame sends its message and then takes the whole outbox
+  (`render_frame`, `take_waiting`): the step made from the frame before (S, which ran after
+  that frame's take) and the dig's step (D), in that order. S's lists go in first, D's edit
+  list is then moved ahead of them, and the frame applies D's edit list, **then S's lists**.
+- S made its writes before the dig. Where one of them writes a dug chunk it lands after the
+  held block: a fade's `Store::show` rewrites the block's words at its place (a ring chunk
+  that landed in the last `DIG_FADE` frames is fading, and every step shows every fade); a
+  landing's `Store::put` rewrites the block and points the chunk table at its own place. D
+  ended the chunk's fade (`take_boxes`), so nothing writes the held block again: the pool
+  shows the block from before the dig, with no record for the hole's new faces and no stale
+  mark, until ring 1 lands. **That is the picture question 6 (a) was picked to rule out**, for
+  2 to 6 frames, on a dig into a ring that landed a moment before.
+- The same order is wrong for any landing list still waiting under the byte cap when an edit
+  arrives, and inside one step for a write made before the box (a window move's table
+  rewrite). Lockstep cannot show the first two: one step a frame, applied in its step.
+
+**What the timelines show.** In both rigs the dig never told is the one whose ring-1 chunk had
+a dig's fade running at the edit: RTX waiting B dig 5 (frame 34; `[-1, 9, 8]` and `[0, 9, 8]`
+landed at frame 33), RENOIR drained B dig 3 (frame 18; `[0, 9, 8]` landed at frame 15). No
+other RENOIR dig has one. **Not shown:** RTX digs 3 and 4 also dig a fading ring-1 chunk and
+are told; that fits only if their held block took a new place (the fade then writes the freed
+old one, and the reader looks at the books' place), and the timeline prints no place. Phase
+3c's done-when (5) settles it, with the reading that would if it does not.
+
+**The reader has a blind side.** `pool_ring` reads the pool at the books' place
+(`read_store_block`), not where the pool's own chunk table points. A landing applied after
+the edit's list that points the table back at a freed place would read "held D+0" while the
+screen shows the old block. Phase 3c closes it.
+
+**Ruled: lists are applied in the order they were made; an edit's list is never carried, and
+takes the lists made before it with it.**
+
+### Phase 3c: An edit's list lands after the writes made before it
+- **Owner skill:** dev
+- **What:** At Phase 3b's tip. (a) `ListMaker` gives a step's lists in the order made: the
+  landings made before the box, the edit's list, the landings made after (a unit over the cap
+  sent whole keeps its place in that order). `Lists::take` keeps the order it is given.
+  `Lists::apply`: while an edit's list waits, every list up to and with the last one is
+  applied whatever the cap; then landings while they fit. The join applies the same way. (b)
+  The frame counts the bytes it applied over its cap for an edit (the `dig wait` line: the
+  frames, the bytes' p50 and max). (c) The dig readers take a chunk's place from the pool's
+  chunk table word, read back, in both modes. No other mechanism.
+- **Files touched:** `crates/svet-render/src/bake/writes.rs` and its tests,
+  `bake/{link,store}.rs` only where the order is handed on, `bake/queue/{stats,split_tests}`,
+  `crates/svet-render/src/frame/{baked,bake_thread}.rs` (the reader's accessor, the count),
+  `apps/flythrough/src/run/queue.rs`, `apps/flythrough/tests/gpu_queue.rs`,
+  `tests/gpu_outdoor/dig_line.rs`, `tests/support/queue.rs`, `docs/flythrough.md`,
+  `docs/plans/logs/0099.md`.
+- **Done when:**
+  (1) `an_edits_list_lands_after_the_writes_made_before_it` (CPU, under 1 s, the recording
+  applier): a fade's show of a chunk at place P made from message 5 and an edit's block at P
+  made from message 6, taken in one frame under a cap that fits neither: P holds the edit's
+  block after that frame. With a landing (block at P, table word to P) from message 5 and
+  the edit's block at Q with its table word: the table reads Q. With 2 MiB of landings ahead
+  of the edit under a 1 MiB cap: all applied in that frame, the count reads 1 MiB over; two
+  landings made after the edit wait as they do today.
+  (2) `a_steps_lists_keep_the_order_they_were_made` (CPU, under 1 s): a table write made
+  before the box, the edit's write of the same word, a landing after: three lists in that
+  order, and the word reads the edit's. `an_edit_list_is_never_carried` restated: the edit's
+  500 bytes and the two landings ahead of it apply in its frame (660), none behind it.
+  (3) `the_edits_frame_waits_for_its_list_and_no_other_frame_does` gains the case: the held
+  step holds a fade's show of the dug chunk from the message before; the frame returns with
+  the held block's words at the chunk's place.
+  (4) Lockstep bit-identical: `the_threaded_queue_drains_to_the_lockstep_store` by name,
+  `--binaries gpu_queue gpu_queue_reach gpu_bake gpu_sun gpu_settings_rows` (the tip gate
+  owed since `c7853595` with it), `gpu_golden` once by name; a golden that moves is reported.
+  (5) **Reading, quiet, thread on, four runs each: RTX waiting B and RENOIR drained B.** The
+  held block is told at D+0 in every dig, dig 5 and dig 3 among them, the place read through
+  the pool's table. **If one is still not told: stop.** The one reading then, and nothing
+  else: for that dig, per ring-1 chunk, the books' place before and after the edit's frame,
+  the pool's table word, and the first record and rule of `dig_held` that fail.
+  (6) The apply lap on the dig frames of (5), p50 and max, beside the bytes over the cap.
+  **A stop:** p50 over 1.0 ms on the RTX.
+- **Rejected.** Keep the edit first and drop from the older lists the writes it covers: a
+  write would need its chunk, and a table rewrite or a summary has none. Send the held block
+  again a step later: one frame of the old block is the defect. Fix the reader only: the
+  order is wrong whatever the reader sees. Cost of the ruling: a dig frame may apply up to
+  the lists waiting plus the outbox (8 MiB) in one frame; (6) reads it.
+
+### Ruling 2: what the wait waits on, and its bar
+
+**By the code.** The wait ends when an entry made from the box's message is in the outbox
+(`take_until`, `books.frame >= frame`). The thread pushes an entry only after its step has
+returned and `Books::of` has made the snapshot (`bake_step`, the loop in `thread.rs`). So
+the frame waits for: the rest of a step in progress; the pick-up; **the dig's whole step**
+(every stage, as lockstep's dig step has, less the `wgpu` calls); the snapshot; the
+hand-back. It waits on no submit, no device poll (`Recorder::poll` is empty) and not on the
+depth in flight (a full depth stops the step's planning, nothing blocks).
+
+**The bar was derived wrongly.** 6.0 / 12.0 ms priced "the rest of a step" at lever (b)'s
+2.5 ms and the dig's step as its `boxes` and `digs` alone (2.0 to 2.6 ms). The step has since
+grown to 8.0 ms p50 and 19 p99 on the RTX in regime B (the slots ruling), and the wait is all
+of it. Read: the dig step's stages over 0.5 ms sum to 5.5 to 11.6 ms on RTX waiting B (boxes
+1.9 to 2.3; collect, submit, candidates and checks the rest) against waits of 8.5 to 15.7.
+**Restated: the wait's p50 is at most lockstep's dig step p50 on the same rig and sequence.**
+Read against it: RTX A 16.3 against 24.2, RTX B 12.2 against 15.9, RENOIR A 3.4 against 3.8,
+RENOIR B 3.1 against 3.4: held. **RENOIR drained B 5.6 against 3.2: missed**, with the step's
+own stages no larger than lockstep's; about 1.5 to 2 ms lies outside the step (the pick-up,
+the snapshot, which carries the dig trace in this rig, the hand-back). Phase 3d names the part.
+
+**What the rig does not read.** The timeline's frame (a step, read-backs, a render with a
+device wait) is long enough that no step is in progress at the edit, so its wait is the dig's
+step alone. In a window at 134 fps a step is in progress most of the time: the wait gains its
+rest, up to a step (8.0 ms p50, 19 p99 on the RTX in regime B; about half in the mean, a
+derivation). Phase 3d reads it at the fly-through's pace.
+
+**It can wait on less; whether it should is the owner's (question 8).** Question 6 (a)'s
+promise is the held record, which exists when `take_boxes` returns. Everything after it in
+the dig's step serves ring 1's submit and the queue's own work.
+
+### Ruling 3: the dig frame's "wall" is the bake call's wall, and "not over lockstep's" cannot hold
+
+**What the column is.** `stages.total_ms` on the dig's frame: in lockstep the step
+(`apply_lists`), with the thread the render thread's whole time in the bake call
+(`thread_frame`). Neither is the frame's wall; **both are what the bake call takes from the
+render thread on that frame, which is the right thing to compare**: the passes after it are
+the same in either mode. Done-when (8)'s word "wall" is read as that.
+
+**The bar is unreachable by construction.** With the thread the call is lockstep's dig step
+moved to another thread, plus what the hand-off adds: the pick-up, the snapshot, the
+hand-back, and the issue of the submit ahead of the dig's (ruling 5). Read: over by 0.3 to
+0.4 ms on RTX B and the RENOIR waiting rigs, by 2.8 ms on RENOIR drained B (ruling 2's part).
+**Restated: the call's p50 is at most lockstep's plus the hand-off's parts, each read by
+Phase 3d; a part over 0.5 ms p50 on either adapter is a stop.**
+
+### Ruling 4: ring 1's lateness is two steps and a rig's frame; its bar is in ms
+
+**By the code.** Only the box's frame waits. Ring 1's read-back maps at a later frame's poll
+(`mapped`: never the submit just issued), leaves with that frame's message, waits for a step
+in progress, is placed in the collect stage of the step that reads it, and is handed back
+only at that step's end; the next take applies it. After the map that is up to two steps:
+1.4 ms each on the RENOIR (D+2 in every dig read, 104), 8.0 ms p50 and 19 p99 on the RTX in
+regime B.
+Where the dig's step finds every slot unread (2 to 4 digs of 24 and 48) ring 1 is not planned
+in it at all. My "one frame later, two where the map misses" counted the map and not the
+steps: wrong for a deep queue on the RTX.
+
+**The frames read are the rig's.** In the timeline lockstep's ring 1 is D+1 by construction
+(the device wait maps it before the next step), and a threaded frame is as long as the rig's
+read-backs. Done-when (8) asked for the ms; the timeline does not print it. **Restated: ring
+1 is applied within lockstep's ms on the same dig plus two of lockstep's mean frames on that
+dig** (the Budgets row's "frames plus 2", at the frame lockstep has). Phase 3d reads it.
+**No second wait and no early hand-back for a read-back is built** before that reading; if
+it misses, the lever named is a ring-1 read-back's message stamped as a box's is.
+
+### Ruling 5: a dig frame issues two submits as a rule; "1 in 8" was derived on a carry
+
+**By the code.** The Q6 amendment's ruling 1 allowed "a submit carried from an earlier
+frame" ahead of the dig's and took it for rare on the RENOIR. But the submit ahead is not a
+carry: it is the one planned by the step made from the frame before, which every frame
+issues, and the dig's frame takes that step and the dig's together (ruling 1 above).
+`replay_a_frame` then issues both. A carry, where there is one, makes three; the depth bounds
+it (`in_flight < bound`). Read: RENOIR two in 107 of 120 and three in 5; RTX three in 46 of
+72. **The bar is withdrawn. Restated: a dig frame issues the dig's submit behind at most the
+depth less one; more than three is a stop.** The GPU side is a disclosed limit: on the RTX a
+dig frame's bake is up to three caps, the dig's grown one among them, against lockstep's
+one; Phase 5 (c) judges it with the wait.
+**Rejected.** The dig's submit alone, ahead of the others: a job's table row is rewritten
+between submits, so a submit cannot pass one planned before it. The dig's submit a frame
+later: ring 1's frame becomes a matter of timing (rejected with question 6).
+
+### Ruling 6: the lavapipe rig's pace is fair; a frame count is a bar only at a stated frame
+
+`gpu_queue`'s rig has no frame of its own (no render, no present): lockstep's is the step's
+wall and a threaded one 0.1 ms. Padding the threaded frame to lockstep's mean on the same
+dig, 16.667 ms at least, makes "lockstep's frames plus 2" the ms bar of ruling 4 in frame
+units, and scales it with a loaded machine as lockstep itself scales. **Kept.** What it does
+not read, and is not asked to: a step in progress at the edit (ruling 2) and a dig into a
+fading ring (Phase 3c's CPU tests carry that). Its held assertion does not depend on the
+pace. **From here every count of frames with the thread on is stated with the frame it was
+read at and its ms beside it; where the two disagree the ms is the bar.**
+
+### Phase 3d: The dig read in ms, the wait by its parts, at the fly-through's pace
+- **Owner skill:** dev
+- **What:** At Phase 3c's tip. A reading; no mechanism. (a) The wait's parts, timed: from the
+  send to the dig step's start (the rest of a step in progress and the pick-up), from there
+  to the end of its `boxes` stage, the step's rest, the snapshot, the hand-back; on the
+  `frames: bake thread dig wait:` line (p50 and p99 each) and the timeline's dig row, with
+  the dig frame's issue and apply laps and the frames by submits issued (1, 2, 3). (b) The
+  timeline's dig row gains the ms from the edit's frame's start to the end of the frame that
+  applied the held block and of the one that applied ring 1, in both modes. (c) The
+  fly-through's teardown prints, for the dig frames, lockstep's bake call beside the wait.
+- **Files touched:** `crates/svet-render/src/bake/{link,thread}.rs`, `bake/queue/stats.rs`,
+  `crates/svet-render/src/frame/bake_thread.rs`, `apps/flythrough/src/run/queue.rs`,
+  `apps/flythrough/tests/gpu_outdoor/dig_line.rs`, `docs/flythrough.md`,
+  `docs/plans/logs/0099.md`.
+- **Done when:**
+  (1) `the_waits_parts_sum_to_the_wait` (CPU, under 1 s, the threaded device-less rig with
+  the hook holding the step 20 ms): the parts sum to the wait within 0.5 ms and the held
+  time is in the first.
+  (2) **Timelines, quiet, four runs a side, thread alternated with lockstep:** RTX waiting A
+  and B, RTX drained B, RENOIR drained B. Per rig: the wait and its parts; the call against
+  lockstep's; ring 1 in ms against lockstep's ms plus two of its mean frames.
+  (3) **The fly-through, headless, quiet, RTX Floor 1080p forest from a fresh start,
+  `--dig-at` six frames while in view waits and six after it reads 0, `--bake-thread on`
+  and `off`, two runs each; one RENOIR Portable pair.** The wait's p50, p99 and max and its
+  parts by state, lockstep's call on the same frames, the submits issued. Each run its own
+  lock hold; none over 20 minutes.
+  **Stops, each reported with its rows, none tuned around:** the pick-up with no step in
+  progress (the timelines), the snapshot or the hand-back over 0.5 ms p50 on either
+  adapter; a wait p50 over lockstep's dig step on a timeline rig; ring 1 over ruling 4's ms
+  bar at p50; a dig frame with more than three submits. **(3) has no bar: its figures are
+  question 8's.**
+
+### Owner question 8 (open; it holds no phase)
+
+**The dig frame's stall with the bake thread on.** Question 6 (a) was picked on a guess of 3
+to 6 ms on the RTX. Read: **12.2 to 16.3 ms p50, 27 to 48 ms p99** while the queue is deep,
+about what lockstep's dig frame costs (15.9 to 24.2, 32 to 45); 3.1 to 5.6 ms on the RENOIR;
+drained on the RTX not read (Phase 3d); in a window a step in progress adds to it (ruling 2).
+The held record is in the edit's frame under either option once Phase 3c is in.
+- **(a) Keep the wait as built and judge it at Phase 5 (c)** (recommended), Phase 3d's figures
+  beside the window. For: nothing more to build; every frame but a dig's is free of the step,
+  and a dig's costs what it cost before; ring 1 goes out as early as it can. Against: a dig
+  while the queue is deep stalls its frame by two frames' time at 134 fps at the median, six
+  at the worst read.
+- **(b) The dig's step hands the held block back as soon as it is written** (a Phase 3e,
+  written on this answer): the frame waits to the end of the step's `boxes` stage only, and
+  the step's submit, ring 1's rounds first, is issued by the next frame. For: the wait is the
+  rest of a step in progress plus about 3 to 4 ms on the RTX (a derivation from the stage
+  rows). Against: ring 1 one frame later, so the held record shows a frame longer; a step
+  that publishes twice (the thread's hand-off, the wait, the replay and their tests); the
+  dig readings taken again.
+The lane does not wait: (a) is what the tree does, and (b) changes only the dig's frame.
+
+### The order: 3c, 3d, 4c2, 4d, then Phase 5
+
+One lane, one dev at a time. **3c first**: it is the image fault, and every dig reading after
+it is taken on the fixed order. **3d next**: it restates Phase 3b's missed bars in ms and
+gives question 8 its figures. Phase 4c2's (7) reads its four dig runs beside Phase 3d's, in
+ms, and its stop (d) reads "later than Phase 3d read". Phase 4d is unchanged. Phase 3b's
+done-when (8) stands as read: stop 1 is Phase 3c's, stops 2 to 5 are restated above, and none
+is re-run as written.
+
+### ADR-0083
+
+Amended in place (still `proposed`): lists are applied in the order made and an edit's list
+takes the lists made before it with it; the edit's frame issues the dig's submit behind up
+to the depth less one. Question 8's answer, if (b), is one more line in its Decision.
 
 ## Data shapes
 
