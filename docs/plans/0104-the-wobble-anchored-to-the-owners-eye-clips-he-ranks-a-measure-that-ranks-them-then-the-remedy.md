@@ -1,6 +1,8 @@
 # 0104: The wobble anchored to the owner's eye: clips he ranks, a measure that ranks them, then the remedy
 
-> **Status:** in progress: Phases 0, 1, 2, 0b and 4 landed (2026-11-25); stopped for the
+> **Status:** in progress: **Phase 5 is next** (two readings, "Amended 2026-11-26 (architect,
+> after Phase 4)"), then the owner's question 4 as restated there (recommended: close).
+> Before it: Phases 0, 1, 2, 0b and 4 landed (2026-11-25); stopped for the
 > architect after Phase 4 (neither candidate holds at its artifact; candidate 7's drop rule
 > fires; the maps for the owner's question 4 in `live/p4/index.md`) ("Amended 2026-11-25 (architect, after Phases 0 and 2)"; Phase 3 does not
 > run: every subject anchored); approved (owner's go, 2026-11-25; drafted the same day with no interview from
@@ -639,6 +641,233 @@ No new question for the owner: question 4 stands as asked.
    Remedy phases whatever Phase 4 reads. **Recommended: (a).** Phase 4 is rig work on the
    RTX with no window, and it leaves a figure shown to follow your eye, which the next
    light plan needs whether or not this one builds anything.
+
+## Amended 2026-11-26 (architect, after Phase 4)
+
+Written by a fresh architect from the log's "Phase 4", the scoring code
+(`gpu_wobble/measure.rs`, `keys.rs`), the maps under `live/p4/` and the owner's files. One
+reading of the architect's own stands behind it, CPU only, marked where it is used; the dev
+repeats it in the log (Phase 5). Nothing above is rewritten; where this section differs from
+"Phase 4, amended", this section rules.
+
+### 1. What Phase 4's result means
+
+**Candidate 2 at T: the miss on clip totals is the instrument's, not his eye's.**
+
+- The unit a display sample belongs to is read each frame from the hit of the sample's
+  internal pixel (`keys.rs`), and under FSR 2 that hit is jittered while the picture the
+  owner saw is the upscaler's output. A sample near a unit's border changes unit from frame
+  to frame with the camera still. A unit holds 4 to 16 samples (16 to 64 display pixels on a
+  stride of 2), so one sample entering or leaving moves its lit share by 0.06 to 0.25, and
+  the score counts a change over 0.1.
+- The log already shows it: on `T b`'s holds the key slot's value on units changes 0.0059 a
+  frame at source 2, the column horizon, a value fixed per face (ADR-0084) under a camera
+  that does not move. On `T a` (no jitter) the same figure is 0.0000.
+- The picture itself is nearly still there. The architect's reading (`ffmpeg`, `tblend`
+  difference on grey, consecutive frames of his files): `T b` frames 600 to 620, 0.076
+  levels mean, 0.018 % of pixels over 8 levels; `T a` 0.000 and 0; flying (150 to 170)
+  13.0 and 14.0 levels, 14.8 % and 15.2 %. The score reads `T b`'s holds at a third to a
+  half of its flying windows (0.007 to 0.013 against 0.019 to 0.027); the picture's own
+  change there is under a hundredth of the flying one.
+- So "a steady shimmer under jitter that his eye discounts" is not what the hold figures
+  show. They show the sampling. A real shimmer at 0.018 % of pixels may exist; it is small
+  and he reported none.
+- The hold term alone turns line (b): the windows with the camera moving (the fly and the
+  turn, from the log's rows) read about 0.031 for `T a` against 0.022 for `T b`, his order.
+  That is arithmetic on a failed line, not a pass. Phase 5 reads it properly.
+- **Established:** candidate 2 puts the stepping edge where he pointed in `T a` (0.919
+  against 0.323, a place fixed in the picture); it orders T his way wherever the camera
+  moves. **Not established:** that it is a measure. T is one pair, and its clips differ in
+  resolution as well as in the upscaler (1280 x 720 stretched against 1687 x 919 through
+  FSR 2), so it cannot say that the score follows a change of the light at one resolution.
+
+**Candidate 1 at C: nothing is established, either way.**
+
+- The order it is failed on was never given as a ranking. He said "there is wobble" of
+  `C a` while flying and "a bit" of `C b` while turning: two moments, two motions. The two
+  clips differ by 10 % in every window, inside the fifth that line (b) itself allows a pair
+  called the same.
+- The totals are taken over the whole picture as a contrast against each unit's own mean.
+  68 % of the canopy picture is shadowed and he named the lit trees; a shadowed unit at 1.4
+  to 2.0 against a lit level of 61.8 weighs the same as a lit crown.
+- In motion a crown's unit is sparse leaves in front of dark gaps, and its mean changes
+  with which samples reach it. That may be exactly what he calls dots sparkling, and no
+  light setting changes it; `key cover ray` changing it by a tenth is as likely the ray's
+  own noise in the shadow.
+- The line (a) miss at `C a` (1.89 against 2) carries nothing: the map shows the sunlit
+  crowns hot across the whole top, right as much as left, and he named where he looked.
+- **Established:** candidate 1 lights up sunlit crowns in motion. **Not established:** that
+  it orders anything; and no pair exists that could test it.
+
+**The dev's region rules** (`C b`: tiles at least 5 % sunlit leaf; `S`: at least 5 % sunlit
+and not leaf) are fair readings of his words and invalidate no line. They make line (a) weak
+there: a score of brightness activity can hardly land anywhere else. Only `T a`'s and
+`C a`'s regions are places fixed in the picture, and only those two lines (a) are tests.
+
+**Candidate 7 is dropped**, as its rule says: no sun-facing sample of his five clips reads
+the key ray's history mean. It goes to no backlog entry; W1's line stays closed.
+
+**`S` after the turn.** `control-pinned-at-397-398-440-x16.png` shows every edge of the
+picture changing in the 0.8 s after the turn: the block edges of the shadowed wall and the
+silhouettes against the sky as much as the lit treads; 2 s later nearly nothing. A process
+that touches every geometric edge alike is not the sun's term. The dev's reading (FSR 2's
+history filling after a turn) is the likely one and is not yet shown: Phase 5 shows it or
+refutes it in one render. The whole picture's part is the exposure settling after the turn
+(2.70 levels against 0.08 pinned), which is established.
+
+**In one paragraph.** Under the defaults the stepping edge is close to gone ("almost no
+wobble" at `T b`, "very little" on `S`'s slopes). What is left under the defaults is the
+sunlit crowns in motion (`C a`) and the second after a turn (`S`). Neither is shown to be
+the sun's visibility, which is what this plan's six candidates remedy.
+
+### 2. The next step
+
+**Tonight: Phase 5 below, two readings, minutes each. Then the owner's question, and the
+recommended answer to it is to close.**
+
+- **Rejected for tonight: closing at once** (the plan's outcome being the anchors, the
+  tools and the audit). Closing with the wobble parked is his decision (question 4), and
+  the two readings cost minutes and change what he is told: whether the plan leaves a
+  reading for the stepping edge, and whether the second after a turn belongs to the light.
+- **Rejected: a remedy candidate judged by blind clips, now.** A remedy is a stability
+  decision and his. And the code reading names none that is small: of the six candidates
+  five change the sun's term, and the sun's term is not shown to be what is left under the
+  defaults. The one setting he has twice found calmer at the canopy, `key cover ray`, is
+  offered in the question as the only round worth his eye.
+- **Rejected: more measure variants.** Phase 5 is one correction that the code reading
+  names, with what refutes it written down first. Whatever it reads, no further variant of
+  either candidate is tried in this plan.
+
+### Phase 5: Two readings that separate the causes (exploration, a reading)
+- **Owner skill:** dev
+- **What:** No production code; `apps/flythrough/tests/gpu_wobble/` and the untracked
+  `live/p4/` only. The cap and the runner are Phase 4's.
+  - **5a, the unit map held still where the camera is still (CPU, outside the lock, about
+    half a minute a clip).** In every hold window a sample's unit is the one the window's
+    first frame gives it, for the whole window; the luma is each frame's own, as now. The
+    moving windows are scored as now. Printed for the five clips: each hold window old
+    beside new (candidate 1, candidate 2, dots), the clip totals old beside new, line (b)
+    at T for candidate 2. Beside each hold window, the picture's own change: the mean
+    absolute difference of consecutive frames and the share of pixels over 8 levels (the
+    architect's reading above, repeated on every hold).
+  - **What 5a is expected to read, and what refutes it.** Expected: `T b`'s hold windows
+    fall under 0.002 on candidate 2 and the clip totals read about 0.015 (`T a`) against
+    0.011 (`T b`). Refuted: `T b`'s holds stay over a third of what they read now. Then the
+    sampling is not the cause, candidate 2 stays failed at T, and nothing more is tried.
+  - **One row beside it, with no line:** candidate 1 over the units whose samples are
+    mostly sunlit leaf, `C a` beside `C b`, the clip totals and his two windows. It says
+    whether `key cover ray`'s extra tenth sits in the shadow. It holds or fails nothing:
+    C's order was never given as a ranking.
+  - **5b, `S` after the turn with no upscaler (RTX, one hold of the lock, about a minute;
+    projected from its first 31 frames).** `S`'s track rendered with the upscaler off at
+    the window's internal size (1687 x 919, presented as `T a`'s arm presents), the
+    exposure pinned after frame 397. The clip rig's `native` arm takes `T` only today and
+    is widened to `S`. Then `control`'s figures and pictures on frames 398 against 440 and
+    500 against 542. With no upscaler, no jitter and a still camera two frames differ only
+    where the light does.
+  - **How 5b is read.** Outlines at 398 against 440 under 3 levels (the settled pair reads
+    2.3 with FSR 2): the change after a turn in his clip is the upscaler filling its
+    history, not the light. Over 11 levels (half of his clip's 22): it is the light, and
+    the dev says on which outlines and which queue counter or fade moves in those frames.
+    Between: both, with the figures.
+  - **`live/p4/index.md` is rewritten for the morning** as section 3 below rules.
+- **Files touched:** `apps/flythrough/tests/gpu_wobble/measure.rs`, `clips.rs`,
+  `docs/plans/logs/0104.md`.
+- **Done when:** the log holds 5a's table with **holds** or **refuted** against the two
+  figures written above, the sunlit-leaf row, 5b's two pairs beside Phase 4's three with
+  one of the three readings named, each run's projection, wall time and load; `index.md`
+  as ruled; quick tier, clippy and fmt over the changed test files. **If 5a holds**,
+  candidate 2 is entered as this plan's reading for the stepping edge, provisional: it
+  held (a) at a fixed place and (b) on one pair, and it is called a measure when it ranks
+  a second pair he ranked blind. Plan 0100 Phase 8b's stage rows are not read under it
+  tonight. The dev stops after Phase 5 either way.
+
+### 3. What the owner is shown in the morning
+
+**Four pictures, in this order, each with its one sentence.** The rest of `live/p4/` stays
+on disk and is not put in front of him.
+
+1. `map-T-a-c2.png`: "The clip with no upscaler, at your screenshot: the hot squares are
+   the far stepped slope at the top, where you pointed."
+2. `map-T-b-c2.png`: "The same moment under the defaults, which you called almost no
+   wobble: the same slope, about a quarter cooler while flying."
+3. `map-C-a-c1.png`: "The forest under the defaults, at your screenshot: the sunlit crowns
+   flicker across the whole top of the picture, not only the top left."
+4. `control-pinned-at-397-398-440-x16.png` beside `control-pinned-at-397-500-542-x16.png`:
+   "The tunnel, what changes in the second after the turn and what changes two seconds
+   later: every thin white line is an edge that moved", with Phase 5b's one line under it
+   (the upscaler, the light, or both).
+
+**`live/p4/index.md` is not fit as it stands. The dev changes it** (Phase 5):
+
+- It shows fifteen pictures in four tables. It shows the four above, in that order, and
+  names the others in one closing line.
+- Each map is tinted against its own largest value, so `map-T-b-c2.png` looks as hot as
+  `map-T-a-c2.png` while the text says "cooler". The two T maps are drawn again on one
+  shared scale (the larger of the two maxima), or the sentence goes.
+- "T b keeps a small steady shimmer ... the upscaler's jitter" is replaced by what 5a
+  reads. As written it tells him his picture shimmers where the score's sampling does.
+- The difference pictures are near black: one sentence says they are sixteen times
+  brightened and how to read a line.
+- It opens with what is left under the defaults, in his words, not with the scores; the
+  scores' definitions move under the pictures.
+- The key slot's source section goes (candidate 7 is dropped); one line says so.
+- It ends with the question below, verbatim.
+
+**The question (question 4, restated; it replaces the wording under "Question for the
+owner (added)", whose choice (a) he is now at).**
+
+4. **The defaults are, in your words, almost good. Two things are left under them: sunlit
+   tree crowns sparkle while you move, and the picture settles for about a second after a
+   turn. What now?**
+   - **(a) Close the plan. Recommended.** The two leftovers go to the backlog with your
+     clips and screenshots as their anchors, beside "Distant trees that do not wobble".
+     *For:* the stepping edge you first complained of is close to gone under the defaults;
+     what is left is not shown to be the sun's shadow, which is all this plan's remedies
+     change; the trees and the upscaler deserve their own plan with an interview. The clip
+     rig, the blind pairs, the baked settle and the soak test that now reads a baked store
+     stay. *Against:* a known flicker stays in the default picture, parked, and stable
+     image is your first priority.
+   - **(b) One more blind round, at the forest only.** You watch the two forest clips
+     again and one more pair from a second forest eye, defaults against `key cover ray`,
+     and say which of each pair wobbles more. If `ray` is calmer in both, its cost is read
+     on the RTX and the Radeon and it becomes the default by an amendment; if not, (a).
+     *For:* it is the one change you have twice found calmer there, the setting exists,
+     and your eye is the only instrument that has repeated itself. *Against:* about a day
+     of lane work and ten minutes of yours; `C b` still showed "a bit" when turning; you
+     kept `ray` off as a default in Plan 0100 (its question 8).
+   - **(c) A remedy for the second after a turn.** Only worth asking if Phase 5b reads
+     "the light". If it reads "the upscaler", this is FSR 2's own behaviour and belongs in
+     the backlog entry under (a).
+   - **With (a), one thing more:** your answer 3 (a) removes every unpicked Plan 0100
+     setting at the close. **Recommended:** remove `key_cover record`, `key_at face` and
+     `face-smooth` and `key_horizon walk` as answered, and keep `key_cover ray` alone,
+     off, because it is the parked forest item's one control and costs nothing when off
+     (your rule of 2026-11-12). The close review records that against ADR-0084. *Or:*
+     remove it too, as answered; a later plan builds it again if wanted.
+
+### 4. Phase 0b and main: no partial close
+
+- **The premise does not hold as it was put.** The weekly soak (`soak.yml`, Mondays 03:00
+  UTC) runs what is on `origin`, and `origin/main` is behind the local main; a merge into
+  the local main changes no CI run until the owner asks for a push. Main holds the test as
+  it was before Phase 0 (120 unread frames, passing on a store 5 of 59 chunks baked, with
+  the old bars), not the 12 538 s test: that one only ever existed on this lane. The old
+  test asserts less than it claims; it does not run long.
+- **So nothing merges tonight.** A merge into main takes the gate tier at the lane's tip,
+  about a quarter of an hour of the GPU lock, and tonight it would buy nothing.
+- **If he answers (a):** the plan closes in the usual ceremony and the lane merges whole,
+  days before the next weekly run. The push is his word, as always.
+- **If the lane stays open past Sunday 2026-11-29** (answer (b) or (c)), the orchestrator
+  makes one interim merge, which is not a close: the gate tier at the lane's tip and the
+  two soak tests by name on lavapipe (about 250 s and 100 s), then
+  `git merge --no-ff plan-0104` in the main checkout with a message that says "interim:
+  Phases 0, 0b, 1, 2, 4, 5; the plan stays open". No version, no tag, no move to `done/`,
+  no close review, the index row unchanged, the worktree and the branch kept; the lane
+  goes on from the same branch and merges again at its close. The tip and not Phase 0b's
+  commit alone: the lane changes test code, one comment line and documents, its readings
+  sit under `reading::` (in no tier), and the tip holds the store's tally that closed
+  lever 2. Picking Phase 0b's commit out would write it twice into the history.
 
 ## After Phase 4: the stop, and the candidate remedies
 
