@@ -1,6 +1,7 @@
 # ADR-0084: A baked key ray that ends under a column's top is not lit; on a world face the key light's default stays the column map's horizon at the hit, and a cover source that may only add light (a ray near, the baked record at every distance) ships as a setting, off
 
-> **Status:** proposed (2026-11-23, with Plan 0100). **Rewritten 2026-11-25, still proposed,**
+> **Status:** accepted (2026-11-25, Plan 0100's close), with the Outcome below. Proposed
+> 2026-11-23 with Plan 0100 and **rewritten 2026-11-25 while proposed,**
 > to what Plan 0100's window (Phase 8, 2026-11-25) and the owner's answers to its questions
 > 8, 9 and 10 decided. As first written it made the key light's visibility one value a face
 > (the horizon at the face's centre) with a ray near and the record far as the default under
@@ -8,7 +9,7 @@
 > changed is under "Rewrite (2026-11-25)". The file keeps its first name, so the links to it
 > hold; the name is not the decision.
 > **Date:** 2026-11-23
-> **Related plan(s):** [Plan 0100](../plans/0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md)
+> **Related plan(s):** [Plan 0100](../plans/done/0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md)
 > (builds it; its readings are in `docs/plans/logs/0100.md`); [Plan 0098](../plans/done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md)
 > (whose window W3 gave the requirement); [Plan 0096](../plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md)
 > (whose Phase 10c read the bake's key ray lit at its cap under a roof)
@@ -259,7 +260,54 @@ the march's form in ADR-0079": it did not, and `COLUMN_KEY_STEPS`' march stays t
 **Added:** the penumbra's ruling under `key far column`, and with it the narrower
 supersession of ADR-0079's near clause; the list of what is deferred.
 
-## Outcome
+## Outcome (2026-11-25, Plan 0100's close)
 
-_(Added at acceptance, at Plan 0100's close: what Phase 9 shipped against this text, and
-Phase 8b's line on where the sunlit class's reversals come from.)_
+Plan 0100 closed on its Phase 9 (v0.75.0). Against the text above:
+
+- **Built as decided.** The bake's column clause at the cap (Phase 2; `bake.wgsl`'s key ray
+  reads the sky rays' clause). `lighting.key_cover` `off`, `ray`, `record`, `lighting.key_at`
+  `hit`, `face`, `face-smooth` and `lighting.key_horizon` `march`, `walk`, every profile at
+  the first of each; `ray-record` and `centre` are gone from the code, the shaders, the
+  tables and the documents. No golden moved and no frame-budget row moved.
+- **The penumbra under `key far column` is wider than one clause.** Lifting the exclusion
+  in `key_from_store` alone left a key ray scored by `approach` on a frame whose history is
+  invalid (the first frame). Built: one predicate, `key_approach_at` (`hitrec.wgsl`), false
+  at a cube face under `key far column`, read by the no-history clause, the light pass's
+  ray, the steps view and the temporal pass. So where a key ray is still cast at a cube
+  face under the column (light history on, or a frame with no valid history) it is the
+  disc's, never the approach's: the penumbra setting is inert there with the history on as
+  with it off, and `approach` scores the cover ray alone. Entities, field surfaces and the
+  other `key far` modes keep ADR-0079's near penumbra. A `gpu_sun` test holds it.
+- **The clause's test is not in the gate.** The closed-cave claim (key 0 on 64 of 64 floor
+  faces, 255 on 64 with no roof) is a soak test at 18.6 to 19.7 s on lavapipe; the gate's
+  sibling (a ray leaving the window's side above every top stays lit) passes with or
+  without the clause. A gate-sized rig is owed (`docs/backlog.md`).
+- **The requirement is not met, and no reading of the plan shows the fault.** The owner's
+  verdict at the window stands: the wobble is still there on sunlit faces. Phase 8b read
+  his move at his window's size with a measure of two-frame flips; two of his three
+  orderings came out reversed or flat, so its figures rank stages by a quantity not shown
+  to be the fault. Its one line by its own rule, at the canopy, on a class of 3 133 pixels:
+  the sunlit class's flips come from the hard term at the internal rate (the ceiling arm
+  closes 22 % flying), and with the key light off they fall from 13.3 to 0.6 % of the
+  class a frame. Its slot pose was
+  withdrawn and not run. The follow-on plan starts from clips the owner judges, not from
+  that table.
+- **Readings in Context that do not carry their figures.** The rigs behind them stepped
+  the bake queue in frames that were not read back, with no device wait, so a count of
+  frames there is not a measure of baking (`docs/plans/logs/0100.md`, "The close review").
+  *Bake state unknown at the read:* Phases 1 and 1b (the terraces and forest tables: "`face`
+  moved 0.10 %", "the ceiling arm left 51 and 92 %", `centre`'s 70 and 93 %) and Plan 0098
+  Phase 9's 2.4 to 3.9 %. The arms there differ only in the key term, which reads the
+  column map and no store, so Alternative A's rejection stands as a comparison; the
+  percentages are not figures of a baked picture. *State checked, times invalid:* "`record`
+  lands 13 to 19 s after a fresh start on the rig" (Phases 5 and 6) is the rig's artefact
+  and is not a figure for the fly-through; Phase 3's held and landed states were checked
+  against the store, its frames to land were not a measure. *Not affected:* the premise's
+  counts (CPU, the world's voxels and the column map), the pass times (the `flythrough`
+  binary), the record's leak (read after the queue reported the view drained), Phase 2's
+  and Phase 9's tests. No part of the Decision rests on an affected figure: nothing was
+  made a default.
+- **Unexplained and carried:** at W1's pose 1 404 to 1 906 lighting pixels read darker on
+  the GPU than the CPU port of the horizon, under `march` and `walk` alike, most on coarse
+  blocks; the follow-on plan's first store-reading rig checks it.
+- **The file's name** keeps the first title, so the links to it hold.

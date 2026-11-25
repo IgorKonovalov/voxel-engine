@@ -1,26 +1,26 @@
 # 0100: A sun fixed in the world: the key shadow a face at a time, the coarse tier held still, and sun under cover
 
-> **Status:** in-progress (approved by the owner 2026-11-24; his answers to the five questions are under "Risks & open questions"). Drafted 2026-11-23 overnight with no interview:
+> **Status:** done, closed 2026-11-25, v0.75.0: **the wobble this plan was written to remove is still there, and no reading of this plan shows it**; the plan closes on Phase 9 alone, with no default changed on any profile but the bake's key ray at its cap (Phase 2). The fresh close review found no blocker and no major (section "The close (2026-11-25, architect)"); ADR-0084 accepted with an Outcome. The wobble goes to the follow-on plan (`docs/backlog.md`, "The sun's term at small faces"; its Phases F1 to F4 are written in the last amendment). Before the close it read: in-progress (approved by the owner 2026-11-24; his answers to the five questions are under "Risks & open questions"). Drafted 2026-11-23 overnight with no interview:
 > the guesses and the open questions are under "Risks & open questions", each with a
 > recommended option. **Order:** its lane starts when Plan 0098 has merged (its base is the
 > calm defaults and Phase 14's dig); it runs **beside Plan 0099** (owner, 2026-11-23), which
 > owns `crates/svet-render/src/bake/queue/`; where the two meet is under "Risks".
 > **Created:** 2026-11-23
-> **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
-> **Related ADRs:** [ADR-0084](../adrs/0084-the-key-lights-visibility-on-a-world-face-is-fixed-per-face-the-columns-horizon-where-lit-a-cover-source-where-shadowed.md)
+> **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../../roadmap.md)
+> **Related ADRs:** [ADR-0084](../../adrs/0084-the-key-lights-visibility-on-a-world-face-is-fixed-per-face-the-columns-horizon-where-lit-a-cover-source-where-shadowed.md)
 > (proposed with this plan; at acceptance it supersedes two clauses of
-> [ADR-0079](../adrs/0079-the-key-lights-visibility-is-read-with-no-screen-history-the-record-or-the-column-maps-horizon-at-the-far-a-deterministic-penumbra-near.md)),
-> [ADR-0082](../adrs/0082-the-light-pass-keeps-no-screen-history-by-default-and-reads-smooth-sources-to-the-mid-range.md)
+> [ADR-0079](../../adrs/0079-the-key-lights-visibility-is-read-with-no-screen-history-the-record-or-the-column-maps-horizon-at-the-far-a-deterministic-penumbra-near.md)),
+> [ADR-0082](../../adrs/0082-the-light-pass-keeps-no-screen-history-by-default-and-reads-smooth-sources-to-the-mid-range.md)
 > (the calm defaults this builds on),
-> [ADR-0076](../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
+> [ADR-0076](../../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
 > (rules 2, 3 and 6),
-> [ADR-0080](../adrs/0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md)
+> [ADR-0080](../../adrs/0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md)
 > (the coarse tier),
-> [ADR-0055](../adrs/0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md)
+> [ADR-0055](../../adrs/0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md)
 > (the settings rows)
-> **Source:** [Plan 0098](done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md)'s
+> **Source:** [Plan 0098](0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md)'s
 > window W3 (2026-11-23) and its "Amendment at W3", which outlines this plan; the owner's
-> words are in [`logs/0098.md`](logs/0098.md) ("Phase 10: W3's verdicts"), the stills in that
+> words are in [`logs/0098.md`](../logs/0098.md) ("Phase 10: W3's verdicts"), the stills in that
 > lane's untracked `live/window98c/`.
 
 ## TL;DR
@@ -557,19 +557,19 @@ says otherwise; 3, 4 and 5, the recommended options.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The key shadow at the face's centre | dev | built; the stop rule holds (neither arm closes half the distance at a still camera at either pose); readings in [`logs/0100.md`](logs/0100.md) | `569bb5f4` |
-| 1b: The split of "none", the key shadow at the pixel's centre | dev | built (`centre`); `key_filter` not built by step 1's rule; the restated stop rule holds (no arm, `calm,full,nofilter` included, closes half the distance in every judged bin); readings in [`logs/0100.md`](logs/0100.md) | committed with this row |
+| 1: The key shadow at the face's centre | dev | built; the stop rule holds (neither arm closes half the distance at a still camera at either pose); readings in [`logs/0100.md`](../logs/0100.md) | `569bb5f4` |
+| 1b: The split of "none", the key shadow at the pixel's centre | dev | built (`centre`); `key_filter` not built by step 1's rule; the restated stop rule holds (no arm, `calm,full,nofilter` included, closes half the distance in every judged bin); readings in [`logs/0100.md`](../logs/0100.md) | committed with this row |
 | 2: The bake's key ray at its cap | dev | done: the closed cave's floor reads key 0 on 64 of 64, the open one 255 on 64, the slab's 64 lit before and after, the rule's 9 chunks equal the job's; no test's bytes moved | committed with this row |
-| 3: The coarse tier's wobble, a reading | dev | read; the stop rule holds (held coarse 0.01 % at weight 0 a still pair, landed 0.00 %, both adapters; what moves is the landings); readings in [`logs/0100.md`](logs/0100.md) | committed with this row |
+| 3: The coarse tier's wobble, a reading | dev | read; the stop rule holds (held coarse 0.01 % at weight 0 a still pair, landed 0.00 %, both adapters; what moves is the landings); readings in [`logs/0100.md`](../logs/0100.md) | committed with this row |
 | 4: The coarse tier held still | dev | not built: Phase 3's stop rule (the pose does not hold the fault) | |
-| 5: Sun under cover, the candidates read | dev | read; the stop rule fires (the horizon reads 1 where the reference reads under 0.5 on more faces than the ramp holds: W1's pose 1 054 against 480, the slot 146 against 62; W3's 5 against 63); readings in [`logs/0100.md`](logs/0100.md) | committed with this row |
-| 5b: The horizon walked whole, the lift's hole read | dev | step 1 read (CPU); neither stop rule fires (the levelled walk's lit reads at most 3.25 times `march`'s, w3; both lift rows read new dark at the terraces); the contact rows are question 7's figures; readings in [`logs/0100.md`](logs/0100.md); step 2 built (`lighting.key_horizon march|walk`, the three-level walk, the coarse levels in rows under the column map): the shader's `walk` is the CPU's within 2/255 on 100 % of lighting pixels at slot and w3, 99.29 % at w1 (the march's mismatch kind again, 1 404 px); RENOIR temporal +0.10 to +0.16 ms; readings in [`logs/0100.md`](logs/0100.md) | committed with this row |
-| 6: Sun under cover, the arms | dev | built (`lighting.key_cover off\|ray\|record\|ray-record`, defaults unchanged: the golden binaries 66 of 66; the settings-rows walk reads it live at `ray-record`); read at Phase 5's three poses under `march` and `walk` off the rendered frames, still and after a turn, the record's landing, the pass times; readings in [`logs/0100.md`](logs/0100.md) | `3221f224`, the readings with this row |
-| 7: The window rehearsed headless | dev | done: `live/session100.sh` (untracked draft, 17 launches) rehearsed on the RTX and the RENOIR off `live/bin7/flythrough` (`b36a5232`); no loud line on the final sheets; every launch at least 36 fps headless on its adapter; 1b moved to 1280 x 720, 3c and 4d dropped; readings in [`logs/0100.md`](logs/0100.md) | `b36a5232` (`--eye`), the readings committed with this row |
-| 8: The owner's window | human | ran 2026-11-25: no pick on the terraces, the trunks closed with no change, `ray-record` rejected, the rest in "Amended 2026-11-25 (architect, after the window)"; verdicts in [`logs/0100.md`](logs/0100.md) | |
-| 8b: The wobble in the owner's move, split by stage | dev | three poses read; ordering 1 shown only at the canopy (terraces: shadowed over sunlit; the still's pose: no sunlit pixel under `calm`), orderings 2 and 3 not shown; the canopy's rows name the hard term at the internal rate (`full` closes 22 % flying); the slot's pose (amendment) left, resume notes in [`logs/0100.md`](logs/0100.md) | committed with this row |
-| 8c: The slot's blink, a reading | dev | not started | |
-| 9: The close on what the window picked (rewritten) | dev | done under question 8 (c): no default moved, no golden re-blessed; `ray-record` and `centre` withdrawn; the penumbra under `key far column` built through `key_approach_at` (wider than item 3's one clause, which fails frame 1: disclosed in [`logs/0100.md`](logs/0100.md)); the length check an equality; tip gate 1385 passed, 1419.6 s loaded | `29d08395`, `bd222fe4`, `c5316ca7`, `52f504e7` |
+| 5: Sun under cover, the candidates read | dev | read; the stop rule fires (the horizon reads 1 where the reference reads under 0.5 on more faces than the ramp holds: W1's pose 1 054 against 480, the slot 146 against 62; W3's 5 against 63); readings in [`logs/0100.md`](../logs/0100.md) | committed with this row |
+| 5b: The horizon walked whole, the lift's hole read | dev | step 1 read (CPU); neither stop rule fires (the levelled walk's lit reads at most 3.25 times `march`'s, w3; both lift rows read new dark at the terraces); the contact rows are question 7's figures; readings in [`logs/0100.md`](../logs/0100.md); step 2 built (`lighting.key_horizon march|walk`, the three-level walk, the coarse levels in rows under the column map): the shader's `walk` is the CPU's within 2/255 on 100 % of lighting pixels at slot and w3, 99.29 % at w1 (the march's mismatch kind again, 1 404 px); RENOIR temporal +0.10 to +0.16 ms; readings in [`logs/0100.md`](../logs/0100.md) | committed with this row |
+| 6: Sun under cover, the arms | dev | built (`lighting.key_cover off\|ray\|record\|ray-record`, defaults unchanged: the golden binaries 66 of 66; the settings-rows walk reads it live at `ray-record`); read at Phase 5's three poses under `march` and `walk` off the rendered frames, still and after a turn, the record's landing, the pass times; readings in [`logs/0100.md`](../logs/0100.md) | `3221f224`, the readings with this row |
+| 7: The window rehearsed headless | dev | done: `live/session100.sh` (untracked draft, 17 launches) rehearsed on the RTX and the RENOIR off `live/bin7/flythrough` (`b36a5232`); no loud line on the final sheets; every launch at least 36 fps headless on its adapter; 1b moved to 1280 x 720, 3c and 4d dropped; readings in [`logs/0100.md`](../logs/0100.md) | `b36a5232` (`--eye`), the readings committed with this row |
+| 8: The owner's window | human | ran 2026-11-25: no pick on the terraces, the trunks closed with no change, `ray-record` rejected, the rest in "Amended 2026-11-25 (architect, after the window)"; verdicts in [`logs/0100.md`](../logs/0100.md) | |
+| 8b: The wobble in the owner's move, split by stage | dev | three poses read; ordering 1 shown only at the canopy (terraces: shadowed over sunlit; the still's pose: no sunlit pixel under `calm`), orderings 2 and 3 not shown; the canopy's rows name the hard term at the internal rate (`full` closes 22 % flying); the slot's pose withdrawn, not run ("Amended 2026-11-25 (architect, Phase 8b did not reproduce the window)"; row marked by the architect at the close); readings in [`logs/0100.md`](../logs/0100.md) | `e78005f3` |
+| 8c: The slot's blink, a reading | dev | replaced by Phase 8b's slot pose (the owner's answer to question 9), which was then withdrawn: not run (row marked by the architect at the close) | |
+| 9: The close on what the window picked (rewritten) | dev | done under question 8 (c): no default moved, no golden re-blessed; `ray-record` and `centre` withdrawn; the penumbra under `key far column` built through `key_approach_at` (wider than item 3's one clause, which fails frame 1: disclosed in [`logs/0100.md`](../logs/0100.md)); the length check an equality; tip gate 1385 passed, 1419.6 s loaded | `29d08395`, `bd222fe4`, `c5316ca7`, `52f504e7` |
 
 ### Notes
 
@@ -673,11 +673,24 @@ each. Empty is fine.)_
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+_Filled by the architect at the close (the dev left the template)._
+
+- **What shipped:** three settings, off by default, and one fix (the bake's key ray at its
+  cap). No default picture changed.
+- **Public API changed (`svet-render`):** `KeyAt`, `KeyHorizon`, `KeyCover`;
+  `Lighting::{key_at, key_horizon, key_cover}` and their settings rows (`Live`; every
+  profile `hit`, `march`, `off`); `COLUMN_BLOCK`, `COLUMN_BLOCKS`, `column_coarse_texel`,
+  `GpuWorld::{column_tiles, column_top_max, column_coarse_bytes}`; `KEY_HORIZON_WGSL`,
+  `KEY_WALK_WGSL`; the column map texture holds its coarse levels in rows under the map;
+  `Params::column_top` in a pad word; `Params::lighting2` bits 1, 2, 4, 5, 6 (bit 3 free).
+  The fly-through: `--key-at`, `--key-horizon`, `--key-cover`, `--eye`, three debug rows.
+- **Budget readings:** no frame-budget row moved. Memory: the coarse rows, 182 784 B at a
+  window of side 51, 104 832 B at 39, arithmetic (`docs/nfr/03-memory.md`). The forest's
+  drain after Phase 2 (RTX, loaded 12.32): in view 42.9 s, against Plan 0096's quiet 36.5.
+- **Gate at the tip:** the lane's, at `c5316ca7`: 1385 passed, 239 skipped, 1419.6 s at
+  load 29.9 (loaded, over section 7's line); clippy, fmt, deny, the `sole` walk, the check
+  scripts clean. Not repeated by the review ("The close" below says what it ran).
+- **Outstanding `human` phases:** none.
 
 ## Followups
 
@@ -687,7 +700,7 @@ _(Empty at draft time.)_
 
 Phase 1 met its stop rule. By the house rule (owner, 2026-11-24) this is a reading of what the
 mechanism waits on and what the bar measures, not a further variant. The long form, with file
-and line, is in [`logs/0100.md`](logs/0100.md), "The architect's code reading after Phase 1's
+and line, is in [`logs/0100.md`](../logs/0100.md), "The architect's code reading after Phase 1's
 stop". Nothing was run; each expectation is a guess until Phase 1b reads it.
 
 **Findings.**
@@ -804,7 +817,7 @@ holds the terraces' shadow still. What then?
 Phase 5 met its stop rule: the horizon reads lit where the reference reads shadow on more
 faces than its ramp holds, at W1's pose and at the slot. This is a reading of the code the
 tables stand on, with nothing run; the long form, with file and line, is in
-[`logs/0100.md`](logs/0100.md), "The architect's code reading after Phase 5's stop".
+[`logs/0100.md`](../logs/0100.md), "The architect's code reading after Phase 5's stop".
 ADR-0084 is amended with it (it is proposed, not accepted).
 
 **Findings.**
@@ -943,7 +956,7 @@ plan removes it.** The plan stops building variants: two readings with no produc
 (Phases 8b and 8c), then a close on what the window picked (Phase 9, rewritten below). The
 wobble and the missing near shadow go to a follow-on plan the architect drafts from Phase
 8b's table. The owner's words, verbatim, and the code reading behind every line here are in
-[`logs/0100.md`](logs/0100.md), "Phase 8: The owner's window" and "The architect's code
+[`logs/0100.md`](../logs/0100.md), "Phase 8: The owner's window" and "The architect's code
 reading after the window". Nothing was run for this amendment.
 
 ### What the window said, by subject
@@ -1334,7 +1347,7 @@ The slot's pose is not run. Plan 0100 closes on Phase 9 alone, and the wobble go
 follow-on plan, whose first phases are written here: a clip of the owner's move that he
 watches and answers "yes, that is it, there" or "no", and only then a measure, built on the
 frames he judged.** Nothing was run for this section. The table and the dev's cautions are in
-[`logs/0100.md`](logs/0100.md), "Phase 8b"; the rig is
+[`logs/0100.md`](../logs/0100.md), "Phase 8b"; the rig is
 `apps/flythrough/tests/gpu_wobble/owner_move.rs`; the stills cited are under the lane's
 untracked `live/p8b/stills/`.
 
@@ -1558,3 +1571,107 @@ the gate; no gpu tier a step).
 
 No question waits on him before Phase 9 or the close. The viewing step is the ask, when the
 follow-on plan reaches it.
+
+## The close (2026-11-25, architect)
+
+A fresh session that wrote none of the code. **Verdict: clean; no blocker and no major.**
+
+**The wobble this plan was written to remove is still there, and no reading of this plan
+shows it.** The owner saw it at the window under the defaults and under every arm, on the
+sunlit parts, worse with no upscaler. No arm of this plan removes it; Phase 8b's measure (a
+pixel flipping by over 4 levels and back in two frames) did not reproduce what he saw (two
+of his three orderings came out reversed or flat), its slot pose is withdrawn and Phase 8c
+was not run. So the plan closes on Phase 9 alone. **No default changed on any profile; the
+one change every build takes is Phase 2's: a baked key ray that ends under its column's top
+is not lit** (superseding that clause of ADR-0079). `lighting.key_cover ray` and `record`,
+`lighting.key_at face` and `face-smooth`, and `lighting.key_horizon walk` stay settings,
+off; `ray-record` and `centre` are withdrawn; under `key far column` no key ray is cast at
+a cube face for the penumbra. The other two subjects: the near trunks under coarse light
+closed with no change (no fault read, none seen at the window); sun under cover is not a
+default (question 8, (c)). The wobble, the tunnel slot's shimmer, the near shadow's hole
+and sun under cover as a default go to the follow-on plan (`docs/backlog.md`, "The sun's
+term at small faces"), which starts at Phases F1 to F4 above: clips the owner watches
+first, a measure only after it ranks what he ranked.
+
+### What the review checked
+
+- **Phase 2** (the only default-behaviour change): `bake.wgsl`'s key ray reads
+  `sky_ray_open`. `gpu_bake_rule`'s `a_key_ray_that_ends_in_air_under_a_roof_is_not_lit`
+  asserts key 0 on 64 of 64 floor faces under the roof, 255 on 64 with none, and the rule's
+  chunks equal to the job's; it read 255 on 64 before the change, so it bites. It is
+  soak-marked (18.6 to 19.7 s), as the phase allowed: **the gate holds no test that fails
+  if the clause is reverted** (the slab test passes before and after by design). Minor; a
+  gate-sized rig goes to the backlog beside Plan 0101, which works in that file.
+- **Phase 9's deviation** (`bd222fe4`, `key_approach_at` read in four places) is what
+  ADR-0084's point says: no key ray at a cube face for the penumbra under `key far column`,
+  light history on or off; entities, field surfaces and the other `key far` modes keep the
+  approach ray. With `penumbra disc` (the default) the function is false as the flag was
+  clear, so no default image moves (the goldens passed unchanged in the lane's gate).
+  `gpu_sun`'s `the_approach_penumbra_under_the_column_scores_the_cover_ray_alone` asserts
+  the direct target's f16 equal under `approach` and `disc` at every floor pixel on frames
+  1, 2 and 3 with `key cover off`, equal where the horizon reads 1 under `ray`, and
+  different at some pixel under cover (128 on frame 3): a real claim, and the dev's bite
+  check at three states is in the log. It read 8.8 s in a gate at load 29.9 (6.5 s alone at
+  load 25); the quiet re-read of the gate says whether it stays under the 10 s line.
+- **The length check** (`c5316ca7`): an equality from `column_coarse_texel`, at every read
+  of both column-map tests.
+- **The withdrawn names** are in no source, shader, table, menu, help or doc; the CLI and
+  `from_name` tests refuse them. The three settings that stay are `RenderSettings` rows
+  with a class and a value a profile, named on the lighting row and the banner off their
+  defaults, cycled by the debug page, and covered by the settings-rows walk
+  (`lighting.key_cover` at `record`). **Nit:** no comment says `Params::lighting2` bit 3 is
+  free; the follow-on plan edits those constants and says it there.
+- **Layering and the rules:** GPU code in `svet-render` only; nothing in `svet-world`; no
+  new allocation in the frame path; the walk's reads are bounded by the map's size; ADR-0076's
+  two statements are in ADR-0084 (no history for the horizon and the ray, the store for the
+  record, the key slot's fade at a landing and a re-key).
+- **Run by the review** on the tree with main `9cb89141` merged: `cargo build`, `cargo fmt
+  --all --check`, `node scripts/test-changed.mjs --profile quick --since main` (572 run,
+  572 passed, 24 skipped, 14.8 s), `node --test "scripts/*.test.mjs"`, and the doc gates
+  (links, comment hygiene, index rows and its self-test, plan size, file size, test
+  tiers), each exit 0. The gate tier was not repeated: since the lane's run the tree gained
+  one comment-only commit, docs, and a merge of main with no engine code.
+
+### The readings taken with no device wait (the lane's flag)
+
+Phase 8b's dev found that the earlier rigs step the live queue in frames that are not read
+back, with no device wait; the queue's own poll does not block, so on a fast adapter the
+frames outrun the bake and most steps find the submits in flight. The review read each rig
+(`apps/flythrough/tests/gpu_wobble/`); the long form is in [`logs/0100.md`](../logs/0100.md),
+"The close review: the readings taken with no device wait".
+
+- **Bake state unknown (likely largely unbaked):** the terraces rig and the wobble rig's
+  forest rows, which settle 600 or 120 unread frames at the rig's knobs and check nothing:
+  Phase 1's and Phase 1b's tables, Phase 5b step 2's terraces row. The arms there differ
+  only in the key term, which is the column map's and reads no store, so "no point the
+  horizon is read at closes the distance" stands as a comparison; its percentages are not
+  figures of a baked picture.
+- **The state checked, the frame counts and seconds invalid:** Phase 3 (held and landed by
+  a census of the store), Phase 5 and Phase 6 (the loop ends when the queue reports the
+  view drained or every key-lit pixel holds a fresh word). Their image readings stand.
+  "Lands 13 to 19 s after a fresh start", Phase 3's "not landed in N frames" rows and its
+  partial landed rows are the rig's artefact.
+- **Not affected:** Phase 2's tests and Phase 9's (rigs that wait or step no queue), the
+  CPU readings of Phases 5 and 5b, every reading off the `flythrough` binary (the pass
+  times, Phase 2's drain, Phase 7's rehearsal), Phase 8b's fixed rig.
+- **Nothing that ships leans on an affected reading.** Phase 2's clause rests on its own
+  test and Plan 0096 Phase 10c; Phase 9's on its tests; no default was picked from any
+  table. The affected readings informed arms that were rejected (`face`, `face-smooth` and
+  `centre` as the wobble's remedy; `coarse hold`) or deferred (`record`'s landing time);
+  ADR-0084's Outcome names them.
+
+### Dispositions
+
+- **About 1 400 to 1 900 lighting pixels darker on the GPU than the CPU port at W1**
+  (Phases 5 and 5b): not explained; every one is the GPU under the port, most on coarse
+  blocks at 128 to 512 voxels. It touches no shipped claim (a reading rig's port). To the
+  follow-on plan's entry, as a thing its first store-reading rig checks.
+- **The gate's wall time:** 1419.6 s at load 29.9 against the 19 min line; the last quiet
+  readings are 868 to 894 s (Plan 0102). Not attributed to this plan (four tests added,
+  one of them GPU). A quiet re-read is owed and is in the backlog.
+- **`docs/plans/logs/0100.md`:** the slot pose's resume notes are removed and its rows
+  marked by the architect, as the last amendment asked of the dev.
+- **ADR-0084's file name** keeps its first title, so every link holds; its title line is
+  the decision.
+- **Velocity** (`scripts/velocity.mjs`): the last 14 days 1036 commits over 15 active days,
+  32 plans closed; 2.00 times the window before. No finding.
