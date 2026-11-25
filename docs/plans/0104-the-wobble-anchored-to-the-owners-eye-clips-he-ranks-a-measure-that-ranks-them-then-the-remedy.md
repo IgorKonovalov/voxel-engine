@@ -495,7 +495,7 @@ his 2026-11-12 rule that cheap unpicked modes stay settings, for these settings)
 |---|---|---|---|
 | 0: the wobble rigs read a baked store | dev | not started | |
 | 1: the owner's move as clips | dev | done: six files under `live/anchor/`, readings in [`logs/0104.md`](logs/0104.md) | this commit |
-| 2: the owner watches the clips | human | not started | |
+| 2: the owner watches the clips | human | done: T, C, S anchored; T and C orders confirmed blind; answers in [`logs/0104.md`](logs/0104.md) | this commit |
 | 3: the owner's own flight, recorded and rendered again (only for a subject not shown) | dev | not started | |
 | 4: a measure that ranks what the owner ranked | dev | not started | |
 | the stop: the architect's amendment (the remedy phases) | - | not written | |
