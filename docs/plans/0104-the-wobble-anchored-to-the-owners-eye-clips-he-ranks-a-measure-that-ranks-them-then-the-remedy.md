@@ -530,6 +530,48 @@ rules.
   and candidate the lines (a) and (b) as **holds** or **fails** at that artifact's
   subjects; every run's projection and wall time beside its figures.
 
+### Phase 0b, ruled after its readings (architect, 2026-11-25, late)
+
+From the log's "Phase 0b"; no run stands behind this note. Phase 0b is accepted: both time
+bars are met (113 to 146 s on the RTX, 250 to 255 s on lavapipe quiet).
+
+- **Lever 2 is kept.** The check as written above ("the census equals Phase 0's 60/60 with
+  54 coarse") was the wrong instrument, and the dev was right not to withdraw on it. The
+  census counts the distinct chunks under the lighting pixels' hits of the settle's last
+  frame: it is a property of that frame, not of the store. From one eye and equal samples
+  it reads 59, 60 or 61 on the RTX with the lever and without it, and Phase 0's own arms
+  read 59 to 61. A chunk that enters or leaves the count by one is a chunk a few pixels
+  touch in one frame and not in another; lever 2 changes the frame the settle ends on (1 392
+  against 3 618 on lavapipe), which is enough to move it. That the cause is the jitter's
+  phase is the dev's guess and stays a guess.
+- **What the readings do show:** the samples drawn are equal to the sample with and without
+  the lever on each adapter (346 782 647 and 236 349 415), every census is whole, and the
+  rest figures agree (RTX within 1 point; lavapipe 8.99 against 8.98 and 8.30 against 8.31).
+  Equal samples from one eye under one set of knobs means the same jobs at the same tiers
+  were drawn; it does not by itself show the same records were stored.
+- **The check, restated.** "The same store" is a tally over the store, not over a frame:
+  every chunk of the rig's world, settled or not, coarse or full, at the settle's end; with
+  the samples drawn. Two settles bake the same store when the tallies and the samples are
+  equal. The census in view stays what it was written for: the gate that a reading's own
+  picture is baked (whole or NOT WHOLE), with no figure compared across runs.
+- **One reading owed, not blocking** (for Phase 4's agent, at a moment the lock is free):
+  the store's tally in the settle's end line, and the forest test's settle on lavapipe at
+  the half frame with lever 2 and without it (about 141 s and 338 s; lavapipe repeats to
+  the sample, the RTX does not). Equal tallies close the 58 against 59. Unequal tallies are
+  reported with the chunks that differ, lever 2 is withdrawn from the shared settle, and
+  the architect is called: the test then reads 443 s on lavapipe, still under its bar.
+- **The further cut (lifting the drain's line slice during the settle): no.** It would take
+  most of lavapipe's remaining 141 s, but the bar is met with a wide margin, the drain is
+  also what the settle's own end condition reads, and each change to the shared settle
+  needs the equality check above, which has no instrument until the tally exists. It is
+  not owed; it may be asked for again if the weekly soak's time becomes a complaint.
+- **The far +30 constants are confirmed:** 5.52 and 4.88 at 1080p, 8.99 and 8.30 at the
+  half frame, each plus 2 at the assert. They follow the rule as written (the largest of
+  three readings). Two more RTX readings at fly 180 lie above 5.52 (5.71 the verifying run,
+  5.81 without lever 2): the spread over five runs is 5.44 to 5.81, inside the 2 points the
+  rule adds for it, so the constant is not moved to follow them. The half frame reads
+  higher than 1080p (8.99 against about 5.5), which is why the bar is a constant a size.
+
 ### Question for the owner (added)
 
 4. **After Phase 4, does a remedy follow?** You called the defaults "almost good, esp Tb".
