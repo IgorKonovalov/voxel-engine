@@ -151,7 +151,10 @@ fn tree_shadow_bar(size: [u32; 2], tolerance: f64) {
 /// whole, the store baked whole): the near-eye baked visibility's mean per face is under 0.001 in
 /// every direction, and at both sky-ray counts the stored and direct parts' mean luminance at
 /// exposure 1 are under 0.02 in the six views, with the surface reference's within 5 % of
-/// 149.7 and 1345 (its reading at the diagnosis, `2fe4598c`).
+/// 157.49 and 1345. The stored reference is the reading under the default smoothed sky normal
+/// (`SkyNormal::Smoothed`, Plan 0086 Phase 17), the same at `ceb9dd0e`, at Plan 0086's merge and
+/// at `db9c170a` on lavapipe, at both sky-ray counts; under `SkyNormal::Face` it reads 149.68,
+/// the diagnosis's 149.7 (`2fe4598c`). The direct reference is the diagnosis's.
 #[test]
 #[ignore = "soak"]
 fn the_underground_eye_reads_no_sky() {
@@ -165,7 +168,7 @@ fn the_underground_eye_reads_no_sky() {
         if name == "surface ref" {
             if *rays == 1 {
                 assert!(
-                    (stored / 149.7 - 1.0).abs() <= 0.05,
+                    (stored / 157.49 - 1.0).abs() <= 0.05,
                     "surface stored {stored}"
                 );
                 assert!(
