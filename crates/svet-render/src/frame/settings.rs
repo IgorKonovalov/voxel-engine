@@ -303,6 +303,9 @@ pub(crate) const LIGHTING2_KEY_AT_FACE: u32 = 1 << 1;
 /// blend of the four face centres of its plane nearest the hit.
 pub(crate) const LIGHTING2_KEY_AT_SMOOTH: u32 = 1 << 2;
 
+// `Params::lighting2` bit 3 (`1 << 3`) is free: no setting sets it and no shader reads it (the
+// key light's `centre` arm held it; Plan 0100 Phase 9).
+
 /// `Params::lighting2` bit ([`KeyHorizon::Walk`]): the key light's column horizon walks every
 /// map cell to the window's side over the coarse levels, not the march.
 pub(crate) const LIGHTING2_KEY_WALK: u32 = 1 << 4;

@@ -242,26 +242,9 @@ fn subject_pose(subject: &str) -> (Pose, Camera) {
 }
 
 /// One queue step at `cam` as the fly-through steps it: the view's frustum and focal length,
-/// the frame step's interval.
+/// the frame step's interval, after a device wait ([`support::baked::queue_step_at`]).
 fn step_queue(rig: &mut Rig, f: &mut Frame, cam: &Camera) -> svet_render::QueueStats {
-    let size = f.output_size();
-    let aspect = size[0] as f32 / size[1] as f32;
-    let view = svet_render::QueueView {
-        eye: cam.position.to_array(),
-        forward: cam.basis().0.to_array(),
-        resident: None,
-        samples: None,
-        interval_s: 1.0 / f64::from(HZ),
-        hold: None,
-        half_angle: svet_render::internals::view_half_angle(cam.vfov, aspect),
-        frustum: Some(svet_render::internals::view_half_angles(cam.vfov, aspect)),
-        full_radius: None,
-        lod_radius: None,
-        focal_px: Some(svet_render::Bands::focal_px(size[1], cam.vfov)),
-    };
-    f.bake_queue_step(&rig.device, &rig.queue, &mut rig.gpu, &rig.world, &view)
-        .expect("the queue runs")
-        .expect("the queue's step")
+    support::baked::queue_step_at(rig, f, cam, 1.0 / f64::from(HZ))
 }
 
 /// One frame at `cam`: the queue's step, the frame, a wait on the device.
@@ -274,33 +257,11 @@ fn frame_at(rig: &mut Rig, s: &mut Stepper, cam: &Camera) -> svet_render::QueueS
     q
 }
 
-/// The census: the distinct chunks the lighting pixels' hits lie in, and of them those that hold
-/// their block at their tier's count with nothing pending (`BakeQueue::settled`), and those whose
-/// block is the coarse pass.
+/// The census ([`support::baked::census`]): chunks settled, chunks the lighting pixels' hits lie
+/// in, coarse blocks among them.
 fn census(rig: &Rig, f: &Frame, cam: &Camera) -> (usize, usize, usize) {
-    let hits = svet_render::debug::read_rgba32f(&rig.device, &rig.queue, f.light_hit_positions());
-    let eye = cam.position.to_array();
-    let mut chunks = std::collections::HashSet::new();
-    for h in &hits {
-        if h[3] >= 1e30 || !h[3].is_finite() {
-            continue;
-        }
-        let d = [h[0] - eye[0], h[1] - eye[1], h[2] - eye[2]];
-        let t = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt().max(1e-3);
-        let v = [0, 1, 2].map(|k| (h[k] + 0.01 * d[k] / t).floor() as i32);
-        chunks.insert(v.map(|x| x.div_euclid(svet_world::CHUNK_EDGE)));
-    }
-    let q = f.bake_queue().expect("the queue runs");
-    let store = f.store();
-    let settled = chunks
-        .iter()
-        .filter(|&&c| q.settled(store, svet_world::ChunkCoord(c), false))
-        .count();
-    let coarse = chunks
-        .iter()
-        .filter(|&&c| store.is_coarse(svet_world::ChunkCoord(c)))
-        .count();
-    (settled, chunks.len(), coarse)
+    let c = support::baked::census(rig, f, cam);
+    (c.settled, c.chunks, c.coarse)
 }
 
 /// The shares of all lighting pixels: sunlit ground, sunlit leaf, shadowed (any material).

@@ -13,6 +13,48 @@ pub(super) struct Mismatch {
     pub nf: [f32; 3],
     pub gpu: f32,
     pub cpu: f32,
+    /// The key slot's source (`support::defects::key_slot`: 0 the mean, 1 a record, 2 the
+    /// horizon, 3 a landing's fade, 4 none).
+    pub src: usize,
+}
+
+/// The column map's cell edge, in voxels (`support::cover`'s `COLUMN_CELL`).
+const MAP_CELL: f32 = 2.0;
+
+/// The map cell that decides the horizon at `p` on a face of normal `n` toward the key light
+/// `l`, as a distance bin: the point lifted by `SEED_LIFT` along the face's normal, "own cell"
+/// where its own column tops it, else the cell of the steepest elevation over the lifted point
+/// walked in half-cell steps along the sun's azimuth to 512 voxels, binned by its distance;
+/// "none above" where no cell rises over the point.
+fn decider(cols: &Columns, p: [f32; 3], n: [f32; 3], l: [f32; 3]) -> &'static str {
+    let q = [0, 1, 2].map(|k| p[k] + n[k] * support::cover::SEED_LIFT);
+    let cell = |x: f32, y: f32| [(x / MAP_CELL).floor() as i32, (y / MAP_CELL).floor() as i32];
+    let own = cols.cell_height(cell(q[0], q[1]));
+    if own < 1.0e38 && own > q[2] {
+        return "own cell";
+    }
+    let flat = (l[0] * l[0] + l[1] * l[1]).sqrt().max(1.0e-6);
+    let u = [l[0] / flat, l[1] / flat];
+    let (mut best, mut at) = (0.0f32, None);
+    let mut t = MAP_CELL * 0.5;
+    while t <= 512.0 {
+        let h = cols.cell_height(cell(q[0] + u[0] * t, q[1] + u[1] * t));
+        if h > 1.0e38 {
+            break;
+        }
+        let e = (h - q[2]) / t;
+        if e > best {
+            (best, at) = (e, Some(t));
+        }
+        t += MAP_CELL * 0.5;
+    }
+    match at {
+        None => "none above",
+        Some(t) if t < 8.0 => "t 0..8",
+        Some(t) if t < 32.0 => "t 8..32",
+        Some(t) if t < 128.0 => "t 32..128",
+        Some(_) => "t 128..512",
+    }
 }
 
 pub(super) struct Input<'a> {
@@ -255,6 +297,20 @@ pub(super) fn read(i: &Input<'_>) -> (String, usize) {
                 }
             ),
             format!("gpu {} cpu", if m.gpu > m.cpu { "over" } else { "under" }),
+            format!(
+                "slot {}",
+                ["mean", "record", "horizon", "fade", "none"][m.src.min(4)]
+            ),
+            format!("decider {}", decider(i.cols, m.p, m.nf, i.l)),
+            format!(
+                "slot {} on a {} block",
+                ["mean", "record", "horizon", "fade", "none"][m.src.min(4)],
+                if i.coarse.contains(&v.map(|x| x >> 6)) {
+                    "coarse"
+                } else {
+                    "full"
+                }
+            ),
         ] {
             *by.entry(key).or_default() += 1;
         }

@@ -373,6 +373,9 @@ mod reading {
             "the key words in view: half at {:?}, 90 % at {:?}, 99 % at {:?} (frame, s since the first frame)\n",
             firsts[0], firsts[1], firsts[2]
         ));
+        // The shared settle on from there, so the read is of a whole census.
+        let st = support::baked::settle(rig, &mut s.frame, &cam, 0, "cover settle");
+        out.push_str(&format!("{}\n", st.line()));
         // The read: exposure pinned, the queue stopped.
         let st = svet_render::debug::read_buffer(
             &rig.device,
@@ -444,7 +447,7 @@ mod reading {
             if nf[0] * l[0] + nf[1] * l[1] + nf[2] * l[2] <= 0.0 {
                 continue;
             }
-            let gpu = support::defects::key_slot(pair[g][1]).0;
+            let (gpu, src) = support::defects::key_slot(pair[g][1]);
             let cpu = if walk {
                 cols.horizon_exact(p, nf, l, radius)
             } else {
@@ -453,7 +456,13 @@ mod reading {
             checked += 1;
             agree += usize::from((gpu - cpu).abs() <= 2.0 / 255.0);
             if (gpu - cpu).abs() > 2.0 / 255.0 {
-                mismatches.push(walked::Mismatch { p, nf, gpu, cpu });
+                mismatches.push(walked::Mismatch {
+                    p,
+                    nf,
+                    gpu,
+                    cpu,
+                    src,
+                });
             }
         }
         out.push_str(&format!(

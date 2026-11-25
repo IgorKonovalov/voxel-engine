@@ -4,8 +4,9 @@
 //! "far-baked" class) beside all far ones, and the far's key source per frame (the record, the
 //! column map's horizon, a landing's fade, the ray). Nothing is asserted: a reading in `mod
 //! reading`. The protocol (Plan 0095 Phase 4): no pre-roll drain (the queue steps at the
-//! fly-through's budget from the first frame), 120 settle frames, a still strip of 33, a fly of
-//! 180 at 1 m/s, a stop held 300, a 60-degree turn over 40, a hold of 300; `drain=N` is the
+//! fly-through's budget from the first frame), 120 settle frames read, then the shared settle
+//! (`support::baked`: a device wait every frame, the fly-through's bake knobs and view) until
+//! the store's census is whole, a still strip of 33, a fly of 180 at 1 m/s, a stop held 300, a 60-degree turn over 40, a hold of 300; `drain=N` is the
 //! drained control.
 //! `SVET_WOBBLE` names the arm (see `Arm::parse`), `SVET_TEST_ADAPTER` the adapter. Frames and
 //! maps go under `live/wobble/<arm>/`.
@@ -38,9 +39,11 @@ std::thread_local! {
     static QUEUE_ON: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
 }
 
+/// The live queue's step where the rig runs it ([`QUEUE_ON`]): [`support::baked::queue_step`], a
+/// device wait first and the fly-through's view.
 fn queue_step(rig: &mut Rig, f: &mut Frame, cam: &Camera) {
     if QUEUE_ON.with(std::cell::Cell::get) {
-        support::defects::queue_step(rig, f, cam);
+        support::baked::queue_step(rig, f, cam);
     }
 }
 use support::terms::Rig;
@@ -426,7 +429,7 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
         svet_render::queue_settings(),
         svet_render::DEFAULT_BAKE_SLICE_MS,
     );
-    f.set_bake_coarse(8, 2);
+    support::baked::fly_through_knobs(&mut f);
     f
 }
 
@@ -1090,7 +1093,7 @@ mod reading {
 
     /// Plan 0097 Phase 3d bar 1: the auto exposure across a stop on the wobble rig's forest
     /// (`forest_rig(8)`, the `SVET_WOBBLE` arm, `default` unset): 120 settle frames at the
-    /// spawn, a fly of `SVET_EYE_FLY` frames (20 unset) at the arm's speed, the stop held 30.
+    /// spawn and the shared settle on until the census is whole, a fly of `SVET_EYE_FLY` frames (20 unset) at the arm's speed, the stop held 30.
     /// Per frame from the fly's last to stop +29: the exposure the frame used (`previous`,
     /// log2) and its step from the frame before, the next frame's (`current`), the adapted and
     /// metered levels, the exposure's target (`key / 2^metered`), the ceiling in force and
@@ -1129,6 +1132,7 @@ mod reading {
             queue_step(rig, &mut s.frame, &cam0);
             s.run(rig, &cam0);
         }
+        support::baked::settle(rig, &mut s.frame, &cam0, 0, "eye");
         let step = arm.speed_m_s / 60.0;
         let mut cams: Vec<(String, Camera)> = (1..=fly_n)
             .map(|k| (format!("fly {k}"), moved(&cam0, step * k as f32)))
@@ -1263,6 +1267,8 @@ struct StopRead {
     far0: f64,
     far30: f64,
     depth: String,
+    /// The store's census at the settle's end ([`support::baked::Census::line`]).
+    census: String,
 }
 
 /// The rig's protocol for `arm` on `rig` from the spawn's camera `cam0`: the table's rows
@@ -1317,6 +1323,7 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
                 far0: f64::NAN,
                 far30: f64::NAN,
                 depth: depth(&s.frame),
+                census: String::new(),
             };
         }
         if let Some(ms) = arm.pre_ms {
@@ -1361,6 +1368,10 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
             q_prev = q;
             prev = Some(y);
         }
+        // The shared settle on from the read frames, until the census is whole.
+        let census = support::baked::settle(rig, &mut s.frame, &cam0, 0, "  settle")
+            .census
+            .line();
         let fresh_ms: Vec<String> = svet_render::FRAME_PASSES
             .iter()
             .zip(&fresh)
@@ -1463,6 +1474,7 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
                 far0,
                 far30,
                 depth: depth(&s.frame),
+                census: census.clone(),
             };
             support::write_png(&dir.join("stop-final.png"), &shot.display, OUT[0], OUT[1]);
         }
@@ -1530,8 +1542,8 @@ const REST_NEAR_PAIR: f64 = 2.5;
 
 /// Plan 0098 Phase 4's bars as ruled at its findings (ADR-0082): the rig's protocol
 /// ([`wobble_on`]) on the forest (`r` 8) at 1080p through FSR 2 at 1.5, no drain, the exposure
-/// pinned after the settle, the defaults with no token (the five picks), at the fly of 180
-/// frames and of 20. Asserted at rest only, with the queue stopped after the settle
+/// pinned after the settle (its 120 read frames, then the shared settle until the census is
+/// whole), the defaults with no token (the five picks), at the fly of 180 frames and of 20. Asserted at rest only, with the queue stopped after the settle
 /// (`default,pin,nqueue`), where nothing lands and the exposure takes no step: no frame pair
 /// of the stop moves more than [`REST_NEAR_PAIR`] of the near pixels over 4 levels, the near
 /// from the stop's first frame to its last moves at most [`REST_NEAR0`], and the far 30 frames
@@ -1560,17 +1572,20 @@ fn the_defaults_hold_still_at_rest_and_the_far_holds() {
         let picks = read("default,pin");
         let native = read("default,pin,native");
         println!(
-            "fly {fly} on {}: at rest the largest stop near pair {:.2} % (bar {REST_NEAR_PAIR}), stop +0 near {:.2} % (bar {REST_NEAR0}), far +30 {:.2} % against {bar:.2} % + 2 (far +0 {:.2} %, {}); stepping (printed): far +30 {:.2} %, far +0 {:.2} %, the largest near pair {:.2} %, {}; native (printed): far +30 {:.2} %, far +0 {:.2} %, {}",
+            "fly {fly} on {}: at rest ({}) the largest stop near pair {:.2} % (bar {REST_NEAR_PAIR}), stop +0 near {:.2} % (bar {REST_NEAR0}), far +30 {:.2} % against {bar:.2} % + 2 (far +0 {:.2} %, {}); stepping ({}, printed): far +30 {:.2} %, far +0 {:.2} %, the largest near pair {:.2} %, {}; native ({}, printed): far +30 {:.2} %, far +0 {:.2} %, {}",
             rig.adapter,
+            rest.census,
             rest.near_pair,
             rest.near0,
             rest.far30,
             rest.far0,
             rest.depth,
+            picks.census,
             picks.far30,
             picks.far0,
             picks.near_pair,
             picks.depth,
+            native.census,
             native.far30,
             native.far0,
             native.depth,
@@ -1615,9 +1630,12 @@ struct Gate {
     /// The far's and near's shares of the display at the hold's end.
     far_px: f64,
     near_px: f64,
+    /// The store's census at the settle's end.
+    census: String,
 }
 
-/// The gate scene's frames: 120 settle, a still strip of 16, a fly of 20 at 1 m/s, a stop held
+/// The gate scene's frames: the shared settle (`support::baked::settle`, at least 120 frames,
+/// then until the census is whole), a still strip of 16, a fly of 20 at 1 m/s, a stop held
 /// 60, a 60-degree turn over 10, a hold of 120.
 const GATE_SETTLE: usize = 120;
 const GATE_STILL: usize = 16;
@@ -1631,9 +1649,10 @@ const GATE_HOLD: usize = 120;
 fn gate_run(rig: &mut Rig, cam0: &Camera, arm: support::wobble::Arm, frozen: bool) -> Gate {
     use support::wobble::{FAR, NEAR, depth, frame, moved, over, share, step, yawed};
     let mut f = frame(rig, arm);
-    for _ in 0..GATE_SETTLE {
-        step(rig, &mut f, cam0, true);
-    }
+    support::baked::fly_through_knobs(&mut f);
+    let census = support::baked::settle(rig, &mut f, cam0, GATE_SETTLE, arm.name())
+        .census
+        .line();
     let q = !frozen;
     let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len().max(1) as f64;
     let mut last = support::wobble::read(rig, &f, cam0);
@@ -1674,9 +1693,10 @@ fn gate_run(rig: &mut Rig, cam0: &Camera, arm: support::wobble::Arm, frozen: boo
         hold: [0, 30, 60].map(|i| over(&hold[i].luma, &end.luma, &end.class, FAR)),
         far_px: share(&end.class, FAR),
         near_px: share(&end.class, NEAR),
+        census,
     };
     println!(
-        "gate, {} on {}{}: still far {:.2} %; fly far {:.2} % near {:.2} %; stop +0 near {:.2} % far {:.2} %; hold +0 / +30 / +60 far {:.2} / {:.2} / {:.2} %; far {:.1} % of the display, near {:.1} %; {}",
+        "gate, {} on {}{} ({}): still far {:.2} %; fly far {:.2} % near {:.2} %; stop +0 near {:.2} % far {:.2} %; hold +0 / +30 / +60 far {:.2} / {:.2} / {:.2} %; far {:.1} % of the display, near {:.1} %; {}",
         arm.name(),
         rig.adapter,
         if frozen {
@@ -1684,6 +1704,7 @@ fn gate_run(rig: &mut Rig, cam0: &Camera, arm: support::wobble::Arm, frozen: boo
         } else {
             ", undrained"
         },
+        g.census,
         g.still,
         g.fly,
         g.fly_near,
@@ -1702,7 +1723,8 @@ fn gate_run(rig: &mut Rig, cam0: &Camera, arm: support::wobble::Arm, frozen: boo
 /// Plan 0095 Phase 10 bar 1 (ADR-0079, as amended 2026-11-20: the far no worse than the before):
 /// [`support::wobble`]'s scene, a 3 x 3 x 2 chunk forest of seed 1 at 320 x 180 through FSR 2
 /// at 1.5 to 480 x 270, no drain, the queue stepping at the default budget from the first frame;
-/// [`gate_run`]'s protocol (120 settle frames, a still strip of 16, a 20-frame fly at 1 m/s, a
+/// [`gate_run`]'s protocol (the shared settle from a fresh store under the fly-through's bake
+/// knobs, at least 120 frames and until the census is whole, a still strip of 16, a 20-frame fly at 1 m/s, a
 /// stop held 60, a 60-degree turn over 10 frames, a hold of 120: the hold runs past 60 frames so
 /// +60 has a final frame to read against). With the queue frozen at the settle's end, under the
 /// picks against the before (`key far ray`, `penumbra disc`) read in the same run: the far

@@ -180,6 +180,9 @@ mod reading {
             "fresh start under record: {k} frames, {:.1} s (wall, RTX-step rig, not the fly-through's drain)\n",
             t0.elapsed().as_secs_f64()
         ));
+        // The shared settle on from there, so the arms read a whole census.
+        let st = support::baked::settle(rig, &mut s.frame, &cam, 0, "cover arms settle");
+        out.push_str(&format!("{}\n", st.line()));
         // Exposure pinned, the queue stopped.
         let st = svet_render::debug::read_buffer(
             &rig.device,
