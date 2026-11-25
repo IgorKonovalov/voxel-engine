@@ -147,9 +147,11 @@ impl std::fmt::Display for Drain {
 /// edit cap, by time on the slice's own ns a sample).
 pub const DEFAULT_BAKE_EDIT_MS: f64 = 3.0;
 
-/// The live queue's ring-1 stretch ([`crate::BakeQueue::ring1_stretch`]): 1.0, the priced cap
+/// The live queue's ring-1 stretch ([`crate::BakeQueue::ring1_stretch`]): 1.5, a dig's ring 1
+/// planned whole in a submit up to one and a half times the priced cap (the owner's pick, Plan
+/// 0099 question 7 (f), on the slow adapter's drained readings of Phase 2e); 1.0 is the cap
 /// alone. A setting takes 1.0 to 2.0 ([`RING1_STRETCH_RANGE`]).
-pub const DEFAULT_RING1_STRETCH: f64 = 1.0;
+pub const DEFAULT_RING1_STRETCH: f64 = 1.5;
 
 /// Submits the live queue's steps hold unread at most on the bake thread (ADR-0083): a slot
 /// turns once in two frames at best there, issued at a frame's take and read in a later

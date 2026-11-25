@@ -393,9 +393,10 @@ fn the_flag_and_the_row_name_the_mode() {
     assert!(crate::cli::parse_args_from(argv(&["--bake-thread", "maybe"])).is_err());
 }
 
-/// `--bake-ring1-stretch 1.5` parses to the setting, and the HUD's queue row and the banner's
-/// queue row name it as `stretch 1.5`; at the default 1.0 neither holds the word; a value outside
-/// 1.0 to 2.0 is refused (Plan 0099 Phase 2e, done-when 2).
+/// `--bake-ring1-stretch 1.0` parses to the setting, and the HUD's queue row and the banner's
+/// queue row name it as `stretch 1.0`; unset or at the default 1.5 neither holds the word; a
+/// value outside 1.0 to 2.0 is refused (Plan 0099 Phase 2e, done-when 2, restated at Phase 3b's
+/// default, done-when 7).
 #[test]
 fn the_stretch_is_named_on_the_row_when_not_one() {
     let parse = |extra: &[&str]| {
@@ -403,10 +404,11 @@ fn the_stretch_is_named_on_the_row_when_not_one() {
         v.extend_from_slice(extra);
         crate::cli::parse_args_from(argv(&v)).expect("parses")
     };
+    assert_eq!(svet_render::DEFAULT_RING1_STRETCH, 1.5);
     for (extra, stretch) in [
-        (&["--bake-ring1-stretch", "1.5"][..], 1.5),
-        (&[][..], 1.0),
         (&["--bake-ring1-stretch", "1.0"][..], 1.0),
+        (&[][..], 1.5),
+        (&["--bake-ring1-stretch", "1.5"][..], 1.5),
     ] {
         let args = parse(extra);
         assert_eq!(args.bake.ring1_stretch, stretch, "{extra:?}");
@@ -418,12 +420,12 @@ fn the_stretch_is_named_on_the_row_when_not_one() {
         let mut banner = String::new();
         crate::run::hud_feed::write_queue_banner_row(&mut banner, &args, "");
         let hud = hud_text(&mut run_of(args));
-        if stretch == 1.0 {
+        if stretch == 1.5 {
             assert!(!banner.contains("stretch"), "{extra:?}: {banner}");
             assert!(!hud.contains("stretch"), "{extra:?}: {hud}");
         } else {
-            assert!(banner.contains(", stretch 1.5,"), "{extra:?}: {banner}");
-            assert!(hud.contains("; stretch 1.5"), "{extra:?}: {hud}");
+            assert!(banner.contains(", stretch 1.0,"), "{extra:?}: {banner}");
+            assert!(hud.contains("; stretch 1.0"), "{extra:?}: {hud}");
         }
     }
     for bad in ["0.5", "2.5", "x"] {

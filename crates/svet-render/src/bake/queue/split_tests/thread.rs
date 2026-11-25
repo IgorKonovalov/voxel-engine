@@ -502,10 +502,11 @@ fn a_waiting_box_ends_the_opening() {
     );
 }
 
-/// Done when (2) of Plan 0099 Phase 2e, with the thread on. The stretch set to 1.5 between
-/// frames 3 and 4 goes into the mailbox: the books on the bake thread hold 1.0 when the step on
-/// message 4 starts (no setter writes the bake half directly), and that step plans by 1.5: its
-/// dig's ring 1 (280 samples in this rig) against a cap of 200 goes whole.
+/// Done when (2) of Plan 0099 Phase 2e, with the thread on. The rig starts at 1.0 (set by name
+/// before the thread takes the books: the default is 1.5 since Phase 3b). The stretch set to 1.5
+/// between frames 3 and 4 goes into the mailbox: the books on the bake thread hold 1.0 when the
+/// step on message 4 starts (no setter writes the bake half directly), and that step plans by
+/// 1.5: its dig's ring 1 (280 samples in this rig) against a cap of 200 goes whole.
 #[test]
 fn the_stretch_reaches_the_bake_thread_in_the_next_message() {
     let seen: Arc<Mutex<Option<f64>>> = Arc::new(Mutex::new(None));
@@ -515,7 +516,9 @@ fn the_stretch_reaches_the_bake_thread_in_the_next_message() {
             *s.lock().expect("one step") = Some(q.ring1_stretch);
         }
     });
-    let mut t = ThreadRig::new(Some(hook), OUTBOX_BYTES);
+    let mut t = ThreadRig::sized(Some(hook), OUTBOX_BYTES, CHUNKS[0], CHUNKS[0], |q| {
+        q.ring1_stretch = 1.0;
+    });
     for s in 1..=3 {
         t.frame_stepped(s);
     }

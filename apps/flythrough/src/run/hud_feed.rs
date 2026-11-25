@@ -442,8 +442,9 @@ pub(crate) fn write_queue_banner_row(out: &mut String, args: &Args, words: &str)
     );
 }
 
-/// The ring-1 stretch as the HUD and the banner name it: `stretch 1.5` after `sep` whenever
-/// it is not 1.0 (`--bake-ring1-stretch`), nothing at 1.0.
+/// The ring-1 stretch as the HUD and the banner name it: `stretch 1.0` after `sep` whenever
+/// it is not the default ([`svet_render::DEFAULT_RING1_STRETCH`], `--bake-ring1-stretch`),
+/// nothing at the default.
 struct StretchWords(f64, &'static str);
 
 impl std::fmt::Display for StretchWords {
@@ -451,7 +452,8 @@ impl std::fmt::Display for StretchWords {
         if self.0 == svet_render::DEFAULT_RING1_STRETCH {
             Ok(())
         } else {
-            write!(f, "{}stretch {}", self.1, self.0)
+            // `{:?}` keeps the point: `stretch 1.0`, `stretch 1.25`.
+            write!(f, "{}stretch {:?}", self.1, self.0)
         }
     }
 }

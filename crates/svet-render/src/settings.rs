@@ -84,7 +84,8 @@ pub struct BakeKnobs {
     /// Whether a dig that touched lit bricks re-bakes the chunks within the light radius.
     pub dig_reach: bool,
     /// The ring-1 stretch, 1.0 to 2.0 ([`crate::Frame::set_bake_ring1_stretch`]): how far over
-    /// its priced cap a submit goes to send a dig's ring 1 whole; 1.0 is the cap alone.
+    /// its priced cap a submit goes to send a dig's ring 1 whole; 1.0 is the cap alone. 1.5 in
+    /// every profile ([`crate::DEFAULT_RING1_STRETCH`]).
     pub ring1_stretch: f64,
     /// The sample tiers a brick direction by band, near, mid and far (ADR-0080;
     /// [`crate::Frame::set_bake_tiers`]).

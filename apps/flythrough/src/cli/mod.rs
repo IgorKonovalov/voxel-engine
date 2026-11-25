@@ -619,7 +619,7 @@ pub struct BakeArgs {
     pub(crate) dig_reach: bool,
     /// `--bake-ring1-stretch X`: a dig's ring 1 goes whole in a submit while its samples are
     /// within `X` times the priced cap, 1.0 to 2.0 (`svet_render::Frame::set_bake_ring1_stretch`;
-    /// default `svet_render::DEFAULT_RING1_STRETCH`, the cap alone).
+    /// default `svet_render::DEFAULT_RING1_STRETCH`, 1.5; 1.0 is the cap alone).
     pub(crate) ring1_stretch: f64,
     /// `--bake-thread on|off`: whether the live queue's sliced steps run on the bake thread
     /// (`svet_render::Frame::set_bake_thread`, ADR-0083); `None` unset, which is on in a window

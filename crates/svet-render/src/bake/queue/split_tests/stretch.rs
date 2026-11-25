@@ -140,14 +140,16 @@ fn ring_one_within_the_stretch_goes_whole() {
     );
 }
 
-/// Done when (2) of Plan 0099 Phase 2e, lockstep. The stretch set to 1.5 between frames 3 and 4
-/// waits in the mailbox (the books keep 1.0 until the step), and the step that reads message 4
-/// plans by it: its dig's ring 1 (280 samples in this rig) against a cap of 200 goes whole, at
-/// 280, where the same rig without the set sends the cap.
+/// Done when (2) of Plan 0099 Phase 2e, lockstep. The rig starts at 1.0 (set by name: the
+/// default is 1.5 since Phase 3b, under which this ring goes whole unset). The stretch set to 1.5
+/// between frames 3 and 4 waits in the mailbox (the books keep 1.0 until the step), and the step
+/// that reads message 4 plans by it: its dig's ring 1 (280 samples in this rig) against a cap of
+/// 200 goes whole, at 280, where the same rig without the set sends the cap.
 #[test]
 fn the_stretch_reaches_the_bake_side_in_the_next_message() {
     for set in [false, true] {
         let mut rig = Rig::new(None);
+        rig.queue.ring1_stretch = 1.0;
         for _ in 0..3 {
             rig.step();
         }
