@@ -24,6 +24,7 @@ impl BakeQueue {
         half: &mut dyn RenderHalf,
     ) -> Result<QueueStats, BakeError> {
         let FrameMessage {
+            frame,
             start: t0,
             view,
             notes,
@@ -31,8 +32,12 @@ impl BakeQueue {
             key,
             settings,
             arrivals,
+            landed,
         } = msg;
-        self.take_message(settings, arrivals, world.materials());
+        for (c, w) in landed {
+            store.landed(c, w);
+        }
+        self.take_message(frame, settings, arrivals, world.materials());
         shadow.take(&notes);
         self.changes_in = notes.changed;
         let run = &BakeRun {
@@ -45,7 +50,7 @@ impl BakeQueue {
         self.laps = Laps::new(t0);
         // Summary time spent outside a step (a one-shot bake, a dig's ring) is not this step's.
         store.take_summary_ms();
-        store.out = Some(ListMaker::new(half.cap(), self.steps + 1));
+        store.out = Some(ListMaker::new(half.cap(), self.frame));
         let books = self.step_books(run, half, store, view, t0);
         let lists = store.out.take().map(|mut m| m.finish()).unwrap_or_default();
         self.apply_lists(half, store, lists, t0);
@@ -130,8 +135,8 @@ impl BakeQueue {
         view: &QueueView,
     ) -> (Option<Vec<ChunkCoord>>, Vec<[i32; 3]>) {
         self.steps += 1;
-        // In lockstep the message is this frame's, its number the step's.
-        self.lp.stamp = self.steps;
+        // A job that joins the loop in this step is stamped with the newest message's frame.
+        self.lp.stamp = self.frame;
         let eye = view.eye.map(|v| (v / 64.0).floor() as i32);
         if eye != self.eye {
             self.eye_moves += 1;
@@ -379,6 +384,7 @@ impl BakeQueue {
             ages_first: &mut self.ages_first,
             ages_full: &mut self.ages_full,
             steps: self.steps,
+            frame: self.frame,
             record: record_words(self.settings.cell),
             landing_fade: self.landing_fade,
             dig_store_hold: self.dig_store_hold,
@@ -601,6 +607,8 @@ struct Placement<'a> {
     ages_first: &'a mut Vec<u32>,
     ages_full: &'a mut Vec<u32>,
     steps: u64,
+    /// [`BakeQueue::frame`]: a fade's start on its clock.
+    frame: u64,
     record: usize,
     /// [`BakeQueue::landing_fade`].
     landing_fade: bool,
@@ -749,7 +757,7 @@ impl Placement<'_> {
                         Fade {
                             first,
                             from,
-                            start: self.steps,
+                            start: self.frame,
                             frame: 0,
                             frames: FADE,
                             vis: self.landing_fade,
@@ -807,7 +815,7 @@ impl Placement<'_> {
             Fade {
                 first: f,
                 from,
-                start: self.steps,
+                start: self.frame,
                 frame: 0,
                 frames: if dug { DIG_FADE } else { FADE },
                 vis: self.landing_fade || (dug && self.dig_store_hold),

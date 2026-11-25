@@ -96,8 +96,8 @@ pub use bake::{
     LANDING_DIRECTIONS, LANDING_KEY, LANDING_KEY_FLAG, LANDING_RECORDS, LANDING_TAIL, LANDING_VIS,
     LANDING_VIS_FLAG, ListingCensus, MissingLight, PreRoll, PreRollConfig, PreRollError,
     PreRollState, PreRollSummary, QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT,
-    QueueOrder, QueueStats, QueueView, ReachMode, Refine, Residency, RuleMissed, Store, StoreStats,
-    chunk_nearest, finality_blockers, in_view_census, queue_settings, reach_crosses,
+    QueueOrder, QueueRead, QueueStats, QueueView, ReachMode, Refine, Residency, RuleMissed, Store,
+    StoreStats, chunk_nearest, finality_blockers, in_view_census, queue_settings, reach_crosses,
     sky_over_floor,
 };
 pub use camera::{Camera, View};

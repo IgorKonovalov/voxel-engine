@@ -193,7 +193,7 @@ impl Store {
     }
 
     /// Writes `data` at byte `offset` of the pool: at once, or into the write list.
-    fn emit(&mut self, offset: u64, data: &[u8], kind: usize, landing: Option<([i32; 3], usize)>) {
+    fn emit(&mut self, offset: u64, data: &[u8], kind: usize, landing: Option<Landing>) {
         match self.out.as_mut() {
             None => self.direct.push(Write {
                 offset,
@@ -237,9 +237,14 @@ impl Store {
         }
     }
 
-    /// The landing word's mark for a block write: `Some` once, after [`Store::mark_landing`].
-    fn landing_mark(&self, coord: [i32; 3]) -> Option<([i32; 3], usize)> {
-        (self.mark_landing && self.out.is_some()).then_some((coord, LANDED_AT as usize))
+    /// The landing word of a block write into a list: a first block's once after
+    /// [`Store::mark_landing`], else the word the copy carries ([`Landing`]).
+    fn landing_mark(&self, coord: [i32; 3]) -> Option<Landing> {
+        self.out.is_some().then_some(Landing {
+            chunk: coord,
+            at: LANDED_AT as usize,
+            first: self.mark_landing,
+        })
     }
 
     /// Sets `c`'s landing word in the store's copy to what the render half wrote at apply.

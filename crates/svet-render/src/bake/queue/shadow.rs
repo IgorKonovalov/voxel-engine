@@ -45,6 +45,40 @@ pub(crate) struct ShadowNotes {
     pub(crate) whole: bool,
 }
 
+impl ShadowNotes {
+    /// These notes followed by `newer`, as one: taking the result leaves the shadow as taking
+    /// the two in order does. The changes append (each chunk once), the newer window, radius and
+    /// lights win, and newer notes that replace the whole state replace these.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the bake thread's inbox coalesces; until it runs, the tests"
+        )
+    )]
+    pub(crate) fn then(mut self, newer: ShadowNotes) -> ShadowNotes {
+        if newer.whole {
+            return newer;
+        }
+        self.changed = match (self.changed, newer.changed) {
+            (Some(mut a), Some(b)) => {
+                let seen: std::collections::HashSet<ChunkCoord> = a.iter().copied().collect();
+                a.extend(b.into_iter().filter(|c| !seen.contains(c)));
+                Some(a)
+            }
+            _ => None,
+        };
+        self.window = newer.window;
+        self.light_radius = newer.light_radius;
+        self.chunks.extend(newer.chunks);
+        self.columns.extend(newer.columns);
+        if newer.lights.is_some() {
+            self.lights = newer.lights;
+        }
+        self
+    }
+}
+
 /// The mirror's reads the render half makes its notes from: [`GpuWorld`] in the frame, a model
 /// in the tests.
 pub(crate) trait MirrorRead {

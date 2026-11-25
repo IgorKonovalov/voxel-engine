@@ -102,11 +102,12 @@ impl Run {
         if q.budget != b.budget {
             g.frame.set_bake_budget(q.budget);
         }
-        if (q.order(), q.withdraw) != (b.order(), b.withdraw)
-            && let Some(queue) = g.frame.bake_queue_mut()
-        {
-            queue.order = q.order();
-            queue.withdraw = q.withdraw;
+        if (q.order(), q.withdraw) != (b.order(), b.withdraw) {
+            let (order, withdraw) = (q.order(), q.withdraw);
+            g.frame.set_bake_queue(move |queue| {
+                queue.order = order;
+                queue.withdraw = withdraw;
+            });
         }
     }
 

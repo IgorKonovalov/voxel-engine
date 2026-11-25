@@ -65,6 +65,11 @@ pub(super) struct BakeLink {
     pub(super) dig_boxes: Vec<[[i32; 3]; 2]>,
     /// The live queue ([`Frame::start_bake_queue`]), when the store fills a frame at a time.
     pub(super) queue: Option<crate::bake::BakeQueue>,
+    /// The render half's mailbox (ADR-0083): edits, stream results and knob sets since the last
+    /// message, and what the messages not yet answered carried.
+    pub(super) inbox: crate::bake::Inbox,
+    /// The live queue's messages so far: the next one's frame is this plus one.
+    pub(super) messages: u64,
     /// The render half's write lists waiting to apply (ADR-0083); in lockstep with no cap a
     /// step's lists apply in its own frame and none waits.
     pub(super) lists: crate::bake::Lists,
@@ -118,6 +123,8 @@ impl BakeLink {
             pipeline: None,
             dig_boxes: Vec::new(),
             queue: None,
+            inbox: crate::bake::Inbox::default(),
+            messages: 0,
             lists: crate::bake::Lists::default(),
             issuer: crate::bake::Issuer::timed(),
             shadow: crate::bake::Shadow::default(),
@@ -249,6 +256,9 @@ impl Frame {
         self.baked.dig_boxes.clear();
         // A new queue's loop has nothing in flight: the old one's submits are dropped with it.
         self.baked.issuer = crate::bake::Issuer::timed();
+        // A new queue reads no arrival made for the old one; its messages count from 1.
+        self.baked.inbox = crate::bake::Inbox::default();
+        self.baked.messages = 0;
         let mut q = crate::bake::BakeQueue::new(settings, slice_ms);
         let k = &mut self.baked.knobs;
         k.budget = q.budget;
@@ -278,23 +288,40 @@ impl Frame {
         w * h
     }
 
-    /// The live queue, if started.
-    pub fn bake_queue(&self) -> Option<&crate::bake::BakeQueue> {
-        self.baked.queue.as_ref()
+    /// The live queue's books, if started, as the render thread reads them
+    /// ([`crate::bake::QueueRead`]: with the mailbox's arrivals counted).
+    pub fn bake_queue(&self) -> Option<crate::bake::QueueRead<'_>> {
+        let queue = self.baked.queue.as_ref()?;
+        Some(crate::bake::QueueRead {
+            queue,
+            store: &self.baked.store,
+            inbox: &self.baked.inbox,
+        })
     }
 
     /// The live queue, if started, to drain its readings
-    /// ([`crate::bake::BakeQueue::take_angle_needs`]).
+    /// ([`crate::bake::BakeQueue::take_angle_needs`]). A change to its knobs goes through
+    /// [`Frame::set_bake_queue`], which the bake half reads with its next message.
     pub fn bake_queue_mut(&mut self) -> Option<&mut crate::bake::BakeQueue> {
         self.baked.queue.as_mut()
+    }
+
+    /// Sets the live queue's knobs with `set`, in the step that reads the next message
+    /// (ADR-0083: the render thread never writes the bake half's books). Nothing without the
+    /// queue.
+    pub fn set_bake_queue(
+        &mut self,
+        set: impl FnOnce(&mut crate::bake::BakeQueue) + Send + Sync + 'static,
+    ) {
+        if self.baked.queue.is_some() {
+            self.baked.inbox.push_set(Box::new(set));
+        }
     }
 
     /// The live queue's bake budget (ADR-0052).
     pub fn set_bake_budget(&mut self, budget: crate::bake::Budget) {
         self.baked.knobs.budget = budget;
-        if let Some(q) = self.baked.queue.as_mut() {
-            q.budget = budget;
-        }
+        self.set_bake_queue(move |q| q.budget = budget);
     }
 
     /// The live queue's coarse pass: `samples` a brick direction (0 none) for a chunk's first
@@ -303,11 +330,11 @@ impl Frame {
     pub fn set_bake_coarse(&mut self, samples: u32, near: i32) {
         let k = &mut self.baked.knobs;
         (k.coarse_samples, k.near, k.full_first) = (samples, near, Some(near));
-        if let Some(q) = self.baked.queue.as_mut() {
+        self.set_bake_queue(move |q| {
             q.coarse_samples = samples;
             q.near = near;
             q.full_first = Some(near);
-        }
+        });
     }
 
     /// The live queue's full-first radius ([`crate::bake::BakeQueue::full_first`]): the chunks
@@ -315,46 +342,35 @@ impl Frame {
     /// directly; `None` gives every such chunk the coarse pass first.
     pub fn set_bake_full_first(&mut self, radius: Option<i32>) {
         self.baked.knobs.full_first = radius;
-        if let Some(q) = self.baked.queue.as_mut() {
-            q.full_first = radius;
-        }
+        self.set_bake_queue(move |q| q.full_first = radius);
     }
 
     /// The live queue's reach mode ([`crate::bake::BakeQueue::reach_mode`]): whether a chunk
     /// whose reach crosses the streamer's full radius bakes from the chunks resident full.
     pub fn set_bake_reach(&mut self, mode: crate::bake::ReachMode) {
         self.baked.knobs.reach = mode;
-        if let Some(q) = self.baked.queue.as_mut() {
-            q.set_reach_mode(mode);
-        }
+        self.set_bake_queue(move |q| q.set_reach_mode(mode));
     }
 
     /// The live queue's sample tiers a brick direction by band, near, mid and far (ADR-0080:
     /// a chunk's record at its band's count by its size on screen).
     pub fn set_bake_tiers(&mut self, tiers: [u32; 3]) {
         self.baked.knobs.tiers = tiers;
-        if let Some(q) = self.baked.queue.as_mut() {
-            q.tiers = tiers;
-        }
+        self.set_bake_queue(move |q| q.tiers = tiers);
     }
 
     /// The live queue's slice's two values (ADR-0080 rule 3): the drain value while a chunk in
     /// view waits for its tier's record, the line's once none does; `None` is the budget alone.
     pub fn set_bake_drain(&mut self, drain: Option<crate::bake::Drain>) {
         self.baked.knobs.drain = drain;
-        if let Some(q) = self.baked.queue.as_mut() {
-            q.drain = drain;
-        }
+        self.set_bake_queue(move |q| q.drain = drain);
     }
 
     /// The live queue's digs: the slice's growth while a dig's bricks wait, and whether a dig
     /// that touched lit bricks re-bakes the chunks within the light radius (ring 3).
     pub fn set_bake_digs(&mut self, edit_ms: f64, reach_ring: bool) {
         (self.baked.knobs.edit_ms, self.baked.knobs.dig_reach) = (edit_ms, reach_ring);
-        if let Some(q) = self.baked.queue.as_mut() {
-            q.edit_ms = edit_ms;
-            q.reach_ring = reach_ring;
-        }
+        self.set_bake_queue(move |q| (q.edit_ms, q.reach_ring) = (edit_ms, reach_ring));
     }
 
     /// The live queue's knobs: the queue's while it runs, else the ones the next queue starts
@@ -366,10 +382,8 @@ impl Frame {
     /// Whether each of `chunks` has had the live queue's first pass
     /// ([`crate::bake::BakeQueue::passed`]); true without the queue.
     pub fn bake_passed(&self, chunks: &[ChunkCoord]) -> bool {
-        self.baked
-            .queue
-            .as_ref()
-            .is_none_or(|q| chunks.iter().all(|&c| q.passed(&self.baked.store, c)))
+        self.bake_queue()
+            .is_none_or(|q| chunks.iter().all(|&c| q.passed(c)))
     }
 
     /// Hands the live queue the stream workers' prepared masks ([`crate::bake::FacePrep`]),
@@ -380,20 +394,15 @@ impl Frame {
         prepared: &[(ChunkCoord, svet_world::Prepared)],
         _world: &svet_world::World,
     ) {
-        if let Some(q) = self.baked.queue.as_mut()
-            && !prepared.is_empty()
-        {
-            q.take_prepared(prepared);
+        if self.baked.queue.is_some() && !prepared.is_empty() {
+            self.baked.inbox.push_masks(prepared);
         }
     }
 
     /// Whether `c` holds its block in the live queue's store, or is known to need none (`absent`:
     /// the world holds no chunk there). False without the queue.
     pub fn bake_settled(&self, c: ChunkCoord, absent: bool) -> bool {
-        self.baked
-            .queue
-            .as_ref()
-            .is_some_and(|q| q.settled(&self.baked.store, c, absent))
+        self.bake_queue().is_some_and(|q| q.settled(c, absent))
     }
 
     /// One frame of the live queue, ahead of the encode: the light-sample ranges held out to
@@ -456,14 +465,18 @@ impl Frame {
             far_normal: self.state.look.far_normal,
         };
         let (sky, key) = (self.bake_sky(), self.bake_key());
+        self.baked.messages += 1;
+        let frame = self.baked.messages;
         let msg = crate::bake::FrameMessage {
+            frame,
             start: t0,
             view: view.clone(),
             notes,
             sky,
             key,
             settings,
-            arrivals: self.baked.queue.as_mut()?.inbox.take(),
+            arrivals: self.baked.inbox.take(frame),
+            landed: self.baked.lists.report(frame),
         };
         let gpu_run = crate::bake::GpuRun {
             device,
@@ -481,13 +494,16 @@ impl Frame {
             lists: &mut self.baked.lists,
         };
         let q = self.baked.queue.as_mut()?;
-        Some(q.step(
+        let out = q.step(
             &mut self.baked.shadow,
             world,
             &mut self.baked.store,
             msg,
             &mut half,
-        ))
+        );
+        // In lockstep the step's lists are applied in its call: the message is answered.
+        self.baked.inbox.answered(frame);
+        Some(out)
     }
 
     /// The bake's sky-ray bits ([`crate::bake::BakeRun::sky`]): none with no sky set, else on

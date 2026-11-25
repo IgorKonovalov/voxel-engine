@@ -628,12 +628,7 @@ impl Run {
                     }
                 }
                 self.queue.stats = Some(st);
-                if !self.queue.emptied
-                    && gfx
-                        .frame
-                        .bake_queue()
-                        .is_some_and(svet_render::BakeQueue::empty)
-                {
+                if !self.queue.emptied && gfx.frame.bake_queue().is_some_and(|q| q.empty()) {
                     self.queue.emptied = true;
                     println!(
                         "bake queue: empty after {:.1} s since the start ({} chunks baked, {:.3e} samples)",

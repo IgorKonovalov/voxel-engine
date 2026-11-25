@@ -9,6 +9,7 @@ mod list;
 mod message;
 mod open;
 mod reach;
+mod reads;
 mod rule;
 mod sealed;
 mod shadow;
@@ -20,6 +21,7 @@ pub use self::message::Residency;
 pub(crate) use self::message::{FrameMessage, Inbox, StepSettings};
 pub use self::open::in_view_census;
 use self::reach::reach_of;
+pub use self::reads::QueueRead;
 pub(crate) use self::shadow::{LightNote, Shadow, notes};
 pub use self::stats::{
     Band, Bands, DigTrace, DigTraceJob, InViewWaiting, LANDED_BARE, LANDED_FALLBACK,
@@ -293,9 +295,9 @@ pub struct BakeQueue {
     pub(super) lp: JobLoop,
     pub(super) prepared: std::collections::HashMap<[i32; 3], Arc<PreparedMasks>>,
     pub(super) prepared_bytes: usize,
-    /// The render half's mailbox: edits and stream results since the last step, which the
-    /// next step's message carries ([`BakeQueue::invalidate`], [`BakeQueue::take_prepared`]).
-    pub(crate) inbox: Inbox,
+    /// The newest message's frame the books have read ([`FrameMessage::frame`]): a job's stamp,
+    /// an edit's stale mark, the fades' clock and a write list's name.
+    pub(super) frame: u64,
     /// The camera's chunk at the last step.
     pub(super) eye: [i32; 3],
     /// The steps at which the camera's chunk changed, counted since the queue started.
@@ -568,7 +570,7 @@ impl BakeQueue {
             },
             prepared: Default::default(),
             prepared_bytes: 0,
-            inbox: Inbox::default(),
+            frame: 0,
             eye: [0; 3],
             eye_moves: 0,
             job_eye: Default::default(),
@@ -904,100 +906,6 @@ impl BakeQueue {
             .collect()
     }
 
-    /// The names of the per-chunk sets that hold `c`: what a chunk leaving the mirror must not
-    /// leave behind.
-    pub fn tracks(&self, c: ChunkCoord) -> Vec<&'static str> {
-        let c = c.0;
-        [
-            ("fades", self.fades.contains_key(&c)),
-            ("digs", self.digs.contains_key(&c)),
-            ("dig_open", self.dig_open.contains_key(&c)),
-            ("reach", self.reach.contains(&c)),
-            ("listed", self.listed.contains_key(&c)),
-            ("faceless", self.faceless_now(c)),
-            ("sealed", self.sealed_now(c)),
-            (
-                "blocked",
-                self.blocked.contains_key(&c) && !self.inbox.unknown(c),
-            ),
-            ("job_coarse", self.job_coarse.contains_key(&c)),
-            ("stale", self.stale.contains_key(&c)),
-            ("partial", self.partial.contains(&c)),
-            ("job_partial", self.job_partial.contains(&c)),
-            ("partial_due", self.partial_due.contains(&c)),
-            ("provisional", self.provisional.contains(&c)),
-            ("job_provisional", self.job_provisional.contains(&c)),
-            ("provisional_due", self.provisional_due.contains(&c)),
-            ("keys", self.keys.holds(&c)),
-            ("zeroed", self.zeroed.contains(&c)),
-        ]
-        .into_iter()
-        .filter_map(|(name, held)| held.then_some(name))
-        .collect()
-    }
-
-    /// No job pending or open, no block fading, and no candidate at the last count, which ran
-    /// with no job in the loop.
-    pub fn empty(&self) -> bool {
-        self.lp.idle()
-            && self.fades.is_empty()
-            && self.counted_idle
-            && self.stats.depth == 0
-            && self.boxes.is_empty()
-            && !self.inbox.has_box()
-            && self.digs.is_empty()
-            && self.reach.is_empty()
-            && self.partial_due.is_empty()
-            && self.provisional_due.is_empty()
-    }
-
-    /// Whether an edit box waits for the next step.
-    pub fn boxes_waiting(&self) -> bool {
-        !self.boxes.is_empty() || self.inbox.has_box()
-    }
-
-    /// No edit box, dig brick or ring-3 chunk waits, and no dig job runs.
-    pub fn digs_settled(&self) -> bool {
-        self.boxes.is_empty()
-            && !self.inbox.has_box()
-            && self.digs.is_empty()
-            && self.dig_open.is_empty()
-            && self.reach.is_empty()
-    }
-
-    /// Whether `c` holds its block at the full count or is known to have none: no face, or
-    /// (`absent`) no chunk.
-    pub fn settled(&self, store: &Store, c: ChunkCoord, absent: bool) -> bool {
-        ((store.blocks.contains_key(&c.0) && !self.lesser(store, c.0))
-            || self.faceless_now(c.0)
-            || self.sealed_now(c.0)
-            || absent)
-            && !self.lp.chunks().any(|j| j == c)
-            && !self.digs.contains_key(&c.0)
-            && !self.reach.contains(&c.0)
-            && !self.partial_due.contains(&c.0)
-            && !self.provisional_due.contains(&c.0)
-    }
-
-    /// Whether `c` has had its first pass: it holds a block (coarse or full), is known to have
-    /// no face, or its reach or lights were not ready at its last check.
-    pub fn passed(&self, store: &Store, c: ChunkCoord) -> bool {
-        store.blocks.contains_key(&c.0)
-            || self.faceless_now(c.0)
-            || self.sealed_now(c.0)
-            || (self.blocked.contains_key(&c.0) && !self.inbox.unknown(c.0))
-    }
-
-    /// Whether `c` is known faceless, with the mailbox's arrivals taken.
-    fn faceless_now(&self, c: [i32; 3]) -> bool {
-        self.faceless.contains(&c) && !self.inbox.unknown(c)
-    }
-
-    /// Whether `c` is held sealed, with the mailbox's boxes taken.
-    fn sealed_now(&self, c: [i32; 3]) -> bool {
-        self.sealed.holds(c) && !self.inbox.near(c)
-    }
-
     /// [`face_classes`] of `materials`, made again only when a row's translucency changed.
     pub(super) fn classes(&mut self, materials: &MaterialTable) -> Arc<Vec<u8>> {
         let rows = materials.rows();
@@ -1009,20 +917,6 @@ impl BakeQueue {
             self.classes = Some((key, Arc::new(face_classes(materials))));
         }
         self.classes.as_ref().expect("made above").1.clone()
-    }
-
-    /// Takes the stream workers' results into the next step's message; one made under other
-    /// classes than the step's material table is dropped there.
-    pub fn take_prepared(&mut self, prepared: &[(ChunkCoord, svet_world::Prepared)]) {
-        self.inbox.push_masks(prepared);
-    }
-
-    /// An edit's box (`min ..= max`, voxels) into the next step's message, which takes it
-    /// first: the chunks within a voxel of it lose their prepared masks and their known
-    /// facelessness, and a running job's block for them is thrown away; the box's rings are
-    /// read in that step. The public reads answer as if it were taken now.
-    pub fn invalidate(&mut self, min: [i32; 3], max: [i32; 3]) {
-        self.inbox.push_box(min, max);
     }
 }
 

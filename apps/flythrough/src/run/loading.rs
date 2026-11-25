@@ -668,11 +668,18 @@ impl Run {
         frame.set_bake_reach(self.args.bake.reach);
         frame.set_bake_tiers(self.args.bake.tiers);
         frame.set_bake_drain(self.args.bake.drain);
-        if let Some(q) = frame.bake_queue_mut() {
-            q.order = self.args.queue_order();
-            q.withdraw = self.args.bake.queue_withdraw;
-            q.census_every_opening = self.args.bake.queue_census;
-            q.rule_reading = self.args.bake.queue_rule_reading;
+        if frame.bake_queue().is_some() {
+            let (order, withdraw) = (self.args.queue_order(), self.args.bake.queue_withdraw);
+            let (census, rule) = (
+                self.args.bake.queue_census,
+                self.args.bake.queue_rule_reading,
+            );
+            frame.set_bake_queue(move |q| {
+                q.order = order;
+                q.withdraw = withdraw;
+                q.census_every_opening = census;
+                q.rule_reading = rule;
+            });
             self.queue.listing_due = self.args.bake.queue_census;
         }
         println!("{}", self.queue_row());

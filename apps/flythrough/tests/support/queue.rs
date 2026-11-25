@@ -157,10 +157,10 @@ pub fn rig(world: World, setup: &Setup) -> Option<Q> {
     if setup.slice_ms < SMALLEST_SLICE_MS {
         // The smallest slice holds jobs in the loop over several steps; the drain value would
         // replace it while chunks in view wait (ADR-0080 rule 3), so such a rig runs without one.
-        frame.bake_queue_mut().expect("the queue started").drain = None;
+        frame.set_bake_queue(|q| q.drain = None);
     }
     if let Some(order) = setup.order {
-        frame.bake_queue_mut().expect("the queue started").order = order;
+        frame.set_bake_queue(move |q| q.order = order);
     }
     Some(Q {
         device,
@@ -236,7 +236,7 @@ impl Q {
         self.step_with(true)
     }
 
-    pub fn q(&self) -> &svet_render::BakeQueue {
+    pub fn q(&self) -> svet_render::QueueRead<'_> {
         self.frame.bake_queue().expect("the queue started")
     }
 

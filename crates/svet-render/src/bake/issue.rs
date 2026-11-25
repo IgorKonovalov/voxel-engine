@@ -219,7 +219,10 @@ impl RenderHalf for GpuHalf<'_> {
             queue: self.run.queue,
             pool: self.run.pool,
         };
-        self.lists.apply(frame, &mut out).1
+        let landed = self.lists.apply(frame, &mut out).1;
+        // The step writes them into the store's copy at once.
+        self.lists.confirm_all();
+        landed
     }
 }
 

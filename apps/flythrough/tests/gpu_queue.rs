@@ -558,7 +558,7 @@ fn a_dig_is_never_withdrawn() {
     };
     // No extra slice for digs: the dig's job draws the cap's floor a step, so it is still in
     // the loop at the step after the move.
-    q.frame.bake_queue_mut().expect("the queue started").edit_ms = 0.0;
+    q.frame.set_bake_queue(|q| q.edit_ms = 0.0);
     let one = ChunkCoord([1, 0, 0]);
     let mut n = 0;
     while q.frame.store().block(one).is_none() {
@@ -842,7 +842,7 @@ fn a_turn_onto_unbaked_chunks_drains_without_a_census_request() {
         drain_ms: 0.2,
         line_ms: 0.1,
     };
-    q.frame.bake_queue_mut().expect("the queue started").drain = Some(drain);
+    q.frame.set_bake_queue(move |q| q.drain = Some(drain));
     let unbaked_behind = |q: &Q| {
         (0..8)
             .filter(|&x| q.target([x, 0, 0]).is_none())

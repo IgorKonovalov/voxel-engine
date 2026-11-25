@@ -51,6 +51,11 @@ pub(crate) struct StepSettings {
     pub far_normal: [f32; 2],
 }
 
+/// A change to the bake half's knobs (the frame's `set_bake_*`, a caller's
+/// [`crate::Frame::set_bake_queue`]): applied to the books in the step that reads its message,
+/// in arrival order, never from the render thread directly (ADR-0083).
+pub(crate) type KnobSet = Box<dyn FnOnce(&mut BakeQueue) + Send + Sync>;
+
 /// What reached the render half between two steps, in arrival order: an order the books keep,
 /// since an edit drops a chunk's masks and a result after it brings new ones.
 pub(crate) enum Arrival {
@@ -58,19 +63,39 @@ pub(crate) enum Arrival {
     Box([[i32; 3]; 2]),
     /// The stream workers' prepared masks.
     Masks(Vec<(ChunkCoord, Arc<PreparedMasks>)>),
+    /// A knob set.
+    Set(KnobSet),
 }
 
-/// The render half's mailbox: the arrivals since the last step, which the next step's message
-/// carries whole. The public reads of the books consult it, so an edit reads as it did when its
-/// box went into the books at once: the chunks within a voxel of a waiting box have no known
-/// facelessness, seal or block reason, nor have those with masks waiting.
+/// What the public reads must count of arrivals the books have not taken: the chunks within a
+/// voxel of a box and those with masks.
+#[derive(Default)]
+struct Overlay {
+    /// The chunks within a voxel of a box.
+    near: HashSet<[i32; 3]>,
+    /// The chunks with masks.
+    masked: HashSet<[i32; 3]>,
+}
+
+impl Overlay {
+    fn is_empty(&self) -> bool {
+        self.near.is_empty() && self.masked.is_empty()
+    }
+}
+
+/// The render half's mailbox: the arrivals since the last message, which the next message
+/// carries whole, and what the messages sent since the last applied list carried. The public
+/// reads of the books consult it ([`super::QueueRead`]), so an edit reads as it did when its
+/// box went into the books at once: the chunks within a voxel of a box not yet answered have no
+/// known facelessness, seal or block reason, nor have those with masks not yet answered. A
+/// message is answered once a write list made from it or a later one is applied
+/// ([`Inbox::answered`]): the books that list came from had taken it.
 #[derive(Default)]
 pub(crate) struct Inbox {
     arrivals: Vec<Arrival>,
-    /// The chunks within a voxel of a waiting box.
-    near: HashSet<[i32; 3]>,
-    /// The chunks with masks waiting.
-    masked: HashSet<[i32; 3]>,
+    waiting: Overlay,
+    /// The messages sent and not yet answered: their frame and their overlay.
+    sent: std::collections::VecDeque<(u64, Overlay)>,
 }
 
 /// The chunks within a voxel of the box `min ..= max`.
@@ -83,47 +108,76 @@ pub(super) fn box_near(min: [i32; 3], max: [i32; 3]) -> impl Iterator<Item = [i3
 }
 
 impl Inbox {
-    pub(super) fn push_box(&mut self, min: [i32; 3], max: [i32; 3]) {
-        self.near.extend(box_near(min, max));
+    /// An edit's box (`min ..= max`, voxels) into the next message, which the step takes first:
+    /// the chunks within a voxel of it lose their prepared masks and their known facelessness,
+    /// and a running job's block for them is thrown away; the box's rings are read in that step.
+    pub(crate) fn push_box(&mut self, min: [i32; 3], max: [i32; 3]) {
+        self.waiting.near.extend(box_near(min, max));
         self.arrivals.push(Arrival::Box([min, max]));
     }
 
-    pub(super) fn push_masks(&mut self, prepared: &[(ChunkCoord, svet_world::Prepared)]) {
+    /// The stream workers' results into the next message; one made under other classes than
+    /// the step's material table is dropped there.
+    pub(crate) fn push_masks(&mut self, prepared: &[(ChunkCoord, svet_world::Prepared)]) {
         let masks: Vec<_> = prepared
             .iter()
             .filter_map(|(c, p)| Some((*c, p.0.clone().downcast::<PreparedMasks>().ok()?)))
             .collect();
         if !masks.is_empty() {
-            self.masked.extend(masks.iter().map(|(c, _)| c.0));
+            self.waiting.masked.extend(masks.iter().map(|(c, _)| c.0));
             self.arrivals.push(Arrival::Masks(masks));
         }
     }
 
-    /// The arrivals, for the frame's message; the mailbox is empty after.
-    pub(crate) fn take(&mut self) -> Vec<Arrival> {
-        self.near.clear();
-        self.masked.clear();
+    /// A knob set into the next message.
+    pub(crate) fn push_set(&mut self, set: KnobSet) {
+        self.arrivals.push(Arrival::Set(set));
+    }
+
+    /// The arrivals, for the message of `frame`; what they carry stays counted until a list
+    /// made from that message or a later one is applied.
+    pub(crate) fn take(&mut self, frame: u64) -> Vec<Arrival> {
+        let o = std::mem::take(&mut self.waiting);
+        if !o.is_empty() {
+            self.sent.push_back((frame, o));
+        }
         std::mem::take(&mut self.arrivals)
     }
 
-    /// Whether an edit's box waits.
-    pub(super) fn has_box(&self) -> bool {
-        !self.near.is_empty()
+    /// A list made from the message of `frame` was applied: every message up to it is answered.
+    pub(crate) fn answered(&mut self, frame: u64) {
+        while self.sent.front().is_some_and(|(f, _)| *f <= frame) {
+            self.sent.pop_front();
+        }
     }
 
-    /// Whether `c` lies within a voxel of a waiting box.
-    pub(super) fn near(&self, c: [i32; 3]) -> bool {
-        self.near.contains(&c)
+    fn overlays(&self) -> impl Iterator<Item = &Overlay> {
+        std::iter::once(&self.waiting).chain(self.sent.iter().map(|(_, o)| o))
     }
 
-    /// Whether a waiting box or masks will clear `c`'s facelessness and block reason.
-    pub(super) fn unknown(&self, c: [i32; 3]) -> bool {
-        self.near.contains(&c) || self.masked.contains(&c)
+    /// Whether an edit's box waits or is not yet answered.
+    pub(crate) fn has_box(&self) -> bool {
+        self.overlays().any(|o| !o.near.is_empty())
+    }
+
+    /// Whether `c` lies within a voxel of a box not yet answered.
+    pub(crate) fn near(&self, c: [i32; 3]) -> bool {
+        self.overlays().any(|o| o.near.contains(&c))
+    }
+
+    /// Whether a box or masks not yet answered will clear `c`'s facelessness and block reason.
+    pub(crate) fn unknown(&self, c: [i32; 3]) -> bool {
+        self.overlays()
+            .any(|o| o.near.contains(&c) || o.masked.contains(&c))
     }
 }
 
 /// The frame's message: everything the bake half reads of the frame in a step, owned.
 pub(crate) struct FrameMessage {
+    /// The message's frame: the render half's count of messages since the queue started, one a
+    /// frame call. A job's stamp, an edit's stale mark and a write list's name read it
+    /// (ADR-0083); in lockstep it is the step's number.
+    pub frame: u64,
     /// When the frame's call began: the time to the step is its setup stage.
     pub start: StepStart,
     pub view: QueueView,
@@ -134,6 +188,47 @@ pub(crate) struct FrameMessage {
     pub key: Option<([f32; 3], f32)>,
     pub settings: StepSettings,
     pub arrivals: Vec<Arrival>,
+    /// The landing words the render half wrote at apply since the last message, by chunk, for
+    /// the store's copy ([`Store::landed`]); in lockstep the step takes them itself.
+    pub landed: Vec<([i32; 3], u32)>,
+}
+
+impl FrameMessage {
+    /// `self` followed by the `newer` message the bake half had not read yet, as one: the newest
+    /// view, notes' state, sky, key and settings, the change lists, arrivals and landing words
+    /// appended in order.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the bake thread's inbox coalesces; until it runs, the tests"
+        )
+    )]
+    pub(crate) fn coalesce(mut self, newer: FrameMessage) -> FrameMessage {
+        let FrameMessage {
+            frame,
+            start,
+            view,
+            notes,
+            sky,
+            key,
+            settings,
+            arrivals,
+            landed,
+        } = newer;
+        self.notes = self.notes.then(notes);
+        self.arrivals.extend(arrivals);
+        self.landed.extend(landed);
+        FrameMessage {
+            frame,
+            start,
+            view,
+            sky,
+            key,
+            settings,
+            ..self
+        }
+    }
 }
 
 impl BakeQueue {
@@ -142,11 +237,13 @@ impl BakeQueue {
     /// frame.
     pub(super) fn take_message(
         &mut self,
+        frame: u64,
         settings: StepSettings,
         arrivals: Vec<Arrival>,
         materials: &MaterialTable,
     ) {
         let s = settings;
+        self.frame = frame;
         self.column_wait = s.column_wait;
         self.key_step = s.key_step;
         self.landing_fade = s.landing_fade;
@@ -157,6 +254,7 @@ impl BakeQueue {
             match a {
                 Arrival::Box([min, max]) => self.take_box(min, max),
                 Arrival::Masks(m) => self.take_masks(m, materials),
+                Arrival::Set(set) => set(self),
             }
         }
     }
@@ -223,8 +321,8 @@ impl BakeQueue {
             self.touched.insert(c);
             self.blocked.remove(&c);
             if self.lp.chunks().any(|j| j.0 == c) {
-                // The box is in this step's message.
-                self.stale.insert(c, self.steps + 1);
+                // The box is in this step's message: it stales a job stamped before that.
+                self.stale.insert(c, self.frame);
             }
         }
     }

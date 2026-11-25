@@ -37,10 +37,7 @@ fn buried_rig(rule: bool) -> Option<support::queue::Q> {
     }
     let mut q = rig(world, &Setup::at([224.0, 224.0, 400.0]))?;
     q.frame.set_sky(Some(sun_sky(40.0)));
-    q.frame
-        .bake_queue_mut()
-        .expect("the queue started")
-        .zero_rule = rule;
+    q.frame.set_bake_queue(move |q| q.zero_rule = rule);
     Some(q)
 }
 
@@ -204,10 +201,7 @@ mod reading {
         }
         let mut q = rig(world, &Setup::at([224.0, 224.0, 400.0]))?;
         q.frame.set_sky(Some(sun_sky(40.0)));
-        q.frame
-            .bake_queue_mut()
-            .expect("the queue started")
-            .zero_rule = rule;
+        q.frame.set_bake_queue(move |q| q.zero_rule = rule);
         Some(q)
     }
 

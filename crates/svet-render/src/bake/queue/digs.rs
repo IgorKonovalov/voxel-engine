@@ -511,7 +511,7 @@ impl BakeQueue {
     pub(in crate::bake) fn advance_fades(&mut self, store: &mut Store, record: usize) {
         let mut ended = Vec::new();
         let mut shown = std::mem::take(&mut self.fade_scratch);
-        let now = self.steps;
+        let now = self.frame;
         for (c, f) in &mut self.fades {
             f.advance(now);
             let Some(to) = store.words.get(c) else {

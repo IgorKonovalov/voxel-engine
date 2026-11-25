@@ -1482,7 +1482,7 @@ mod flicker {
                 let frame = std::time::Duration::from_micros(16_667);
                 std::thread::sleep(frame.saturating_sub(tf.elapsed()));
             }
-            let st = s.frame.bake_queue().map(svet_render::BakeQueue::stats);
+            let st = s.frame.bake_queue().map(|q| q.stats());
             println!(
                 "castle: the queue drained {} after {n} frames, {:.1} s; missing every 100 frames {missing:?}; digs {:?}, digs baked {:?}",
                 s.frame.bake_queue().is_some_and(|q| q.empty()),

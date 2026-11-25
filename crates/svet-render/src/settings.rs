@@ -558,6 +558,11 @@ impl RenderSettings {
     pub const NOT_SETTINGS: &'static [(&'static str, &'static str)] = &[
         ("set_dt", "a per-frame input: the frame's step in seconds"),
         (
+            "set_bake_queue",
+            "the route a caller's write to the live queue's books takes (a rig's order or rule \
+             switch); the bake knobs that are settings have setters of their own",
+        ),
+        (
             "set_pipeline_cache",
             "a test hook: the pipeline cache the test devices build through",
         ),

@@ -326,8 +326,8 @@ impl Frame {
         if self.baked.store.piece().is_some() && self.baked.queue.is_none() {
             self.baked.dig_boxes.push([min, max]);
         }
-        if let Some(q) = self.baked.queue.as_mut() {
-            q.invalidate(min, max);
+        if self.baked.queue.is_some() {
+            self.baked.inbox.push_box(min, max);
         }
         let h = self.history();
         if h.edits.len() == MAX_EDITS {

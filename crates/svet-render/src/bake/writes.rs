@@ -16,17 +16,29 @@ pub(crate) struct Write {
     pub(crate) offset: u64,
     pub(crate) data: Vec<u8>,
     pub(crate) kind: usize,
-    /// A first block's landing word: its chunk and the word's index into `data` (in words). The
-    /// render half writes the frame the list is applied in, plus one, there ([`Lists::apply`]),
-    /// so the shader's landing fade starts at the frame the block is first read.
-    pub(crate) landing: Option<([i32; 3], usize)>,
+    /// The chunk whose landing word `data` holds, and where ([`Landing`]).
+    pub(crate) landing: Option<Landing>,
+}
+
+/// A block write's landing word: its chunk, the word's index into the write's data (in words),
+/// and whether the write is the chunk's first block. The render half writes the frame a first
+/// block's list is applied in, plus one, there ([`Lists::apply`]), so the shader's landing fade
+/// starts at the frame the block is first read. Any other block write of the chunk carries the
+/// bake half's copy of the word, which is stale until the word written reaches it: the render
+/// half writes its own word there until then.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Landing {
+    pub(crate) chunk: [i32; 3],
+    pub(crate) at: usize,
+    pub(crate) first: bool,
 }
 
 /// Ordered writes the render half applies whole in one frame.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct WriteList {
-    /// The bake step that made the list.
-    pub(crate) step: u64,
+    /// The newest message's frame the bake half had read when it made the list
+    /// ([`super::FrameMessage::frame`]).
+    pub(crate) frame: u64,
     pub(crate) writes: Vec<Write>,
     pub(crate) bytes: usize,
     /// An edit's list: never carried, applied ahead of the landings.
@@ -56,7 +68,8 @@ pub(crate) struct OverCap {
 #[derive(Debug, Default)]
 pub(crate) struct ListMaker {
     pub(crate) cap: Option<usize>,
-    pub(crate) step: u64,
+    /// The message's frame the lists are named by ([`WriteList::frame`]).
+    pub(crate) frame: u64,
     /// The unit being written ([`ListMaker::seal`] closes it).
     unit: Vec<Write>,
     unit_bytes: usize,
@@ -72,10 +85,10 @@ pub(crate) struct ListMaker {
 }
 
 impl ListMaker {
-    pub(crate) fn new(cap: Option<usize>, step: u64) -> Self {
+    pub(crate) fn new(cap: Option<usize>, frame: u64) -> Self {
         Self {
             cap,
-            step,
+            frame,
             ..Self::default()
         }
     }
@@ -126,7 +139,7 @@ impl ListMaker {
     fn close(&mut self) {
         if !self.current.is_empty() {
             let mut l = std::mem::take(&mut self.current);
-            l.step = self.step;
+            l.frame = self.frame;
             self.done.push(l);
         }
     }
@@ -139,7 +152,7 @@ impl ListMaker {
         let mut out = Vec::with_capacity(self.done.len() + 1);
         if !self.edit.is_empty() {
             let mut e = std::mem::take(&mut self.edit);
-            e.step = self.step;
+            e.frame = self.frame;
             e.edit = true;
             out.push(e);
         }
@@ -156,6 +169,9 @@ pub(crate) struct Lists {
     pub(crate) waiting: VecDeque<WriteList>,
     /// Lists applied in a later frame than the first they could have been.
     pub(crate) carried: u64,
+    /// The landing words written that the bake half's copy may not hold yet, by chunk: the word,
+    /// and the message's frame that carried it to the bake half (`None`: not sent yet).
+    pub(crate) unconfirmed: std::collections::HashMap<[i32; 3], (u32, Option<u64>)>,
 }
 
 impl Lists {
@@ -200,19 +216,57 @@ impl Lists {
             }
             let l = self.waiting.pop_front().expect("front above");
             bytes += l.bytes;
-            apply_list(l, frame, out, &mut landed);
+            // The bake half had read the words sent up to the list's message.
+            self.unconfirmed
+                .retain(|_, (_, sent)| sent.is_none_or(|f| f > l.frame));
+            apply_list(l, frame, out, &mut landed, &mut self.unconfirmed);
         }
         self.carried += self.waiting.len() as u64;
         (bytes, landed)
     }
+
+    /// The landing words not sent to the bake half, for the message of `frame`
+    /// ([`super::FrameMessage::landed`]).
+    pub(crate) fn report(&mut self, frame: u64) -> Vec<([i32; 3], u32)> {
+        let mut out = Vec::new();
+        for (c, (w, sent)) in &mut self.unconfirmed {
+            if sent.is_none() {
+                *sent = Some(frame);
+                out.push((*c, *w));
+            }
+        }
+        out.sort_unstable();
+        out
+    }
+
+    /// Every word written is in the bake half's copy (lockstep: the step takes them at apply).
+    pub(crate) fn confirm_all(&mut self) {
+        self.unconfirmed.clear();
+    }
 }
 
-fn apply_list(l: WriteList, frame: u64, out: &mut dyn Applier, landed: &mut Vec<([i32; 3], u32)>) {
+fn apply_list(
+    l: WriteList,
+    frame: u64,
+    out: &mut dyn Applier,
+    landed: &mut Vec<([i32; 3], u32)>,
+    unconfirmed: &mut std::collections::HashMap<[i32; 3], (u32, Option<u64>)>,
+) {
     let word = u32::try_from(frame + 1).unwrap_or(u32::MAX);
     for mut w in l.writes {
-        if let Some((c, i)) = w.landing {
-            w.data[i * 4..i * 4 + 4].copy_from_slice(&word.to_le_bytes());
-            landed.push((c, word));
+        if let Some(Landing { chunk, at, first }) = w.landing {
+            let put = if first {
+                landed.push((chunk, word));
+                unconfirmed.insert(chunk, (word, None));
+                Some(word)
+            } else {
+                unconfirmed.get(&chunk).map(|(w, _)| *w)
+            };
+            if let Some(v) = put
+                && let Some(d) = w.data.get_mut(at * 4..at * 4 + 4)
+            {
+                d.copy_from_slice(&v.to_le_bytes());
+            }
         }
         out.write(w.offset, &w.data, w.kind);
     }
@@ -323,7 +377,7 @@ mod tests {
         assert!(m.finish().is_empty());
         // And a list over the cap is refused at the render half's door.
         let big = WriteList {
-            step: 3,
+            frame: 3,
             writes: vec![],
             bytes: 70 * KIB,
             edit: false,
@@ -345,7 +399,11 @@ mod tests {
                 .flat_map(|w| w.to_le_bytes())
                 .collect(),
             kind: 0,
-            landing: Some(([1, 2, 3], 2)),
+            landing: Some(Landing {
+                chunk: [1, 2, 3],
+                at: 2,
+                first: true,
+            }),
         });
         m.seal().expect("no cap");
         let mut q = Lists::default();
@@ -389,7 +447,7 @@ mod tests {
             ..Lists::default()
         };
         let l = |bytes, edit| WriteList {
-            step: 1,
+            frame: 1,
             writes: vec![],
             bytes,
             edit,
@@ -404,5 +462,74 @@ mod tests {
         assert_eq!(q.waiting.len(), 2);
         let (bytes, _) = q.apply(2, &mut rec);
         assert_eq!(bytes, 80);
+    }
+
+    /// Done when (9) of Plan 0099 Phase 3a: a first block's list made from message 5 and a
+    /// fade's `show` of that chunk made from message 6 (which carries the bake half's copy of
+    /// the word, stale until the word written reaches it), applied in frames 8 and 9: the
+    /// landing word reads 9 after each. A list made after the bake half had the word (message
+    /// 10 or later, the word sent with message 9) is written as made.
+    #[test]
+    fn a_fade_ahead_of_its_landing_list_keeps_the_applied_word() {
+        const C: [i32; 3] = [4, 0, -1];
+        const AT: usize = 1;
+        let block = |head: u32, first: bool| Write {
+            offset: 800,
+            data: [7u32, head, 7]
+                .iter()
+                .flat_map(|w| w.to_le_bytes())
+                .collect(),
+            kind: 0,
+            landing: Some(Landing {
+                chunk: C,
+                at: AT,
+                first,
+            }),
+        };
+        struct Pool(Vec<u8>);
+        impl Applier for Pool {
+            fn write(&mut self, offset: u64, data: &[u8], _kind: usize) {
+                let at = offset as usize;
+                if self.0.len() < at + data.len() {
+                    self.0.resize(at + data.len(), 0);
+                }
+                self.0[at..at + data.len()].copy_from_slice(data);
+            }
+        }
+        let word = |p: &Pool| u32::from_le_bytes(p.0[804..808].try_into().expect("4 bytes"));
+        let list = |frame: u64, w: Write| {
+            let mut m = ListMaker::new(Some(1 << 20), frame);
+            m.push(w);
+            m.seal().expect("under the cap");
+            m.finish()
+        };
+        let mut q = Lists {
+            cap: Some(1 << 20),
+            ..Lists::default()
+        };
+        // Made from message 5 (the first block, the bake half's guess 6) and 6 (the fade's
+        // show, the copy's word still 6).
+        q.take(list(5, block(6, true))).expect("under");
+        q.take(list(6, block(6, false))).expect("under");
+        let mut pool = Pool(Vec::new());
+        // Frame 8 applies the first; the frame cap lets the second wait to frame 9.
+        q.cap = Some(12);
+        let (_, landed) = q.apply(8, &mut pool);
+        assert_eq!(landed, vec![(C, 9)]);
+        assert_eq!(word(&pool), 9, "after frame 8");
+        // Frame 9's message carries the word to the bake half; the show made from message 6
+        // is applied in frame 9 and keeps 9.
+        assert_eq!(q.report(9), vec![(C, 9)]);
+        let (_, landed) = q.apply(9, &mut pool);
+        assert!(landed.is_empty());
+        assert_eq!(word(&pool), 9, "after frame 9");
+        // A list made from message 10 read the word: what it carries is written as made.
+        q.take(list(10, block(9, false))).expect("under");
+        q.apply(10, &mut pool);
+        assert_eq!(word(&pool), 9);
+        assert!(q.unconfirmed.is_empty(), "the word is the bake half's");
+        q.take(list(11, block(3, false))).expect("under");
+        q.apply(11, &mut pool);
+        assert_eq!(word(&pool), 3, "a later list's word is the bake half's own");
     }
 }

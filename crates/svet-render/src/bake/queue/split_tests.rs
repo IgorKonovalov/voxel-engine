@@ -96,6 +96,8 @@ struct Half {
     /// Each submit's entries' slots in order, by the frame it was issued in.
     issued: Vec<(u64, Vec<u32>)>,
     lists: Lists,
+    /// The frame each list taken was named by ([`WriteList::frame`]), in order.
+    named: Vec<u64>,
     applied: Vec<Applied>,
 }
 
@@ -126,13 +128,16 @@ impl RenderHalf for Half {
         self.lists.cap
     }
     fn apply(&mut self, lists: Vec<WriteList>, frame: u64) -> Vec<([i32; 3], u32)> {
+        self.named.extend(lists.iter().map(|l| l.frame));
         self.lists
             .take(lists)
             .expect("no landing list over the cap");
         let mut out = Recorder {
             out: &mut self.applied,
         };
-        self.lists.apply(frame, &mut out).1
+        let landed = self.lists.apply(frame, &mut out).1;
+        self.lists.confirm_all();
+        landed
     }
 }
 
@@ -147,6 +152,8 @@ struct Rig {
     half: Half,
     /// The settings each message carries: the queue's own at its start.
     settings: StepSettings,
+    /// The render half's mailbox.
+    inbox: Inbox,
 }
 
 impl Rig {
@@ -182,11 +189,19 @@ impl Rig {
             store,
             half,
             settings: step_settings,
+            inbox: Inbox::default(),
         }
     }
 
     /// One frame: the message (the mirror's changes since the last), then the bake half's step.
     fn step(&mut self) {
+        let msg = self.message();
+        self.run(msg);
+    }
+
+    /// The next frame's message (the mirror's changes since the last), sent: its arrivals are
+    /// counted by the mailbox until a list made from it is applied.
+    fn message(&mut self) -> FrameMessage {
         let changed = std::mem::take(&mut self.mirror.changed);
         let (window, key) = &mut self.seen;
         let first = window.is_none();
@@ -206,15 +221,24 @@ impl Rig {
             lod_radius: None,
             focal_px: None,
         };
-        let msg = FrameMessage {
+        let frame = self.half.frame;
+        FrameMessage {
+            frame,
             start: StepStart::now(),
             view,
             notes: n,
             sky: 0,
             key: None,
             settings: self.settings,
-            arrivals: self.queue.inbox.take(),
-        };
+            arrivals: self.inbox.take(frame),
+            landed: Vec::new(),
+        }
+    }
+
+    /// The bake half's step on `msg` (the newest, or several coalesced); its lists apply in the
+    /// same call, which answers every message up to it.
+    fn run(&mut self, msg: FrameMessage) {
+        let frame = msg.frame;
         self.queue
             .step(
                 &mut self.shadow,
@@ -224,6 +248,16 @@ impl Rig {
                 &mut self.half,
             )
             .expect("the step runs");
+        self.inbox.answered(frame);
+    }
+
+    /// The public reads as the frame makes them.
+    fn read(&self) -> QueueRead<'_> {
+        QueueRead {
+            queue: &self.queue,
+            store: &self.store,
+            inbox: &self.inbox,
+        }
     }
 
     /// An edit's box, mirrored and handed to the queue as the frame does.
@@ -236,7 +270,7 @@ impl Rig {
         for x in lo.0[0].div_euclid(64)..=hi.0[0].div_euclid(64) {
             self.mirror.changed.push(ChunkCoord([x, 0, 0]));
         }
-        self.queue.invalidate(lo.0, hi.0);
+        self.inbox.push_box(lo.0, hi.0);
     }
 
     /// Steps until `pred` holds, at most 400 frames.
@@ -339,8 +373,8 @@ fn a_dig_is_served_whole_in_the_edits_step() {
             && r.half.flights.is_empty()
     });
     // Two landings of 40 KiB wait under the 64 KiB cap.
-    let landing = |step| WriteList {
-        step,
+    let landing = |frame| WriteList {
+        frame,
         writes: vec![Write {
             offset: 1 << 30,
             data: vec![0; 40 << 10],
@@ -393,7 +427,7 @@ fn a_dig_is_served_whole_in_the_edits_step() {
     // order, and what the cap leaves waits.
     let carried: Vec<&Applied> = applied.iter().filter(|a| a.offset == 1 << 30).collect();
     let n = carried.len();
-    let waiting: Vec<u64> = rig.half.lists.waiting.iter().map(|l| l.step).collect();
+    let waiting: Vec<u64> = rig.half.lists.waiting.iter().map(|l| l.frame).collect();
     assert_eq!(
         waiting.iter().take(2 - n).copied().collect::<Vec<_>>(),
         [901, 902][n..],
@@ -446,7 +480,7 @@ fn an_edit_reads_unsettled_before_the_next_step() {
     let ready = |r: &Rig| {
         (0..CHUNKS[0]).all(|x| r.store.block(ChunkCoord([x, 0, 0])).is_some())
             && r.half.flights.is_empty()
-            && r.queue.digs_settled()
+            && r.read().digs_settled()
     };
     let (mut waits, mut eager) = (Rig::new(None), Rig::new(None));
     waits.until("every chunk holds a block", ready);
@@ -457,15 +491,16 @@ fn an_edit_reads_unsettled_before_the_next_step() {
         r.queue.faceless.insert(beside);
         r.queue.blocked.insert(beside, Default::default());
     }
-    assert!(waits.queue.settled(&waits.store, ChunkCoord(beside), false));
+    assert!(waits.read().settled(ChunkCoord(beside), false));
     let (lo, hi) = ([0, 20, 4], [3, 23, 7]);
     waits.carve(lo, hi);
     eager.carve(lo, hi);
-    let arrivals = eager.queue.inbox.take();
+    let arrivals = eager.inbox.take(1_000);
+    eager.inbox.answered(1_000);
     eager
         .queue
-        .take_message(eager.settings, arrivals, eager.world.materials());
-    let (w, e) = (&waits.queue, &eager.queue);
+        .take_message(1_000, eager.settings, arrivals, eager.world.materials());
+    let (w, e) = (waits.read(), eager.read());
     assert_eq!(w.digs_settled(), e.digs_settled());
     assert_eq!(w.boxes_waiting(), e.boxes_waiting());
     assert_eq!(w.empty(), e.empty());
@@ -476,28 +511,24 @@ fn an_edit_reads_unsettled_before_the_next_step() {
                 let c = ChunkCoord([x, y, z]);
                 for absent in [false, true] {
                     assert_eq!(
-                        w.settled(&waits.store, c, absent),
-                        e.settled(&eager.store, c, absent),
+                        w.settled(c, absent),
+                        e.settled(c, absent),
                         "settled {c:?} {absent}"
                     );
                 }
-                assert_eq!(
-                    w.passed(&waits.store, c),
-                    e.passed(&eager.store, c),
-                    "passed {c:?}"
-                );
+                assert_eq!(w.passed(c), e.passed(c), "passed {c:?}");
                 assert_eq!(w.tracks(c), e.tracks(c), "tracks {c:?}");
             }
         }
     }
     assert!(
-        !w.settled(&waits.store, ChunkCoord(beside), false),
+        !w.settled(ChunkCoord(beside), false),
         "the box's faceless neighbour reads unsettled"
     );
-    assert!(!w.passed(&waits.store, ChunkCoord(beside)));
+    assert!(!w.passed(ChunkCoord(beside)));
     // The step takes the box: the books then stand as the eager queue's.
     waits.step();
-    assert!(waits.queue.inbox.take().is_empty());
+    assert!(waits.inbox.take(u64::MAX).is_empty() && !waits.inbox.has_box());
     assert!(!waits.queue.faceless.contains(&beside) && !waits.queue.blocked.contains_key(&beside));
     eager.step();
     assert!(
@@ -633,3 +664,5 @@ fn a_dig_job_is_planned_ahead_of_an_open_job_that_is_not_a_digs() {
         );
     }
 }
+
+mod routing;
