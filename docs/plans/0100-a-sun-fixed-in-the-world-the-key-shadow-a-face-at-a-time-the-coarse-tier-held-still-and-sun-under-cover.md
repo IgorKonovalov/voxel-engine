@@ -1203,3 +1203,126 @@ now"; at the tunnel "I guesss 4a was best" (`off`).
   - (b) 5e, the terraces under `key horizon walk` (5d was skipped, so it had no before).
   - **Recommended reading:** (b), the last launch; then Portable takes nothing from it and
     `ray-record` is withdrawn. Under (a) `ray-record` stays a setting, off.
+
+## Amended 2026-11-25 (owner: questions 8, 9 and 10 answered)
+
+The three questions of "Amended 2026-11-25 (architect, after the window)" are answered.
+Nothing was run for this section. ADR-0084 is rewritten with it (still proposed; the close
+accepts it), so Phase 9 no longer waits on anything of the architect's.
+
+### The answers
+
+- **Question 8 (sun under cover, the default): (c)** (owner, 2026-11-25). `off` stays the
+  default everywhere; `ray` and `record` stay settings a flag away; sun under cover goes to
+  the follow-on plan with the near shadow.
+- **Question 9 (at the tunnel, what blinked): (b)** (owner, 2026-11-25). The edges and dots
+  of shadows shimmering (the wobble's kind).
+- **Question 10 (on the RENOIR, which run was "the best"): (b)** (owner, 2026-11-25). 5e,
+  the terraces under `key horizon walk`.
+
+### What follows from question 8: Phase 9's scope, the conditions resolved
+
+"Phase 9, rewritten" already holds every item below behind a condition; this resolves the
+conditions and changes nothing else. Its done-when lines "If `ray` is the default" and "If
+`record` is the default" do not apply; "If `off` stays" does. The whole of Phase 9:
+
+1. **No default changes.** `Lighting::default()` and every profile's row keep `key_cover
+   off`, `key_at hit`, `key_horizon march`. No golden is re-blessed, no frame-budget row
+   moves: `gpu_outdoor_golden.rs`, `golden/`, `docs/nfr.md` and `docs/nfr/02-frame-budget.md`
+   leave the phase's files.
+2. **`ray-record` is withdrawn:** `KeyCover::RayRecord`, its band blend in `key_cover_near`
+   and `key_cover_far`, its flag value, its inert condition (`lighting.key_far_mix`'s row
+   returns to what it was before Phase 6), its menu and banner words, the rig's token; the
+   settings-rows walk's test value for `lighting.key_cover` becomes `record`.
+3. **`centre` is withdrawn:** `KeyAt::Centre`, `key_centre_point`, its flag bit, flag value,
+   words and the rig's token.
+4. **These stay settings, off by default:** `key_cover ray` and `record`; `key_at face` and
+   `face-smooth`; `key_horizon walk`.
+5. **The penumbra's wiring** under `key far column`, with its `gpu_sun` test and the inert
+   table's row, as "Phase 9, rewritten" states them.
+6. **The length check** of `the_column_map_is_the_top_of_solid` back to an equality.
+7. **No image test** beyond item 5's: no default is picked. The CPU claims stand (the
+   withdrawn names are refused; no table, menu, banner or doc holds them; the defaults are
+   pinned from the profiles).
+8. **The gate** as written: the gate tier and the whole gpu tier at the tip, the `sole`
+   tests, clippy, fmt, deny, the doc gates; the golden-holding binaries pass unchanged.
+
+**Order in the lane.** Phase 9 and Phase 8b both edit `apps/flythrough/tests/gpu_wobble.rs`
+and `gpu_wobble/`, so Phase 9 starts once Phase 8b's test files are committed (the rows 8b
+reads use neither withdrawn token). It does not wait for 8b's table.
+
+### What follows from question 10
+
+`ray-record` leaves (item 2 above; the ruling's "unless question 10's answer is (a)" is
+closed). **Portable takes no new value:** what the owner called the best there was the
+terraces under `walk`, a launch with no before (5d was skipped) and "wobble is hard" beside
+it; `walk` read +1.41 ms of temporal pass on that adapter at that eye. Portable keeps
+`march`, `off`, `hit`, as every profile does.
+
+### What follows from question 9: Phase 8c is replaced by a fourth pose of Phase 8b
+
+The earlier reading guessed an area event (the sky term's source switching, or the
+exposure) and built Phase 8c's measure for one: connected areas of 400 pixels moving 8
+levels. The owner saw edges and dots shimmering. That measure cannot see it, and Phase 8b's
+can (a display pixel that reverses). **Ruled: Phase 8c is not run as written.** Its event
+table and its exposure trace are dropped; (c) and (d) are not what he saw. What it keeps is
+its pose, its fresh start with no hold, and its question, asked with 8b's instrument:
+
+### Phase 8b, the slot's pose (exploration, a reading; replaces Phase 8c)
+- **Owner skill:** dev
+- **What:** No production code. Phase 8b's move, size, adapter and measure at a fourth pose:
+  the tunnel's slot (`--source outdoor --spawn inside --time 12:00`, the eye Phase 5
+  recorded, the defaults).
+  - **One more class, at this pose:** the **shadow edge**, the display pixels whose lighting
+    pixel lies within 3 lighting pixels of a place where the key value crosses 0.5 between
+    two neighbours; the rest of the picture beside it. 8b's classes are printed as well.
+    (The dev may print the edge class at the other three poses; it is not asked for.)
+  - **The rows:** `calm`, `keyoff`, `keycover=ray`, `keycover=record` (the owner's three
+    launches and the floor). If the fault is shown, 8b's stage rows too.
+  - **The store:** as 8b's other poses hold it, and once more under `calm` alone from a
+    fresh start with the queue stepping as the fly-through steps it and no hold: 60 s at
+    the spawn's view, then the move (the owner's state; a fade is not a reversal, so the
+    landings do not count by themselves).
+- **Files touched:** as Phase 8b.
+- **Done when:** the log holds the pose's table (row, segment, class: the share reversing),
+  a still under the untracked `live/`, the load beside each run, and one line naming what
+  shimmers at the slot under `calm`: **the sun's term at an edge** (the edge class reverses
+  more than the rest, and `keyoff` removes at least half of its reversals), **not the sun's
+  term** (`keyoff` leaves over half: the line names the class that holds them and, at its
+  lighting pixels, the sky term's source word in the three frames of a reversal), or
+  **nothing shown headless**. **Stop rule:** the fault is shown only if some class at the
+  slot under `calm` reverses more, in the same segment, than the canopy pose's shadowed
+  class does (where the owner saw no wobble: the measure's floor). If none does, that is the
+  result: the table is reported, no stage row is read, nothing is built, and the slot waits
+  for a still at the follow-on plan's window. Readings only, run as Phase 8b's.
+
+**Who runs it.** Phase 8b's dev agent takes it as its last pose; if that agent has handed
+back, a fresh one runs it on 8b's rig. The Implementation log's 8c row is the dev's to mark
+as replaced by this pose. The addition for the orchestrator to hand over:
+
+> Phase 8b gains a fourth pose, the tunnel's slot, and Phase 8c is not run (the plan's
+> section "Amended 2026-11-25 (owner: questions 8, 9 and 10 answered)", "Phase 8b, the
+> slot's pose"). After your three poses: the same move, size and measure at `--source
+> outdoor --spawn inside --time 12:00`, Phase 5's eye; add a shadow-edge class (within 3
+> lighting pixels of the key value crossing 0.5); rows `calm`, `keyoff`, `keycover=ray`,
+> `keycover=record`; `calm` once more from a fresh start with the queue stepping and no
+> hold (60 s, then the move). Done when the log holds the table, a still, and one line:
+> the sun's term at an edge (`keyoff` removes at least half of the edge class's
+> reversals), not the sun's term (name the class and the sky source word), or nothing
+> shown headless (no class reverses more than the canopy's shadowed class: report, read no
+> stage rows). No production code.
+
+**Where the slot's fault goes.** By the owner's answer it is the wobble's kind, so it is a
+subject of the follow-on plan whatever the pose's line says; the line says whether the sun's
+term is its source there. "Under Plan 0098's leftovers" (Phase 8c's last sentence) no longer
+applies. `docs/backlog.md`'s entry is refreshed with this.
+
+### After Phase 9, restated
+
+The follow-on plan (`docs/backlog.md`, "The sun's term at small faces") now carries: the
+wobble on sunlit faces in motion and at rest; the tunnel slot's shimmer; the near shadow's
+hole with the contact ray as an arm; **sun under cover as a default** (`ray`, `record` or a
+new source, and whether the key bake runs with no reader); `walk` as a default. It is
+drafted from Phase 8b's table, the slot's pose included. Left for the close ceremony: the
+file name of ADR-0084 still spells its first title (kept so the links hold); the architect
+renames it, or leaves it, when the plan's own move repairs the links.
