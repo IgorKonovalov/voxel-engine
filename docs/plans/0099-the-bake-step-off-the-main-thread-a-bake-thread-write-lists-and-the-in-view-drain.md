@@ -1536,6 +1536,193 @@ its Decision (the one exception to "never waits", and the edit's frame's second 
 question 6's (b) and (c) are among its alternatives. Nothing is owed to its Outcome for this
 at the close.
 
+## Amended 2026-11-25 (architect, ruling on Phase 4c's stop: the table slots)
+
+Read against `11840dc5`: the loop (`JobLoop`, `plan_rounds`, `fill_entries`, `collect`,
+`close_ended`, `withdraw`, `bake/job_loop.rs`), the one-shot loop (`run_jobs`, `bake/job.rs`),
+the tables buffer (`BakePipeline`, `bake/pipeline.rs`), the render half (`write_job_table`,
+`refresh_tables`, `GpuHalf::send`, `bake/issue.rs`), the ops (`Op`, `bake/link.rs`), the entry's
+slot word (`FaceState::input`, `bake_round` and `bake_table_slot` in `bake.wgsl`), the dig's
+opening (`open_now`, `bake/queue/digs.rs`), the pooled level (`open_step`,
+`bake/queue/step.rs`), `gpu_bake`'s one-job-a-submit test, and the lane's
+`live/p4r/d{2,3}-*.log`. Where this section differs from the text above it wins. Nothing was
+built or run. **One new part, Phase 4c2, after Phase 3b and before Phase 4d.**
+
+### What a slot is, and why 16
+
+- **A slot is one row of one buffer.** `bake job tables` is a read-only storage buffer of
+  `OPEN_JOBS` (256) rows of `TABLE_SLOT_BYTES` (1 026 sixteen-byte words, 16 416 B): a job's
+  light candidate table and its chunk. It is 4 202 496 B, made once with the bake's pipeline,
+  one entry of bind group 3. The one-shot loop takes rows 0 to 239 (`LOOP_SLOTS`) and the live
+  queue the last 16 (`QUEUE_SLOTS`), kept apart so a one-shot bake between two of the queue's
+  submits leaves its open jobs' tables. An entry's face row names its job's row (word 17);
+  the shader reads the table and the LOD walk's origin chunk through it and nothing else:
+  `bake.wgsl` holds the row's stride and no count, and a face's random stream is its seed, its
+  key and its sample index.
+- **Nothing is sized by 16** but the queue's share of the 256: no shader constant, no readback
+  layout (a readback is the entries, 5.5 MiB a buffer whatever the jobs), no message size (an
+  `Op::Tables` names `(slot, chunk)`; the render half builds the table). 16 dates from Plan
+  0059 Phase 8 (`d45df554`), before there was a bake thread. No budget names it.
+- **What grows with more.** VRAM: nothing while the count stays inside the 256. Render thread:
+  a table is built and written once a job opened, not a slot, so the same jobs cost the same;
+  `refresh_tables` rewrites every open job's table when the mirror's light epoch moves, at
+  most 16 416 B each (1.05 MB at 64 open against 0.26 MB at 16), on the frames a light
+  changes. Bake thread: `plan_rounds` walks every open job's live faces a step and `collect`
+  finds a job by its slot, both linear in the jobs open. CPU memory: the open jobs' face
+  states, bounded by the samples admitted (three caps and a job, ruling 1 above), not by the
+  count.
+- **The count changes no record.** `gpu_bake`'s test bakes the same chunks with one job open
+  and with all of them open and asserts the blocks equal; the threaded store test asserts the
+  mode. **Lockstep stays at 16 all the same:** the count decides which step a job opens in, so
+  it moves every frame read before the drain, as the depth would.
+
+### Ruling: the thread's steps take more of the 256; a slot is not freed early
+
+**Why 16 binds with the thread on and not in lockstep.** Every live-queue face has
+`n_min == n_max`, so a job's rounds are all planned the first time the cap lets them: a job is
+opened, queued whole in one submit (two where the cap cuts it), and then holds its row with
+nothing left to plan until its last read-back closes it (`close_ended`). In lockstep that is
+the next step. With the thread it is three to four steps (plan, issue at a later take, map a
+frame on, the message, the step that reads it). A cap at Floor is about 670 000 samples
+(1.5 ms at 0.29 ms + 1.8 ns) and a job on the forest about 185 000 in the mean (3.7e7 samples
+a second over 200 jobs landed; a derivation from the once-a-second lines), far fewer for a
+coarse job at fill 0.1: 3.6 jobs a cap in the mean times 3.5 steps is 13 rows, so 16 holds
+the mean and nothing under it. The rig's synthetic is the same arithmetic exactly (Phase 4c2
+(1)).
+
+**Ruled: the count is the lever, by mode, as the depth is.**
+- **The queue's reserve is the last 64 rows of the 256**; the one-shot loop takes the first
+  192. No byte of VRAM, no shader or layout change. A one-shot bake's blocks do not depend on
+  the jobs it holds open (`gpu_bake`, above), and its submits are cut by `SUBMIT_SAMPLES` long
+  before 192 jobs.
+- **Lockstep and the pre-roll keep the last 16 of them**, to the letter.
+- **The bake thread's steps take 32, 48 or 64, by reading** (`THREAD_SLOTS`, set where the
+  depth is set, with the pool): the least at which the plans out of rounds with no slot free
+  are at most 2 % of the steps while in view waits; none: 64 and a report.
+- **At the join the loop returns to its 16**: a job open in a row outside them keeps it until
+  it closes, and no job opens into one after the pool stops.
+- **Records: none. Tiers: none. The slice: none** (a submit is still one priced cap, one a
+  frame). **Lockstep: bit-identical**, by construction (its 16 rows, its order of `free`) and
+  by the store test.
+
+**Rejected.**
+- **Free the row at the job's last issue, keep a completion record.** The GPU allows it (a
+  table write is queued ahead of the next submit, so a submit issued earlier read the old
+  row). But one dispatch still needs every one of its jobs' rows at once, so a submit holds at
+  most 16 jobs however early they free: at three and a half steps a job that is what 56 rows
+  give, and 64 rows give more for a constant. It would re-key the entries from the slot to a
+  job, give a failed map's redraw (`collect`, `!mapped`) a row to win back, and either move
+  lockstep's frames before the drain or run two bookkeepings by mode in the loop's core. If 64
+  still binds it is the next thing to weigh, on that reading.
+- **Smaller or larger jobs.** A job is a chunk at its tier; its size is the record's.
+- **Planning a job's rounds across more submits earlier.** They are already all planned at the
+  first.
+- **Admission by slots as well as samples.** It would stop the opening at 16 jobs: fewer
+  pending, the same rows held, no sample more a frame. The level stays samples.
+
+**The dig (not a new claim).** `open_now` gives a ring-1 job a free row, and where none is
+free withdraws a job; a job with rounds in flight frees its row only at its read-back. With
+every row held by jobs queued whole, a dig's ring 1 on the thread waits a round trip for one.
+More rows make a free one the usual case. Phase 3b reads its dig timelines at 16; Phase 4c2
+re-reads one sequence.
+
+### What the feed can reach
+
+**Not 0.85 by this alone.** The feed is the submits a frame times the drawn share. Unbound,
+the steps that sent nothing (286 to 309 a run, a fifth) send, and the short submits (38 % of
+them stop out of rounds, 97 to 98 % of those for a row) fill: the drawn share goes to about
+0.97 and the submits a frame to the steps a frame, **which read 0.72 to 0.74 at depth 3**
+(0.79 to 0.81 at depth 2). **Fed a frame about 0.70, between 0.65 and 0.75: a derivation.**
+The RENOIR reads 0.976 because its step is short against its frame, not because of its rows.
+
+**What holds the steps a frame: the bake step's wall against the frame** (a frame with no
+step loses its slice, ruling 1 above). Regime B, depth 3, both quiet RTX runs: the step's
+movable part 8.0 to 8.1 ms p50, 18.9 to 19.1 p99, mean 8.6 to 8.7, against a frame of 8.4 ms
+p50; by stage p50: submit 2.3 to 2.4, checks 1.8, collect 1.6, candidates 1.1, fades 0.8,
+summaries 0.3. At depth 2 it read 6.2 p50, mean 6.9. On the RENOIR the mean is 1.4 ms against
+24 ms. It grew with the work a step moves and will grow again with the rows. That is the next
+bound, named now; it is not this part's, and no stage is cut before it is read unbound.
+
+**In view on the RTX forest.** The view costs 1.89 to 2.00 s of slice, 1 260 to 1 330 frames
+fed whole (ruling 3 above); read at fed 0.57 it is 18.8 to 19.2 s, which the same arithmetic
+gives (2 210 to 2 330 frames at 8.4 ms). **At fed 0.70: 15.1 to 16.0 s; across 0.65 to 0.75,
+14.1 to 17.2 s.** At 0.85 it is the 11.6 to 13.3 s already written. What holds it past the
+feed is unchanged: the order (31 in-view refinements behind about 4 400 out-of-view chunks
+with no block; the Followup) and the 1.5 ms slice the 10 s line was not derived at.
+
+### Phase 4c2: The bake thread's table slots
+- **Owner skill:** dev
+- **What:** At Phase 3b's tip, before Phase 4d. The ruling: the queue's reserve of 64 rows
+  (`LOOP_SLOTS` 192); the loop's rows by mode (16 without the pool, `THREAD_SLOTS` with it,
+  set at the pool's start and returned at its stop as ruled); a knob for the reading,
+  `--bake-slots N` (16 to 64), as `--bake-depth` is: listed in `NOT_SETTINGS`, not a settings
+  row, and dev's call whether it stays. The `bake queue slice:` line gains the jobs open at
+  the draw (p50 and max) and the steps that neither were blocked nor sent a submit. No other
+  mechanism: no early free, no change to `plan_rounds`' order, the level, the depth's default
+  or the cap.
+- **Files touched:** `crates/svet-render/src/bake/{job_loop,budget}.rs`,
+  `bake/queue/{mod,lister,step,stats}.rs`, `bake/queue/split_tests/lister.rs`,
+  `crates/svet-render/src/frame/{baked,bake_thread}.rs`, `crates/svet-render/src/lib.rs`,
+  `crates/svet-render/src/settings.rs` (the `NOT_SETTINGS` row only; the file is near its
+  cap), `apps/flythrough/src/cli/{parse,queue_flags,mod}.rs`,
+  `apps/flythrough/src/run/{queue,loading}.rs`, `docs/flythrough.md`,
+  `docs/plans/logs/0099.md`. **Phase 3b edits `frame/{baked,bake_thread}.rs`,
+  `bake/queue/stats.rs`, `settings.rs`, the `cli` files, `run/{queue,loading}.rs` and
+  `docs/flythrough.md`: this part is not started beside it.** It does not touch
+  `render_frame`, `replay_a_frame` or `bake/link.rs`.
+- **Done when:**
+  (1) `the_threads_slots_hold_its_depth_in_caps` (CPU, under 1 s, the pooled device-less rig
+  of Phase 4c's (2), read-backs withheld, jobs of 198 750 samples in 318 faces of 625, a
+  4.0 ms slice at 2 ns: cap 2 000 000, depth 3). **At 16 rows:** two submits, of 2 000 000
+  (ten jobs whole and 20 faces of the eleventh) and 1 180 000 samples (the eleventh's 186 250
+  and five jobs), the second counted out of rounds with no slot free, and the third step
+  sends nothing and is not counted blocked. **At 32 rows:** three submits of 2 000 000 each,
+  21 jobs open after the second and 31 after the third, none stopped for a slot. **At 32 rows
+  and depth 4:** the fourth submit is 360 000 (the thirty-first's 161 250 and one job), out
+  of rounds with no slot free; **at 48** it is 2 000 000 with 41 open. Where the rig's job is
+  not 198 750 the figures are restated by the same arithmetic, in the test's comment.
+  (2) `lockstep_keeps_sixteen_slots_whatever_the_count` (CPU, under 1 s): the same jobs with
+  no pool and the count set to 64 plan 2 000 000 then 1 180 000 and hold 16 jobs, every slot
+  in the last 16 rows.
+  (3) `a_join_returns_the_loop_to_its_sixteen` (CPU, under 1 s): the pool stopped with 31
+  jobs open; the read-backs released, every job opened after the stop takes one of the last
+  16 rows, and once the 31 have closed the loop's free rows are those 16.
+  (4) The one-shot loop: `LOOP_SLOTS` is 192 and the two ranges do not meet (a `const`
+  assertion); `--binaries gpu_bake gpu_queue` pass, `gpu_bake`'s one-job-a-submit test among
+  them; `gpu_golden` once by name. **A golden that moves is reported, not re-blessed.**
+  (5) `the_threaded_queue_drains_to_the_lockstep_store` by name at the count picked:
+  bit-identical.
+  (6) **Reading, quiet, RTX Floor 1080p forest, thread on, depth 3, two runs each at 16, 32,
+  48 and 64, alternated** (16 is Phase 4c's reading taken again at this tip): fed a frame,
+  submits a frame, steps a frame, the steps that neither were blocked nor sent, out of rounds
+  and of them with no slot free, the blocked steps over the steps, the drawn share a submit,
+  the jobs open at the draw, wasted over drawn, the bake step's regime B movable p50, p99 and
+  mean with its submit, collect, checks and candidates stages, the render share p50 and p99,
+  the wall p50 and p99 while in view waits, in view landed. **The count is the least of 32,
+  48 and 64 that reads at most 2 % of the steps out of rounds with no slot free in both its
+  runs**; none: 64 and a report. Expected at it, a derivation and not a bar: the steps that
+  neither blocked nor sent under 50 a run (286 to 309 today), submits a frame within 0.03 of
+  the steps a frame, fed 0.65 to 0.75.
+  (7) At the count picked: Phase 3's bars on those runs (share p50 at most 1.0 ms, p99 at
+  most 4.0 ms, wall p50 at most 16.6 ms); **one RENOIR Portable forest run**: fed at least
+  0.95, wall p50 while in view waits at most 24.78 ms (Phase 4c's line), in view landed
+  within 30 s; **four RTX forest runs of Phase 3b's sequence A in regime B**: the frames and
+  the ms from the dig to ring 1 applied and the wait, beside Phase 3b's on the same rig.
+  **Stops, each reported to the architect with the stage table before Phase 4d, none chased:**
+  (a) fed a frame under 0.85 at the count picked with the steps a frame under 0.88: the bound
+  is the bake step's wall against the frame, as projected; (b) the steps a frame at the count
+  picked under 16's by more than 0.05, or fed at 64 not over 16's by 0.05: the rows are not
+  the bound, or cost the step what they feed; (c) blocked steps over 2 % at depth 3: one pair
+  at depth 4 beside it; (d) ring 1 applied later than Phase 3b read, or a Phase 3 bar missed.
+
+### The order: 4c, 3b, 4c2, 4d
+
+One lane, one dev at a time. Phase 4d's bars are read at the count Phase 4c2 picks; its
+done-when (2) stands as written (0.85, a miss disclosed with the stage that holds the steps a
+frame, nothing changed for it). By the projection above the RTX misses it on the step's wall;
+whether a stage of the step is cut for it is a ruling on Phase 4c2's stop (a), not Phase 4d's
+call. **No owner question:** the ruling spends no VRAM and no frame time, and loosens no bar.
+
 ## Data shapes
 
 ```rust
