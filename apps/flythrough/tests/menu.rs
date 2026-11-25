@@ -821,3 +821,42 @@ fn the_key_far_row_cycles_its_three_sources() {
     use svet_render::KeyFar;
     assert_eq!(seen, [KeyFar::Ray, KeyFar::Baked, KeyFar::Column]);
 }
+
+/// Plan 0100 Phase 9: over each profile's lighting the `key at`, `key horizon` and `key cover`
+/// rows read the profile's values (`hit`, `march`, `off`), and a whole cycle of each visits
+/// only the values that stand (no `centre`, no `ray-record`) and returns to the profile's.
+#[test]
+fn the_key_rows_start_at_the_profiles_and_cycle_the_standing_values() {
+    use svet_render::{Profile, RenderSettings};
+    for p in Profile::ALL {
+        let mut m = Modes::new(
+            RenderSettings::profile(p).lighting,
+            LightingResolution::Half,
+            0.0,
+        );
+        for (name, cycle) in [
+            (
+                "key at",
+                &["key at hit", "key at face", "key at face-smooth"][..],
+            ),
+            (
+                "key horizon",
+                &["key horizon march", "key horizon walk"][..],
+            ),
+            (
+                "key cover",
+                &["key cover off", "key cover ray", "key cover record"][..],
+            ),
+        ] {
+            let t = toggle(name);
+            let mut seen = vec![(t.get)(&m)];
+            for _ in 1..cycle.len() {
+                press(t, &mut m, 1.0);
+                seen.push((t.get)(&m));
+            }
+            assert_eq!(seen, cycle, "{} under {}", name, p.name());
+            press(t, &mut m, 1.0);
+            assert_eq!((t.get)(&m), cycle[0], "{} under {}", name, p.name());
+        }
+    }
+}

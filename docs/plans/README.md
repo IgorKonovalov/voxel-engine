@@ -9,14 +9,15 @@ and `vxe-<x>` reads as `svet-<x>`.
 
 **Next free number: 0104** (0101 the record by rule at every opening, approved 2026-11-24; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
 the sky around the camera; 0098 the calm light by default, closed 2026-11-24; 0099 the bake
-step off the main thread, drafted 2026-11-22; 0100 a sun fixed in the world, drafted 2026-11-23; ADRs are a separate sequence, see `../adrs/README.md` for its next
+step off the main thread, drafted 2026-11-22; 0100 a sun fixed in the world, closed 2026-11-25; ADRs are a separate sequence, see `../adrs/README.md` for its next
 free number). Plan 0095, the motion wobble (a calm key light in motion), closed 2026-11-21,
 v0.69.0. Plan 0097, the exposure's anchor by the sky around the camera, closed 2026-11-23,
 v0.70.0. Plan 0096, the bake queue's drain, closed 2026-11-23, v0.71.0. Plan 0098, the calm light
 by default, closed 2026-11-24, v0.72.0. Plan 0087, the rename to `svet`, closed 2026-11-24,
 v0.73.0 (the GitHub rename and the manual release run are owed: the backlog's "The rename's two
 owed steps"). Plan 0102, the removal of `own` (FSR 2 is the only upscaler), closed
-2026-11-25, v0.74.0.
+2026-11-25, v0.74.0. Plan 0100, a sun fixed in the world, closed 2026-11-25, v0.75.0, with the
+wobble it was written for still there (the backlog's "The sun's term at small faces").
 
 ## Active roster
 
@@ -41,7 +42,6 @@ owed steps"). Plan 0102, the removal of `own` (FSR 2 is the only upscaler), clos
 | [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
 | [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs, no ADR. After 0087 merges, beside 0089, before 0091. |
 | [0099](0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) | The bake step off the main thread: a bake thread, write lists, the in-view drain | approved 11-22 | ADR-0083 (proposed). After 0087; 0098 closed. Re-read owed (the dig). |
-| [0100](0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md) | A sun fixed in the world: the key shadow a face at a time, the coarse tier held still, sun under cover | approved 11-24 | M10, ADR-0084 (proposed). Lane starts at 0098's merge, beside 0099. |
 | [0101](0101-the-record-by-rule-at-every-opening-an-audit-on-the-real-scenes-first-then-the-three-exclusions-lifted.md) | The record by rule at every opening: an audit first, then the exclusions lifted | approved 11-24 | ADR-0085 (proposed). After 0100 P2 and 0099's close. |
 | [0103](0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md) | A pipeline cache for the renderer: the driver's cache through wgpu in an engine envelope, bytes the consumer keeps | draft, parked 11-24 | ADR-0087 (proposed). Parked: the driver's cache already warms a second start (logs/0103.md). |
 <!-- roster:end -->
@@ -251,8 +251,11 @@ its lane runs after Plan 0087 (Plans 0096 and 0098 are closed; owner, 2026-11-22
 against Plan 0098's dig is owed before its lane starts** (the plan's section "Inherited from
 Plan 0098", added at that close).
 
-**Plan 0100** (a sun fixed in the world, ADR-0084 proposed, superseding two clauses of ADR-0079
-at acceptance; from Plan 0098's window W3, the three faults the calm defaults leave: the noon
+**Plan 0100** (closed 2026-11-25, v0.75.0, ADR-0084 accepted, superseding two clauses of
+ADR-0079: no default changed but the bake's key ray at its cap; `key cover`, `key at` and `key
+horizon` are settings, off; the wobble is still there and no reading of the plan shows it; the
+follow-on plan is the backlog's "The sun's term at small faces". As drafted: a sun fixed in the
+world; from Plan 0098's window W3, the three faults the calm defaults leave: the noon
 terraces' shadow edge under the jitter, near trunks and leaves under the coarse tier, no sun
 under cover; the key shadow evaluated at the face's centre, a reading then a fix for the coarse
 tier, a ray from the face's centre near and the baked key record far where the column map
@@ -272,6 +275,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0100](done/0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md) | A sun fixed in the world: closed on the bake's key ray at its cap and three settings, off; no default changed; the wobble stays, to a follow-on plan; ADR-0084 accepted | 2026-11-25, v0.75.0 |
 | [0102](done/0102-remove-own-the-engines-own-upscaler-fsr-2-is-the-only-one.md) | Remove `own`, the engine's own upscaler: FSR 2 is the only one, `Off` renders at the output size; ADR-0086 accepted | 2026-11-25, v0.74.0 |
 | [0087](done/0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md) | The rename to `svet`: crates, `SVET_*`, `svet:logic`, `svet-tester` and its archive, the live docs, the harness; the GitHub rename and the manual release run owed | 2026-11-24, v0.73.0 |
 | [0098](done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md) | A calm light by default: no screen history, the column horizon's key shadow, far normal 4..8; a dig's ring 1 jumps the queue and holds a store record | 2026-11-24, v0.72.0 |

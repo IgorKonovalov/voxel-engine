@@ -67,18 +67,18 @@ fn key_ray_len() -> f32 {
 // The key light's visibility at a hit, the share of `key_light_at(p, n)` that arrives: 1 where
 // one shadow ray toward a uniform point of its disc reaches the sky, times its transmittance
 // through SHADOW_ABSORB materials, else 0; -1 where no key light falls on the face (none set, it
-// faces away, or LIGHTING_HOOK_KEY_OFF). Under LIGHTING_PENUMBRA_APPROACH the ray runs toward
+// faces away, or LIGHTING_HOOK_KEY_OFF). Under `approach` (`key_approach_at`) the ray runs toward
 // the disc's centre and the visibility is its closest-approach visibility (walk.wgsl's
 // `approach_on`) times its transmittance; under LIGHTING_HOOK_KEY_NO_JITTER (a reading hook) the
 // one ray runs toward the disc's centre. The temporal pass keeps its running mean in the
 // visibility pair's g and lights the face by `key_light_at` times that mean (ADR-0070's pair,
 // ADR-0027's ray).
-fn key_visibility(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>) -> f32 {
+fn key_visibility(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>, approach: bool) -> f32 {
     let k = key_light_at(p, n);
     if (all(k <= vec3<f32>(0.0)) || (params.lighting & LIGHTING_HOOK_KEY_OFF) != 0u) {
         return -1.0;
     }
-    if ((params.lighting & LIGHTING_PENUMBRA_APPROACH) != 0u) {
+    if (approach) {
         approach_on = true;
         approach_tan = max(tan(sky.key_radius), 1.0e-4);
         approach_min = 1.0;
@@ -94,6 +94,44 @@ fn key_visibility(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>) -> f
         return 0.0;
     }
     return exp(-absorb_tau);
+}
+
+// How far off the face's centre the near cover ray starts, in voxels: inside the air voxel in
+// front, so a caster a voxel from the face shades it (SHADOW_OFFSET's half voxel steps past it).
+const KEY_COVER_OFFSET: f32 = 0.01;
+
+// The near cover source (`Lighting::key_cover` `ray`, Plan 0100 Phase 6, ADR-0084) at cube-face
+// hit `rec`, shadow normal `ns`, seen by view `v`: where the far normal's
+// weight is under one half, the column horizon at `key_at`'s point
+// (`key_horizon_at`, the temporal pass's own read) and, where that reads under 1, the larger of
+// it and one ray from the face's centre (the level-0 voxel's behind the hit, half a voxel along
+// `ns`) toward the disc's centre, times its transmittance; under LIGHTING_PENUMBRA_APPROACH the
+// ray's closest-approach score. No random number, no history: a function of the face and the
+// frame's key direction. -1 where the arm is off or the face is past the near.
+fn key_cover_near(rec: HitRecord, ns: vec3<f32>, v: View) -> f32 {
+    if ((params.lighting2 & LIGHTING2_KEY_COVER_RAY) == 0u || rec.axis < 0 || rec.entity
+        || rec.field) {
+        return -1.0;
+    }
+    if (far_normal_weight(v, rec.t) >= 0.5) {
+        return -1.0;
+    }
+    let h = key_horizon_at(rec.p, ns, rec.axis);
+    if (h >= 1.0) {
+        return h;
+    }
+    let centre = vec3<f32>(store_voxel(rec.p, ns)) + 0.5 + 0.5 * ns;
+    let lift = ray_lift;
+    ray_lift = vec3<f32>(0.0);
+    let approach = (params.lighting & LIGHTING_PENUMBRA_APPROACH) != 0u;
+    approach_on = approach;
+    approach_tan = max(tan(sky.key_radius), 1.0e-4);
+    approach_min = 1.0;
+    let hit = sky_shadowed(centre + ns * KEY_COVER_OFFSET, sky.key_dir, key_ray_len());
+    approach_on = false;
+    ray_lift = lift;
+    let r = select(select(1.0, clamp(approach_min, 0.0, 1.0), approach) * exp(-absorb_tau), 0.0, hit);
+    return max(h, r);
 }
 
 // The random-number dimensions of the sky rays, two a ray, above the key light's.

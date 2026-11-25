@@ -476,6 +476,9 @@ impl RenderSettings {
         ("lighting.sky_down_skip", Live),
         ("lighting.column_wait", Live),
         ("lighting.key_step", Live),
+        ("lighting.key_at", Live),
+        ("lighting.key_horizon", Live),
+        ("lighting.key_cover", Live),
         ("look.normal_mode", Live),
         ("look.view", Settle),
         ("look.translucent_layers", Live),
@@ -922,6 +925,17 @@ fn lighting_test_value(l: &mut Lighting, name: &str) -> bool {
         "key_cap" => l.key_cap = if l.key_cap == 0.0 { 1536.0 } else { 0.0 },
         "sky_down_skip" => flip(&mut l.sky_down_skip),
         "key_step" => l.key_step = if l.key_step == 3.0 { 6.0 } else { 3.0 },
+        "key_at" => l.key_at = l.key_at.next(),
+        "key_horizon" => l.key_horizon = l.key_horizon.next(),
+        // The record acts at every distance; `ray` alone acts only where a voxel spans more
+        // than the far normal's band, which a small image may not hold.
+        "key_cover" => {
+            l.key_cover = if l.key_cover == crate::frame::KeyCover::Record {
+                crate::frame::KeyCover::Off
+            } else {
+                crate::frame::KeyCover::Record
+            }
+        }
         "filter" => flip(&mut l.filter),
         "atrous_iterations" => l.atrous_iterations = if l.atrous_iterations == 2 { 4 } else { 2 },
         "history" => other(&mut l.history, HistoryKill::Edits, HistoryKill::Gradient),

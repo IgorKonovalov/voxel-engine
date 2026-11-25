@@ -118,7 +118,9 @@ pub use self::alloc::*;
 use self::columns::ColumnMap;
 #[cfg(test)]
 pub(crate) use self::columns::column_is_final;
-pub use self::columns::{COLUMN_CELL, COLUMN_CELLS, COLUMN_NONE};
+pub use self::columns::{
+    COLUMN_BLOCK, COLUMN_BLOCKS, COLUMN_CELL, COLUMN_CELLS, COLUMN_NONE, column_coarse_texel,
+};
 pub use self::format::*;
 pub use self::lights::*;
 use self::slot::*;
@@ -593,9 +595,27 @@ impl GpuWorld {
         self.columns.texture()
     }
 
-    /// The column map's bytes on the GPU.
+    /// The column map's bytes on the GPU, its coarse levels' rows included.
     pub fn column_map_bytes(&self) -> u64 {
         self.columns.bytes()
+    }
+
+    /// The window's size in chunks along x and y: the column map's tiles per axis, which
+    /// place its coarse levels ([`column_coarse_texel`]).
+    pub fn column_tiles(&self) -> [i32; 2] {
+        self.columns.tiles()
+    }
+
+    /// The bytes of the column map's rows that hold its coarse levels.
+    pub fn column_coarse_bytes(&self) -> u64 {
+        self.columns.coarse_bytes()
+    }
+
+    /// The window's highest column top as the map holds it (the largest tile texel of its
+    /// coarse levels), or
+    /// [`COLUMN_NONE`].
+    pub fn column_top_max(&self) -> i32 {
+        self.columns.top_max()
     }
 
     /// Column-map tiles written since the mirror was made.

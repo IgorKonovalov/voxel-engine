@@ -264,3 +264,76 @@ fn a_changed_value_names_its_field() {
     );
     assert_eq!(row(&a, "output_hint"), "Some([1920, 1080])");
 }
+
+/// Plan 0100 Phase 1: `lighting.key_at` is a row of its own, applied live, and every profile
+/// holds `hit` (the image before the setting) until the owner's pick.
+#[test]
+fn the_key_at_row_is_live_and_every_profile_reads_at_the_hit() {
+    assert_eq!(
+        RenderSettings::FIELDS
+            .iter()
+            .filter(|&&(n, _)| n == "lighting.key_at")
+            .map(|&(_, c)| c)
+            .collect::<Vec<_>>(),
+        [ApplyClass::Live]
+    );
+    for p in Profile::ALL {
+        let s = RenderSettings::profile(p);
+        assert_eq!(s.lighting.key_at, crate::frame::KeyAt::Hit, "{}", p.name());
+    }
+}
+
+/// Plan 0100 Phase 5b: `lighting.key_horizon` is a row of its own, applied live, and every
+/// profile holds `march`, the image before the setting (Plan 0100 Phase 9 picks).
+#[test]
+fn the_key_horizon_row_is_live_and_every_profile_marches() {
+    assert_eq!(
+        RenderSettings::FIELDS
+            .iter()
+            .filter(|&&(n, _)| n == "lighting.key_horizon")
+            .map(|&(_, c)| c)
+            .collect::<Vec<_>>(),
+        [ApplyClass::Live]
+    );
+    for p in Profile::ALL {
+        let s = RenderSettings::profile(p);
+        assert_eq!(
+            s.lighting.key_horizon,
+            crate::frame::KeyHorizon::March,
+            "{}",
+            p.name()
+        );
+        let t = s
+            .with_test_value("lighting.key_horizon")
+            .expect("a test value");
+        assert_eq!(t.lighting.key_horizon, crate::frame::KeyHorizon::Walk);
+    }
+}
+
+/// Plan 0100 Phase 6: `lighting.key_cover` is a row of its own, applied live, and every profile
+/// holds `off`, the image before the setting (Plan 0100 Phase 9 kept it); its test value is
+/// `record`, which acts at every distance.
+#[test]
+fn the_key_cover_row_is_live_and_every_profile_is_off() {
+    assert_eq!(
+        RenderSettings::FIELDS
+            .iter()
+            .filter(|&&(n, _)| n == "lighting.key_cover")
+            .map(|&(_, c)| c)
+            .collect::<Vec<_>>(),
+        [ApplyClass::Live]
+    );
+    for p in Profile::ALL {
+        let s = RenderSettings::profile(p);
+        assert_eq!(
+            s.lighting.key_cover,
+            crate::frame::KeyCover::Off,
+            "{}",
+            p.name()
+        );
+        let t = s
+            .with_test_value("lighting.key_cover")
+            .expect("a test value");
+        assert_eq!(t.lighting.key_cover, crate::frame::KeyCover::Record);
+    }
+}

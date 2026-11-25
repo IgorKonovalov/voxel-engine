@@ -16,8 +16,14 @@
     reason = "a reading rig: its arms leave fields unread, its runs time themselves"
 )]
 
+#[path = "gpu_wobble/coarse.rs"]
+mod coarse;
+#[path = "gpu_wobble/cover.rs"]
+mod cover;
 #[path = "gpu_wobble/fsr.rs"]
 mod fsr;
+#[path = "gpu_wobble/owner_move.rs"]
+mod owner_move;
 mod support;
 #[path = "gpu_wobble/terraces.rs"]
 mod terraces;
@@ -104,6 +110,23 @@ struct Arm {
     /// `Lighting::light_history_far` (`hfar`).
     far_light_wide: bool,
     light_history_far: bool,
+    /// Plan 0100 Phase 1's arms: where on a cube face the key light's column horizon is read
+    /// (`keyat=hit|face|face-smooth`).
+    key_at: svet_render::KeyAt,
+    /// Plan 0100 Phase 5b's arm: how the column horizon reads the map (`keyhorizon=march|walk`).
+    key_horizon: svet_render::KeyHorizon,
+    /// Plan 0100 Phase 6's arm: the source under cover (`keycover=off|ray|record`).
+    key_cover: svet_render::KeyCover,
+    /// Plan 0100 Phase 3's arms, read by `coarse::reading` alone: the coarse pass's samples a
+    /// brick direction (`coarse=N`, the fly-through's by default), the full-first radius
+    /// (`ff=N|none`, the fly-through's by default) and the baked sky term read by the face's
+    /// own normal (`skyface`, `--sky-normal face`).
+    coarse: u32,
+    full_first: Option<i32>,
+    sky_face: bool,
+    /// Plan 0100 Phase 8b's size token: the output size (`out=WxH`, [`OUT`] by default); the
+    /// internal size is it over the scale.
+    out: [u32; 2],
 }
 
 impl Arm {
@@ -122,7 +145,9 @@ impl Arm {
     /// on), `fly=N` (the fly's frames) and
     /// `normals` (the normals view); Plan 0098 Phase 5's arms `wide` (`far_light_wide`) and
     /// `hfar` (`light_history_far`); Plan 0098 Phase 9's `hist` (`light_history` on, after
-    /// `calm`) and `baked` (`key_far baked`).
+    /// `calm`) and `baked` (`key_far baked`); Plan 0100 Phase 1's `keyat=hit|face|face-smooth`
+    /// (`Lighting::key_at`); Plan 0100 Phase 3's `coarse=N`, `ff=N|none` and `skyface`; Phase 5b's
+    /// `keyhorizon=march|walk`; Phase 6's `keycover=off|ray|record`; Phase 8b's `out=WxH`.
     fn parse() -> Self {
         Self::from_spec(&std::env::var("SVET_WOBBLE").unwrap_or_else(|_| "default".into()))
     }
@@ -174,6 +199,13 @@ impl Arm {
             normals: false,
             far_light_wide: false,
             light_history_far: false,
+            key_at: flythrough::default_lighting().key_at,
+            key_horizon: flythrough::default_lighting().key_horizon,
+            key_cover: flythrough::default_lighting().key_cover,
+            coarse: svet_render::DEFAULT_COARSE_SAMPLES,
+            full_first: Some(svet_render::DEFAULT_NEAR),
+            sky_face: false,
+            out: OUT,
         };
         for t in spec.split(',') {
             let (k, v) = t.split_once('=').unwrap_or((t, ""));
@@ -242,6 +274,20 @@ impl Arm {
                 "wide" => a.far_light_wide = true,
                 "hfar" => a.light_history_far = true,
                 "fly" => a.fly = v.parse().unwrap(),
+                "keyat" => a.key_at = svet_render::KeyAt::from_name(v).expect("keyat=NAME"),
+                "keyhorizon" => {
+                    a.key_horizon = svet_render::KeyHorizon::from_name(v).expect("keyhorizon=NAME")
+                }
+                "keycover" => {
+                    a.key_cover = svet_render::KeyCover::from_name(v).expect("keycover=NAME")
+                }
+                "coarse" => a.coarse = v.parse().unwrap(),
+                "ff" => a.full_first = (v != "none").then(|| v.parse().unwrap()),
+                "skyface" => a.sky_face = true,
+                "out" => {
+                    let (w, h) = v.split_once('x').expect("out=WxH");
+                    a.out = [w.parse().unwrap(), h.parse().unwrap()];
+                }
                 other => panic!("unknown arm token {other}"),
             }
         }
@@ -277,13 +323,13 @@ fn forest_rig(r: i32) -> Option<(Rig, Camera)> {
 
 fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
     let internal = if arm.upscaler == "off" {
-        OUT
-    } else if arm.scale == 1.5 {
+        arm.out
+    } else if arm.scale == 1.5 && arm.out == OUT {
         INTERNAL
     } else {
-        OUT.map(|n| (n as f32 / arm.scale).round() as u32)
+        arm.out.map(|n| (n as f32 / arm.scale).round() as u32)
     };
-    let mut f = Frame::with_sizes(&rig.device, internal, OUT);
+    let mut f = Frame::with_sizes(&rig.device, internal, arm.out);
     match arm.upscaler {
         "fsr2" => f.set_upscaler_kind(
             &rig.device,
@@ -330,6 +376,14 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
         source_fade: arm.source_fade,
         far_light_wide: arm.far_light_wide,
         light_history_far: arm.light_history_far,
+        key_at: arm.key_at,
+        key_horizon: arm.key_horizon,
+        key_cover: arm.key_cover,
+        sky_normal: if arm.sky_face {
+            svet_render::SkyNormal::Face
+        } else {
+            flythrough::default_lighting().sky_normal
+        },
         store_read: if arm.store_read_face {
             svet_render::StoreRead::Face
         } else {

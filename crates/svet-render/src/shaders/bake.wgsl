@@ -36,9 +36,10 @@
 // Under a key light (`job.key` 1, ADR-0079) a face's samples below `key_n` each also draw one
 // ray from the sample's point toward a uniform point of the light's disc (`disc_direction`
 // about `job.key_dir`, radius `job.key_radius`), through the same shadow walk as the sky rays,
-// capped at `job.radius`: a ray that finds no rock reached the light (an absent chunk is air,
-// the light pass's rule for the key ray), counted open with probability its transmittance
-// through SHADOW_ABSORB materials. A face that looks away from the light (`n . l <= 0`) is
+// capped at `job.radius`, read by the sky rays' clause (`sky_ray_open`, ADR-0084): a ray that
+// finds no rock reached the light iff it ended (at its cap, on entering an absent chunk or on
+// leaving the window) at or above its column's top, so a ray that ends in air under a roof is
+// unlit (with `job.sky` bit 3, the reading hook, any end is lit); counted open with probability its transmittance through SHADOW_ABSORB materials. A face that looks away from the light (`n . l <= 0`) is
 // unlit and draws none. Its dimensions are its own, so the emissive and sky sums are the same
 // with the key light on and off. `key_open` returns the round's open rays.
 //
@@ -205,7 +206,7 @@ fn bake_round(
             let d = disc_direction(key_dir, job.key_radius, rand(px, BAKE_KEY_DIM), rand(px, BAKE_KEY_DIM + 1u));
             absorb_on = sky_styles;
             absorb_tau = 0.0;
-            let lit = !shadowed_styled_walk(shadow_origin(p, nf), d, job.radius, sky_coarse, sky_styles);
+            let lit = sky_ray_open(shadow_origin(p, nf), d, job.radius, sky_coarse, sky_styles, sky_end);
             absorb_on = false;
             if (lit && (absorb_tau == 0.0 || rand(px, BAKE_KEY_DIM + 2u) < exp(-absorb_tau))) {
                 key_open += 1u;
