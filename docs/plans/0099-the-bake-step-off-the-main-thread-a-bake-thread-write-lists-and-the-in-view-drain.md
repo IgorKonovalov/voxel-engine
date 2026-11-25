@@ -1,6 +1,6 @@
 # 0099: The bake step off the main thread: a bake thread, write lists the render thread applies, and the in-view drain
 
-> **Status:** in-progress (Phase 1 landed 2026-11-25); approved (owner, 2026-11-22; his answers are under "Risks & open questions":
+> **Status:** in-progress (Phases 1 and 2 landed 2026-11-25); approved (owner, 2026-11-22; his answers are under "Risks & open questions":
 > the recommended option in each, question 2 by his own words). **After: 0096, 0098, 0087** (owner, 2026-11-22:
 > drafted now, the lane after the rename; then 0089 and 0093, 0091, ...).
 > **Re-read 2026-11-24** after Plan 0098 (v0.72.0) and the rename (v0.73.0): Phases 1 to 3 are
@@ -772,7 +772,7 @@ Readings, gate counts and attempts: [`logs/0099.md`](logs/0099.md).
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: the step's split on the line, the base readings | dev | done; render p50 0.690 ms on the quiet RTX forest (the stop did not fire); the drained rig reaches 0 in view waiting on both adapters; RENOIR drained A's ring 1 lands D+3 or D+4 for digs 2 and 3 (reported); most readings loaded, quiet re-reads owed (log) | committed with this row |
-| 2: the queue in two halves, in lockstep | dev | in progress: done-whens 1 to 5 and 7 to 9 pass; (6) read loaded (13.13 ms against 13.77); the frame message as one owned value, the soak test and a quiet re-read left (log, resume notes) | `074665fc` (wip) |
+| 2: the queue in two halves, in lockstep | dev | done; done-whens 1 to 5 and 7 to 10 pass; (6) re-read at the last commit at load 1.94 at the start, 2.25 at the end: step p50 10.73 ms against Phase 1's 13.77; the frame message carries boxes and masks through a mailbox the public reads consult; the knob setters stay direct writes (log) | `f0d06f1a` |
 | 3: the bake half on its own thread | dev | not started | |
 | 4: the bake thread keeps the slice fed | dev | not started | |
 | 5: the owner's window | human | not started | |
@@ -797,6 +797,17 @@ Readings, gate counts and attempts: [`logs/0099.md`](logs/0099.md).
 - (dev, Phase 1) The edit's wait is read in the dig rig (`dig_along_timed`: the world's op and
   `Frame::invalidate`), not in the fly-through: the rig runs no listing beside the edit, so the
   read-lock contention of the plan's risk is not in it.
+- (dev, Phase 2) The stamp a read-back is compared against is the job's (the newest message
+  read when the job joined the loop), not the submit's. Every case done-when (2) names reads the
+  same under either; a job listed at 2, planned at 4, with an edit at 3 is staled under both.
+  Left for the architect's eye.
+- (dev, Phase 2) Files outside the phase's list: `crates/svet-world/src/stream/{mod,residency}.rs`
+  (`Streamer::full_chunks`, the owned residency snapshot), `crates/svet-render/src/lib.rs`
+  (`Residency`), every `QueueView` maker in `apps/flythrough/src/run/` and the rigs under
+  `apps/flythrough/tests/` and `crates/svet-render/tests/gpu_sun.rs`.
+- (dev, Phase 2) The knob setters (`Frame::set_bake_*`) and the app's `bake_queue_mut` writes
+  are not in the frame's message: they are set at load or by a key, not each step. Phase 3
+  routes them.
 - (architect, at the draft) The backlog entry "The bake step off the main thread" exists on
   `plan-0096` only; at that plan's merge it is marked taken by this plan.
 
