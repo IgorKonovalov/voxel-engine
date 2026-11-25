@@ -345,6 +345,105 @@ fn the_defaults_near_key_shadow_is_the_column_horizon() {
     }
 }
 
+/// Plan 0100 Phase 9 (ADR-0084): under `key far column` no key ray is cast at a cube face for
+/// the penumbra; `approach` scores the near cover ray where one is cast and changes nothing
+/// else. The rig is a slot in a roof (rock z 26..28 over x 32..60 but the slot x 38..42) over
+/// the floor, the sun at elevation 40 in the west: the floor at x 52.3..53.9 sees the sun's
+/// centre through the slot while its column horizon (lifted 2.5, under the roof's tops) reads
+/// 0, and the floor west of the roof (x 28..32) reads 1. At the near (the far normal's weight
+/// 0), over `Lighting::default()`'s light history and key far, three frames a run: under `key
+/// cover off` the key light's term shown at every floor pixel (the direct target's rgb) is the
+/// same f16 with `penumbra approach` as with `disc` on frames 1, 2 and 3; under `key cover ray`
+/// the two differ at some floor pixel whose horizon reads under 1 on frame 3, and are equal on
+/// every frame at every floor pixel whose horizon reads 1 (the default's slot, tagged the
+/// horizon's, on frame 3). One frame of 64 x 64 renders every run, its history dropped before
+/// each.
+#[test]
+fn the_approach_penumbra_under_the_column_scores_the_cover_ray_alone() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let roof = floor_world([1, 1, 1], |p| {
+        (26..28).contains(&p[2]) && (32..60).contains(&p[0]) && !(38..42).contains(&p[0])
+    });
+    let gpu = mirror(&device, &queue, &roof, None);
+    let d = Lighting::default();
+    assert!(!d.light_history);
+    assert_eq!(d.key_far, svet_render::KeyFar::Column);
+    assert_eq!(d.key_cover, svet_render::KeyCover::Off);
+    type Shot = (Vec<(usize, Vec<f32>)>, Vec<(usize, f32)>);
+    // One frame for every run, its history dropped before each: the run's first frame is one
+    // whose history is invalid, as a fresh frame's. [`far_frame`]'s at 64 x 64 (2 lighting
+    // pixels a voxel at the floor).
+    let mut f = frame(&device, [64, 64], ShadowWalk::Full);
+    let mut s = sky(dir(40.0, 270.0), dir(-40.0, 0.0), [[1.0; 3], [0.0; 3]]);
+    s.sun.angular_radius = 3f32.to_radians();
+    f.set_sky(Some(s));
+    let mut run = |penumbra, key_cover| -> Vec<Shot> {
+        f.reset_history();
+        f.set_lighting(Lighting {
+            light_history: d.light_history,
+            key_far: d.key_far,
+            key_far_mix: d.key_far_mix,
+            penumbra,
+            key_cover,
+            ..f.lighting()
+        });
+        f.set_look(svet_render::LookParams {
+            far_normal: [0.0, 0.0],
+            ..f.look()
+        });
+        (0..3)
+            .map(|_| {
+                let px = far_floor(&device, &queue, &mut f, &gpu);
+                let dt = svet_render::debug::read_rgba16f(&device, &queue, f.direct_accumulated());
+                (
+                    px.iter().map(|p| (p.0, dt[p.0][0..3].to_vec())).collect(),
+                    px.iter().map(|p| (p.0, p.2)).collect(),
+                )
+            })
+            .collect()
+    };
+    use svet_render::{KeyCover, Penumbra};
+    let disc = run(Penumbra::Disc, KeyCover::Off);
+    let approach = run(Penumbra::Approach, KeyCover::Off);
+    assert!(disc[0].0.len() > 2_500, "{} floor pixels", disc[0].0.len());
+    for k in 0..3 {
+        assert_eq!(disc[k].0, approach[k].0, "frame {}: approach against disc", k + 1);
+    }
+    // The horizon per floor pixel, as the default's slot holds it on frame 3.
+    let horizon: std::collections::HashMap<usize, f32> = disc[2]
+        .1
+        .iter()
+        .map(|&(i, y)| {
+            let (v, src) = key_slot(y);
+            assert_eq!(src, 'h', "pixel {i}: the default's slot is the horizon's");
+            (i, v)
+        })
+        .collect();
+    let lit = horizon.values().filter(|&&v| v >= 1.0).count();
+    let dark = horizon.values().filter(|&&v| v < 1.0).count();
+    assert!(lit > 200 && dark > 200, "{lit} lit, {dark} under 1");
+    let ray_disc = run(Penumbra::Disc, KeyCover::Ray);
+    let ray_approach = run(Penumbra::Approach, KeyCover::Ray);
+    for k in 0..3 {
+        for ((i, a), (j, b)) in ray_disc[k].0.iter().zip(&ray_approach[k].0) {
+            assert_eq!(i, j);
+            if horizon[i] >= 1.0 {
+                assert_eq!(a, b, "frame {}, pixel {i}: the horizon reads 1", k + 1);
+            }
+        }
+    }
+    let differ = ray_disc[2]
+        .0
+        .iter()
+        .zip(&ray_approach[2].0)
+        .filter(|((i, a), (_, b))| horizon[i] < 1.0 && a != b)
+        .count();
+    println!("under key cover ray, frame 3: {differ} floor pixels under cover differ");
+    assert!(differ > 0, "approach scores no cover ray");
+}
+
 /// Rule 3 at a record's landing: on the slab-edge rig under `key_far baked`, 4 frames on the
 /// horizon, then the floor's `+z` faces of bricks x 3..6 (x 24..48) baked (their records land
 /// together, as one stepped job's would), then 20 frames: at every floor pixel that ends on a

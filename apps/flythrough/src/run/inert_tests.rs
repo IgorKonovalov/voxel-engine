@@ -121,3 +121,25 @@ fn inert_rows_are_settings_rows() {
         );
     }
 }
+
+/// Plan 0100 Phase 9: the penumbra's row holds under key far column without the cover ray (the
+/// defaults, and `record`, which casts none) and is live under `ray`, whose ray `approach`
+/// scores.
+#[test]
+fn the_penumbra_row_is_live_under_the_cover_ray_alone() {
+    use svet_render::KeyCover;
+    let row = INERT_WHEN
+        .iter()
+        .find(|r| r.row == "lighting.penumbra")
+        .expect("the penumbra's row");
+    let mut s = svet_render::RenderSettings::default();
+    assert_eq!(s.lighting.key_far, svet_render::KeyFar::Column);
+    for (cover, inert) in [
+        (KeyCover::Off, true),
+        (KeyCover::Record, true),
+        (KeyCover::Ray, false),
+    ] {
+        s.lighting.key_cover = cover;
+        assert_eq!((row.holds)(&s), inert, "{}", cover.name());
+    }
+}

@@ -67,18 +67,18 @@ fn key_ray_len() -> f32 {
 // The key light's visibility at a hit, the share of `key_light_at(p, n)` that arrives: 1 where
 // one shadow ray toward a uniform point of its disc reaches the sky, times its transmittance
 // through SHADOW_ABSORB materials, else 0; -1 where no key light falls on the face (none set, it
-// faces away, or LIGHTING_HOOK_KEY_OFF). Under LIGHTING_PENUMBRA_APPROACH the ray runs toward
+// faces away, or LIGHTING_HOOK_KEY_OFF). Under `approach` (`key_approach_at`) the ray runs toward
 // the disc's centre and the visibility is its closest-approach visibility (walk.wgsl's
 // `approach_on`) times its transmittance; under LIGHTING_HOOK_KEY_NO_JITTER (a reading hook) the
 // one ray runs toward the disc's centre. The temporal pass keeps its running mean in the
 // visibility pair's g and lights the face by `key_light_at` times that mean (ADR-0070's pair,
 // ADR-0027's ray).
-fn key_visibility(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>) -> f32 {
+fn key_visibility(p: vec3<f32>, n: vec3<f32>, ns: vec3<f32>, px: vec2<u32>, approach: bool) -> f32 {
     let k = key_light_at(p, n);
     if (all(k <= vec3<f32>(0.0)) || (params.lighting & LIGHTING_HOOK_KEY_OFF) != 0u) {
         return -1.0;
     }
-    if ((params.lighting & LIGHTING_PENUMBRA_APPROACH) != 0u) {
+    if (approach) {
         approach_on = true;
         approach_tan = max(tan(sky.key_radius), 1.0e-4);
         approach_min = 1.0;

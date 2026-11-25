@@ -95,7 +95,7 @@
 // half under LIGHTING_KEY_STEP) the visibility is that estimate with no screen history, a
 // switch of its source riding one fade (`key_far_fade`, the pair's g tagged by the source);
 // elsewhere the mean, seeded from the estimate at a reset, blended toward it by `w`
-// (LIGHTING_KEY_STEP: none below one half). Under LIGHTING_PENUMBRA_APPROACH a cast sample
+// (LIGHTING_KEY_STEP: none below one half). Under `key_approach_at` a cast sample
 // is the closest-approach visibility of the disc's centre ray, a function of the hit alone,
 // taken as it is with no mean and nothing for a reset to restart; the pair's g holds it where
 // `w` is 0, and inside the band the far estimate with its landing's fade.
@@ -1127,7 +1127,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
         }
         var k = 0.0;
-        if (key_cast && (params.lighting & LIGHTING_PENUMBRA_APPROACH) != 0u) {
+        if (key_cast && key_approach_at(rec)) {
             // The approach penumbra (ADR-0079's near): the frame's value as it is, no mean, so
             // a reset changes nothing. The slot needs no history for it, so inside the band it
             // carries the far estimate through its landing's fade, as at a pixel with no ray.

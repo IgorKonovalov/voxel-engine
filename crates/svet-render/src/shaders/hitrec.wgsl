@@ -228,6 +228,15 @@ fn entity_reads_store(rec: HitRecord) -> bool {
     return rec.found && rec.entity && (params.lighting & LIGHTING_ENTITY_WORLD) != 0u;
 }
 
+// Whether the key ray cast at hit `rec` is the approach penumbra's (LIGHTING_PENUMBRA_APPROACH,
+// ADR-0079): not at a cube face under LIGHTING_KEY_COLUMN, where no key ray is cast for the
+// penumbra (ADR-0084): a ray cast there is the disc's, and `approach` scores the near cover
+// ray alone (`key_cover_near`). An entity or a field surface keeps it.
+fn key_approach_at(rec: HitRecord) -> bool {
+    return (params.lighting & LIGHTING_PENUMBRA_APPROACH) != 0u
+        && !((params.lighting & LIGHTING_KEY_COLUMN) != 0u && reads_store(rec) && !rec.entity);
+}
+
 // The voxel behind hit point `p` with face normal `nf`.
 fn store_voxel(p: vec3<f32>, nf: vec3<f32>) -> vec3<i32> {
     return vec3<i32>(floor(p - 0.5 * nf));
