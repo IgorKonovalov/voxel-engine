@@ -1161,7 +1161,7 @@ const DIG_BOXES: [([i64; 3], [i64; 3]); 3] = [
 /// What [`dig_reads`] read of one dig: chunk 0's ring-1 records in the pool after the edit and
 /// before any step read its box (`pre`) and after the edit's own frame (`held`), by slot, and the
 /// frames from the edit's frame (0) to the first whose pool holds ring 1's re-bake
-/// ([`support::queue::ring1_landed`]), each paced to [`FRAME`].
+/// ([`support::queue::ring1_landed`]), each paced (see [`dig_reads`]).
 struct DigRead {
     pre: std::collections::BTreeMap<usize, Vec<u32>>,
     held: std::collections::BTreeMap<usize, Vec<u32>>,
@@ -1170,10 +1170,7 @@ struct DigRead {
     ms: f64,
 }
 
-/// A window's frame at 60 Hz: from the edit's frame on, [`dig_reads`] pads each frame to it in
-/// either mode, so a frame with the thread on, which runs no step, is a frame and not a
-/// fraction of the bake thread's step (unpaced, a threaded frame here costs about 0.1 ms and
-/// twenty of them pass inside one step on lavapipe).
+/// A window's frame at 60 Hz, the shortest frame [`dig_reads`] paces to.
 const FRAME: std::time::Duration = std::time::Duration::from_micros(16_667);
 
 /// The wall clock of [`dig_reads`]' pacing.
@@ -1200,9 +1197,14 @@ fn ring1_pool(q: &Q, lo: [i64; 3], hi: [i64; 3]) -> std::collections::BTreeMap<u
 /// baked at a pre-roll's sample count (every other chunk's jobs still behind it), then sliced;
 /// before each of [`DIG_BOXES`] chunk 0 settled (its block at the full count, no dig waiting,
 /// then 16 more frames, so every fade has ended and the records are the same in either mode),
-/// the carve, the pool read before a step, the edit's frame, and frames until ring 1 is applied,
-/// paced to [`FRAME`] from the edit's frame on.
-fn dig_reads(thread: bool) -> Option<Vec<DigRead>> {
+/// the carve, the pool read before a step, the edit's frame, and frames until ring 1 is applied.
+/// From the edit's frame on each frame is padded to `frame[k]` for dig `k` (lockstep's own frame
+/// wall can be longer, as its frames run the step). With the thread on a frame runs no step:
+/// unpaced it costs about 0.1 ms here, and 10 to 36 of them passed inside one bake step on
+/// lavapipe, so the count read the rig's loop and not a frame's. The test paces the threaded
+/// frames to lockstep's on the same dig, which holds under a loaded lavapipe as lockstep slows
+/// with it.
+fn dig_reads(thread: bool, frame: [std::time::Duration; 3]) -> Option<Vec<DigRead>> {
     let mut q = dig_rig()?;
     let zero = ChunkCoord([0, 0, 0]);
     if thread {
@@ -1219,7 +1221,7 @@ fn dig_reads(thread: bool) -> Option<Vec<DigRead>> {
     }
     q.samples = None;
     let mut out = Vec::new();
-    for (lo, hi) in DIG_BOXES {
+    for ((lo, hi), frame) in DIG_BOXES.into_iter().zip(frame) {
         for n in 0.. {
             q.step();
             if q.q().settled(zero, false) && q.q().digs_settled() {
@@ -1236,7 +1238,7 @@ fn dig_reads(thread: bool) -> Option<Vec<DigRead>> {
         let t0 = clock();
         let paced = |q: &mut Q, n: u32| {
             q.step();
-            if let Some(rest) = (FRAME * n).checked_sub(clock().duration_since(t0)) {
+            if let Some(rest) = (frame * n).checked_sub(clock().duration_since(t0)) {
                 std::thread::sleep(rest);
             }
         };
@@ -1264,13 +1266,20 @@ fn dig_reads(thread: bool) -> Option<Vec<DigRead>> {
 /// holds the dig's block over every ring-1 brick ([`support::queue::dig_held`]: each record the
 /// step's, stale or held, and changed from the pool's before the step) in lockstep, where the
 /// dig's step runs in the frame, and with the thread on, bit-identical to lockstep's; and ring 1
-/// is applied within lockstep's frame count plus 2, the frames paced to a window's ([`FRAME`]).
+/// is applied within lockstep's frame count plus 2, each threaded frame as long as lockstep's
+/// mean frame from its edit's frame to ring 1 on the same dig (and at least [`FRAME`]).
 #[test]
 fn the_edits_frame_holds_the_dig_and_ring_1_lands_in_either_mode() {
-    let Some(lock) = dig_reads(false) else {
+    let Some(lock) = dig_reads(false, [FRAME; 3]) else {
         return;
     };
-    let thread = dig_reads(true).expect("the device opened once");
+    let frame = std::array::from_fn(|k| {
+        let l = &lock[k];
+        FRAME.max(std::time::Duration::from_secs_f64(
+            l.ms / 1e3 / (l.ring1 + 1) as f64,
+        ))
+    });
+    let thread = dig_reads(true, frame).expect("the device opened once");
     for (k, (l, t)) in lock.iter().zip(&thread).enumerate() {
         println!(
             "dig {}: ring-1 records {}, ring 1 applied D+{} ({:.1} ms) lockstep, D+{} ({:.1} ms) thread",
