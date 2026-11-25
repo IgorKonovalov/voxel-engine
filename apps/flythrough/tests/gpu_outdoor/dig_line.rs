@@ -7,7 +7,7 @@ mod dig_line {
         use super::super::support;
         use std::collections::{BTreeMap, BTreeSet};
         use std::fmt::Write as _;
-        use support::defects::{HoleFrame, Stepper, dig_along, hole_frame, queue_step};
+        use support::defects::{HoleFrame, Stepper, dig_along, dig_along_timed, hole_frame, queue_step};
         use support::terms::Rig;
         use svet_render::Camera;
 
@@ -28,6 +28,8 @@ mod dig_line {
             pub frames: Vec<HoleFrame>,
             pub traces: Vec<svet_render::DigTrace>,
             pub digs: Vec<(usize, [i64; 3], [i64; 3])>,
+            /// Each dig's edit wall, ms ([`dig_along_timed`]).
+            pub edit_ms: Vec<f64>,
             pub out: [u32; 2],
             pub eye: [f32; 3],
             pub head: String,
@@ -56,6 +58,7 @@ mod dig_line {
         /// and settled 240. Sequence `A`: three digs down one ray, the third one frame after
         /// the second; `B`: five at [`B_AIMS`] [`B_GAP`] frames apart, then a sixth into the
         /// first. After the last, frames until no dig is left plus 16 and [`fl::DIG_TAIL`].
+        /// `wait`: the stepper's device-wait mode ([`Stepper::wait`]), the fly-through's pace.
         pub(in super::super) fn line_run(
             scene: &str,
             waiting: bool,
@@ -63,6 +66,7 @@ mod dig_line {
             arm: &str,
             drain: u32,
             png: Option<&std::path::Path>,
+            wait: bool,
         ) -> Option<(LineRun, Rig)> {
             let portable = scene == "portable";
             let facing = spawn_facing();
@@ -105,6 +109,7 @@ mod dig_line {
             let out = sizes[1];
             fl::dig_arm(&mut f, arm);
             let mut s = Stepper::new(&rig, f);
+            s.wait = wait;
             let mut n = 0;
             let head = loop {
                 let q = queue_step(&mut rig, &mut s.frame, &cam);
@@ -117,8 +122,9 @@ mod dig_line {
                 };
                 if done || n >= drain {
                     break format!(
-                        "line {scene} {} {seq} {arm}: adapter {}, after {n} frames in view waiting {}, coarse {}, depth {}, jobs {}",
+                        "line {scene} {} {seq} {arm}{}: adapter {}, after {n} frames in view waiting {}, coarse {}, depth {}, jobs {}",
                         if waiting { "waiting" } else { "drained" },
+                        if wait { " device-wait" } else { "" },
                         rig.adapter,
                         q.drain_waiting,
                         q.coarse,
@@ -141,7 +147,7 @@ mod dig_line {
             let fwd = cam.basis().0.to_array();
             let t = support::defects::march(&rig.world, eye, fwd, 400.0).expect("the view hits ground");
             let centre = [0, 1, 2].map(|k| eye[k] + fwd[k] * t);
-            let (mut frames, mut traces, mut digs) = (Vec::new(), Vec::new(), Vec::new());
+            let (mut frames, mut traces, mut digs, mut edit_ms) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
             let read = |rig: &mut Rig, s: &mut Stepper, frames: &mut Vec<HoleFrame>, traces: &mut Vec<svet_render::DigTrace>, label: String| {
                 let q = queue_step(rig, &mut s.frame, &cam);
                 traces.push(s.frame.bake_queue().expect("the live queue").dig_trace());
@@ -165,11 +171,12 @@ mod dig_line {
                     .collect(),
             };
             for (d, (aim, gap)) in aims.iter().enumerate() {
-                let Some(dug) = dig_along(&mut rig, &mut s.frame, aim) else {
+                let Some((dug, ms)) = dig_along_timed(&mut rig, &mut s.frame, aim) else {
                     println!("{head}: dig {} changed nothing", d + 1);
                     continue;
                 };
                 digs.push((frames.len(), dug.0, dug.1));
+                edit_ms.push(ms);
                 let mut tail = None;
                 for k in 0..1200usize {
                     let q = read(&mut rig, &mut s, &mut frames, &mut traces, format!("D{}+{k}", d + 1));
@@ -184,7 +191,7 @@ mod dig_line {
                     }
                 }
             }
-            Some((LineRun { frames, traces, digs, out, eye, head }, rig))
+            Some((LineRun { frames, traces, digs, edit_ms, out, eye, head }, rig))
         }
 
         /// Whether the brick whose lowest voxel is `b` lies within `pad` voxels of the box.
@@ -371,6 +378,22 @@ mod dig_line {
                     .map(|(n, ms)| format!("{n} {ms:.2}"))
                     .collect();
                 let _ = writeln!(out, "  D+0 stages over 0.5 ms (opened {}): {}", st.opened, laps.join(", "));
+                let lap = |name: &str| {
+                    let k = svet_render::debug::STEP_STAGES.iter().position(|n| *n == name).expect("a stage");
+                    st.ms[k]
+                };
+                let _ = writeln!(
+                    out,
+                    "  D+0 step {:.3} ms render {:.3} movable {:.3} boxes {:.3} digs {:.3} bytes {} {:?}; edit wall {:.3} ms",
+                    st.total_ms,
+                    st.render(),
+                    st.movable(),
+                    lap("boxes"),
+                    lap("digs"),
+                    st.bytes_total(),
+                    st.bytes,
+                    run.edit_ms.get(di).copied().unwrap_or(f64::NAN)
+                );
             }
             let rest = &run.frames[..run.digs.first().map_or(run.frames.len(), |d| d.0)];
             let mean = |k: fn(&HoleFrame) -> f64| rest.iter().map(k).sum::<f64>() / rest.len().max(1) as f64;
@@ -386,11 +409,12 @@ mod dig_line {
             out
         }
 
-        /// Plan 0098 Phase 16 step 1's timeline: `SVET_LINE` is `SCENE/STATE/SEQ/ARM/DRAIN`
+        /// Plan 0098 Phase 16 step 1's timeline: `SVET_LINE` is `SCENE/STATE/SEQ/ARM/DRAIN/PACE`
         /// (`above` or `portable`, `drained` or `waiting`, `A` or `B`, `support::defects`'
-        /// dig arm tokens, the most frames the queue drains); the text under
-        /// `live/p16/<adapter>-<scene>-<state>-<seq>-<arm>.txt`, the frames' PNGs beside it with
-        /// `SVET_LINE_PNG` set.
+        /// dig arm tokens, the most frames the queue drains, `wait` for the stepper's
+        /// device-wait mode or `free`); the text under
+        /// `live/p16/<adapter>-<scene>-<state>-<seq>-<arm>[-wait].txt`, the frames' PNGs beside
+        /// it with `SVET_LINE_PNG` set.
         #[test]
         #[ignore = "reading"]
         fn dig_timeline() {
@@ -399,21 +423,32 @@ mod dig_line {
             let mut part = |d: &str| it.next().filter(|s| !s.is_empty()).unwrap_or(d).to_string();
             let (scene, state, seq, arm) = (part("above"), part("drained"), part("A"), part("default"));
             let drain: u32 = part("30000").parse().expect("SVET_LINE's drain");
+            let wait = match part("wait").as_str() {
+                "wait" => true,
+                "free" => false,
+                p => panic!("SVET_LINE's pace {p}: wait or free"),
+            };
             let adapter = std::env::var("SVET_TEST_ADAPTER").unwrap_or_else(|_| "lavapipe".into());
-            let name = format!("{adapter}-{scene}-{state}-{seq}-{}", arm.replace([',', '='], "-"));
+            let name = format!(
+                "{adapter}-{scene}-{state}-{seq}-{}{}",
+                arm.replace([',', '='], "-"),
+                if wait { "-wait" } else { "" }
+            );
             let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../live/p16");
             let png = std::env::var("SVET_LINE_PNG").is_ok().then(|| dir.join(&name));
             if let Some(p) = &png {
                 std::fs::create_dir_all(p).expect("the stills' directory");
             }
             std::fs::create_dir_all(&dir).expect("the reading's directory");
-            let Some((run, _rig)) = line_run(&scene, state == "waiting", &seq, &arm, drain, png.as_deref()) else {
+            let Some((run, _rig)) = line_run(&scene, state == "waiting", &seq, &arm, drain, png.as_deref(), wait) else {
                 return;
             };
             let text = line_text(&run);
             let summary: String = text
                 .lines()
-                .filter(|l| l.starts_with("line ") || l.starts_with("dig ") || l.starts_with("  cost") || l.starts_with("before"))
+                .filter(|l| {
+                    l.starts_with("line ") || l.starts_with("dig ") || l.starts_with("  cost") || l.starts_with("  D+0 step") || l.starts_with("before")
+                })
                 .collect::<Vec<_>>()
                 .join("\n");
             println!("{summary}\neye {:?} out {:?}", run.eye, run.out);
@@ -697,7 +732,7 @@ mod dig_line {
         /// the test support opens, with its claims' figures.
         pub(crate) fn claims(seq: &str, waiting: bool, arm: &str) -> Option<Claims> {
             let drain = if waiting { 600 } else { 1 };
-            let (line, _rig) = line_run("above", waiting, seq, arm, drain, None)?;
+            let (line, _rig) = line_run("above", waiting, seq, arm, drain, None, false)?;
             let land = ring1_landings(&line);
             let hold = !arm.split(',').any(|t| t == "hold=off");
             let LineRun { frames, digs, out, eye, head, .. } = line;

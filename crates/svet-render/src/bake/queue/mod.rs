@@ -579,7 +579,7 @@ impl BakeQueue {
                 ns_per_sample: 20.0,
                 ..QueueStats::default()
             },
-            laps: Laps::new(stopwatch()),
+            laps: Laps::new(StepStart::now()),
             pool: Default::default(),
             touched: Default::default(),
             pool_stale: true,

@@ -576,7 +576,11 @@ impl Run {
             queue,
             &self.queue.stats.unwrap_or_default(),
             self.queue.line_rate,
-            self.queue.line_step_p50,
+            [
+                self.queue.line_step_p50,
+                self.queue.line_split_p50[0],
+                self.queue.line_split_p50[1],
+            ],
         );
         queue.push_str("; ");
         queue.push_str(words);

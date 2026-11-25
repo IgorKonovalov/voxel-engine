@@ -476,6 +476,9 @@ impl Drop for Run {
         for line in self.queue.tally.summary() {
             println!("frames: {line}");
         }
+        if let Some(line) = self.queue.split_line() {
+            println!("frames: {line}");
+        }
         if let Some(line) = self.hud.run.line() {
             println!("{line}");
         }

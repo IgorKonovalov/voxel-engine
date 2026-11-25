@@ -37,6 +37,11 @@ pub struct Shot {
 pub struct Stepper {
     pub frame: Frame,
     timer: Option<svet_render::PassTimer>,
+    /// The device-wait mode: [`Stepper::run`] waits on the device after its submit, as the
+    /// fly-through's present paces its frames (and `support::queue`'s rig waits a step), so
+    /// the live queue's read-backs map a frame or two on. Off, the frames run ahead of the
+    /// device and the queue reads back one submit in many frames.
+    pub wait: bool,
 }
 
 impl Stepper {
@@ -45,10 +50,12 @@ impl Stepper {
         Self {
             frame,
             timer: svet_render::PassTimer::with_passes(&rig.device, &rig.queue, n),
+            wait: false,
         }
     }
 
-    /// One frame at `cam`, unread.
+    /// One frame at `cam`, unread; in the device-wait mode ([`Stepper::wait`]) the device is
+    /// waited on after it.
     pub fn run(&mut self, rig: &Rig, cam: &Camera) {
         self.frame.step(
             &rig.device,
@@ -57,6 +64,11 @@ impl Stepper {
             cam,
             &LightParams::headlamp(),
         );
+        if self.wait {
+            rig.device
+                .poll(svet_render::wgpu::PollType::wait_indefinitely())
+                .expect("device poll");
+        }
     }
 
     /// One frame at `cam`, timed and not read back: the light pass's ms, where the adapter
@@ -575,7 +587,21 @@ pub const FLY_DIG_RADIUS: i64 = 5 * svet_world::FIXED_ONE;
 /// collapse after the carve is not run. Returns the changed voxels' inclusive bounds; `None`
 /// where nothing changed.
 pub fn dig_along(rig: &mut Rig, f: &mut Frame, cam: &Camera) -> Option<([i64; 3], [i64; 3])> {
+    dig_along_timed(rig, f, cam).map(|d| d.0)
+}
+
+/// [`dig_along`], with the edit's wall in ms: the world's op and the frame's intake of its box
+/// ([`Frame::invalidate`]), the fly-through's dig op on the main thread; the mirror's sync
+/// between them, which waits on the device here, is not counted.
+#[allow(clippy::type_complexity, reason = "a reading's bounds and its wall")]
+pub fn dig_along_timed(
+    rig: &mut Rig,
+    f: &mut Frame,
+    cam: &Camera,
+) -> Option<(([i64; 3], [i64; 3]), f64)> {
     use super::SyncNow;
+    #[allow(clippy::disallowed_methods, reason = "a reading times the edit's wall")]
+    let clock = std::time::Instant::now;
     use svet_world::{EditOp, FIXED_ONE, Fixed3, Mode};
     let one = FIXED_ONE as f32;
     let origin = cam.position.to_array().map(|v| (v * one).floor() as i64);
@@ -588,6 +614,7 @@ pub fn dig_along(rig: &mut Rig, f: &mut Frame, cam: &Camera) -> Option<([i64; 3]
         .flatten()
         .map_or(reach, |h| h.t);
     let end = Fixed3([0, 1, 2].map(|k| origin[k] + dir[k] * t / FIXED_ONE));
+    let t0 = clock();
     let r = rig
         .world
         .apply(&EditOp::capsule(
@@ -597,12 +624,15 @@ pub fn dig_along(rig: &mut Rig, f: &mut Frame, cam: &Camera) -> Option<([i64; 3]
             Mode::Carve,
         ))
         .expect("the dig is resident");
+    let op_ms = clock().duration_since(t0).as_secs_f64() * 1e3;
     let (lo, hi) = r.aabb?;
     rig.gpu
         .sync_now(&rig.world, &rig.device, &rig.queue)
         .expect("the mirror fits");
+    let t1 = clock();
     f.invalidate(lo.0, hi.0);
-    Some((lo.0.map(i64::from), hi.0.map(i64::from)))
+    let ms = op_ms + clock().duration_since(t1).as_secs_f64() * 1e3;
+    Some(((lo.0.map(i64::from), hi.0.map(i64::from)), ms))
 }
 
 /// One frame of a dig run from above (Plan 0098 Phase 14): the display's luma, and per lighting

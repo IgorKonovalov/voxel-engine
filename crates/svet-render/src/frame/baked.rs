@@ -351,7 +351,7 @@ impl Frame {
         world: &svet_world::World,
         view: &crate::bake::QueueView<'_>,
     ) -> Option<Result<crate::bake::QueueStats, crate::bake::BakeError>> {
-        let t0 = crate::bake::stopwatch();
+        let t0 = crate::bake::StepStart::now();
         let settings = self.baked.queue.as_ref()?.settings.clone();
         let w = gpu.window();
         let f = gpu.focus().0;
@@ -368,7 +368,8 @@ impl Frame {
                 .unwrap_or((far as f64).sqrt().ceil() as i32 + gpu.light_radius() + 1),
         );
         let params = self.bake_params(gpu, &settings);
-        let world_bind = self.queue_world_bind(device, gpu);
+        // The bind group is a `wgpu` call: the render thread's share of the step's setup.
+        let world_bind = crate::bake::wgpu_call(|| self.queue_world_bind(device, gpu));
         if self.baked.pipeline.is_none() {
             self.baked.pipeline = Some(crate::bake::BakePipeline::new(
                 device,

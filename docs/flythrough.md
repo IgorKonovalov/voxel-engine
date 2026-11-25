@@ -420,6 +420,15 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--dig-reach on\|off` | A dig re-bakes the chunks within the light radius [on] |
 | `--read-missing` | Read the store's no-value count while a dig waits |
 
+The queue step's time splits in two (ADR-0083): `render`, its time in `wgpu` calls (the
+writes, the candidate tables, the encode, the submit, the poll, the mapped read and unmap),
+which stays on the render thread, and `movable`, the rest. The HUD's queue row reads `step
+1.25 ms (render 0.40, movable 0.85)` (p50s over the last second); the `bake queue step:` line
+prints `render` and `movable` p50/p99 with their means and the stages' mean, the bytes
+written a step p50/p99 by buffer (`pool`, `table`, `summary`, `job`), and each stage's mean
+with its render share in brackets; the `frames:` summary's `queue step` lines carry the same
+split by regime.
+
 ### Audio
 
 | Flag | Does |

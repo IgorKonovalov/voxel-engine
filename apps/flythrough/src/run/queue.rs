@@ -135,6 +135,8 @@ pub(crate) struct QueueRun {
     /// [`svet_render::QueueStats::starved_openings`] at the last line.
     pub(crate) line_starved: u64,
     pub(crate) line_step_p50: f64,
+    /// The last line's `render` and `movable` p50s (the HUD's).
+    pub(crate) line_split_p50: [f64; 2],
     /// The samples by view class and passed at the last line.
     pub(crate) line_view: [u64; 3],
     pub(crate) line_passed: u64,
@@ -147,6 +149,55 @@ pub(crate) struct QueueRun {
     /// Whether the next step prints `--queue-census`'s listing census (set once at the hand-
     /// over to the live queue).
     pub(crate) listing_due: bool,
+    /// The frames' wall and CPU ms, by whether the last step left chunks in view waiting for
+    /// their tier (the drain, `[0]`) or none (`[1]`): the `frames: queue split` line.
+    pub(crate) split_frames: [[Vec<f64>; 2]; 2],
+}
+
+impl QueueRun {
+    /// Files frame `frame`'s wall (`dt` s, not on the first frame, whose delta spans the
+    /// start-up) and CPU ms under the queue's state at its last step; nothing before the live
+    /// queue's first step.
+    pub(crate) fn push_frame(&mut self, frame: u32, dt: f32, cpu_ms: f64) {
+        let Some(st) = &self.stats else {
+            return;
+        };
+        let k = usize::from(!st.draining);
+        if frame > 0 {
+            self.split_frames[k][0].push(f64::from(dt) * 1e3);
+        }
+        self.split_frames[k][1].push(cpu_ms);
+    }
+
+    /// The `frames: queue split` line: the frames' wall and CPU p50/p99 while chunks in view
+    /// wait for their tier and after.
+    pub(crate) fn split_line(&self) -> Option<String> {
+        self.stats?;
+        let part = |k: usize| {
+            let pick = |v: &[f64], p: f64| {
+                let mut v = v.to_vec();
+                if v.is_empty() {
+                    0.0
+                } else {
+                    percentile(&mut v, p)
+                }
+            };
+            let [w, c] = &self.split_frames[k];
+            format!(
+                "{} frames, wall p50/p99 {:.2}/{:.2} ms, frame CPU p50/p99 {:.2}/{:.2} ms",
+                c.len(),
+                pick(w, 50.0),
+                pick(w, 99.0),
+                pick(c, 50.0),
+                pick(c, 99.0)
+            )
+        };
+        Some(format!(
+            "queue split: while in view waits {}; after {}",
+            part(0),
+            part(1)
+        ))
+    }
 }
 
 /// Prints `--queue-census`'s listing census of the live queue under `view` when `q` has one
@@ -245,7 +296,7 @@ pub(crate) fn queue_step_line(
     reach: svet_render::ReachMode,
 ) -> String {
     use std::fmt::Write as _;
-    use svet_render::{debug::Regime, debug::STEP_STAGES, internals::VIEW_IN};
+    use svet_render::{debug::Regime, debug::STEP_STAGES, debug::StepStages, internals::VIEW_IN};
     let samples = st.total_samples - q.line_samples;
     let baked = st.baked - q.line_baked;
     let regime = Regime::of(samples, baked);
@@ -264,10 +315,22 @@ pub(crate) fn queue_step_line(
         }
     };
     q.line_step_p50 = p50(None);
+    q.line_split_p50 = [
+        StepStages::render as fn(&StepStages) -> f64,
+        StepStages::movable,
+    ]
+    .map(|f| {
+        let mut v: Vec<f64> = steps.iter().map(f).collect();
+        if v.is_empty() {
+            0.0
+        } else {
+            percentile(&mut v, 50.0)
+        }
+    });
     let opened = steps.iter().filter(|s| s.opened).count();
     let [blank, coarse] = st.view_waiting[VIEW_IN];
     let mut line = format!(
-        "bake queue step: at {at_s:.1} s, regime {} ({} samples a baked chunk, +{baked} chunks in {secs:.1} s, jobs {}, coarse {}), bake {bake_ms_per_s:.1} ms/s, opened {opened} of {} steps ({} since the start, {} starved), step p50 {:.3} ms (open {:.3}, not {:.3}), reach-bound {} near (waiting), {} mid/far (partial) of {} in view waiting, reach {} ({} partial, {} opened partial, {} re-queued); stage means ms:",
+        "bake queue step: at {at_s:.1} s, regime {} ({} samples a baked chunk, +{baked} chunks in {secs:.1} s, jobs {}, coarse {}), bake {bake_ms_per_s:.1} ms/s, opened {opened} of {} steps ({} since the start, {} starved), step p50 {:.3} ms (open {:.3}, not {:.3}), reach-bound {} near (waiting), {} mid/far (partial) of {} in view waiting, reach {} ({} partial, {} opened partial, {} re-queued); {}; stage means ms (render share):",
         regime.map_or("idle", Regime::name),
         if baked > 0 {
             format!("{:.3e}", samples as f64 / baked as f64)
@@ -289,13 +352,15 @@ pub(crate) fn queue_step_line(
         st.partial,
         st.partial_opened,
         st.partial_requeued,
+        StepStages::split_text(&steps),
     );
     q.line_openings = st.openings;
     q.line_starved = st.starved_openings;
     let n = steps.len().max(1) as f64;
     for (k, stage) in STEP_STAGES.iter().enumerate() {
         let mean = steps.iter().map(|s| s.ms[k]).sum::<f64>() / n;
-        let _ = write!(line, " {stage} {mean:.3}");
+        let render = steps.iter().map(|s| s.render_ms[k]).sum::<f64>() / n;
+        let _ = write!(line, " {stage} {mean:.3} ({render:.3})");
     }
     let _ = write!(
         line,

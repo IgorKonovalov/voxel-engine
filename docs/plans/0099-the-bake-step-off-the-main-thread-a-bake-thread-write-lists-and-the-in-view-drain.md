@@ -1,6 +1,6 @@
 # 0099: The bake step off the main thread: a bake thread, write lists the render thread applies, and the in-view drain
 
-> **Status:** approved (owner, 2026-11-22; his answers are under "Risks & open questions":
+> **Status:** in-progress (Phase 1 landed 2026-11-25); approved (owner, 2026-11-22; his answers are under "Risks & open questions":
 > the recommended option in each, question 2 by his own words). **After: 0096, 0098, 0087** (owner, 2026-11-22:
 > drafted now, the lane after the rename; then 0089 and 0093, 0091, ...).
 > **Re-read 2026-11-24** after Plan 0098 (v0.72.0) and the rename (v0.73.0): Phases 1 to 3 are
@@ -673,9 +673,11 @@ keeping fade length"; the other four: "agreed on other recommended".
 > resume notes go to the plan's readings log, `docs/plans/logs/0099.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
+Readings, gate counts and attempts: [`logs/0099.md`](logs/0099.md).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the step's split on the line, the base readings | dev | not started | |
+| 1: the step's split on the line, the base readings | dev | done; render p50 0.690 ms on the quiet RTX forest (the stop did not fire); the drained rig reaches 0 in view waiting on both adapters; RENOIR drained A's ring 1 lands D+3 or D+4 for digs 2 and 3 (reported); most readings loaded, quiet re-reads owed (log) | committed with this row |
 | 2: the queue in two halves, in lockstep | dev | not started | |
 | 3: the bake half on its own thread | dev | not started | |
 | 4: the bake thread keeps the slice fed | dev | not started | |
@@ -688,6 +690,19 @@ keeping fade length"; the other four: "agreed on other recommended".
   `33003841`, before Plan 0098's merge and before Plan 0087 renames the crates, the
   environment variables and the identifiers. The mechanisms are the contract; the tree's
   names win.
+- (dev, Phase 1) Files outside the phase's list: `crates/svet-render/src/frame/baked.rs` (the
+  step's start carries the thread's call tally; the world bind group's creation counts as a
+  `wgpu` call), `crates/svet-render/src/lib.rs` (`debug::WRITE_KINDS`),
+  `apps/flythrough/src/run/{frame,mod,hud_feed,tests}.rs` and `hud/stats/tests.rs` (the row's
+  feed and its tests, and a new teardown line, `frames: queue split:`, that files each frame's
+  wall and CPU by the queue's drain flag: the plan's "wall and CPU while in-view work waits").
+- (dev, Phase 1) The candidate tables' build (`job_table`) counts with their writes as
+  `render`, as Phase 2 item 3 keeps them on the render half. The bytes carry a fourth buffer,
+  `job` (the job uniform, the faces, the candidate tables, the parameters), beside `pool`,
+  `table` and `summary`.
+- (dev, Phase 1) The edit's wait is read in the dig rig (`dig_along_timed`: the world's op and
+  `Frame::invalidate`), not in the fly-through: the rig runs no listing beside the edit, so the
+  read-lock contention of the plan's risk is not in it.
 - (architect, at the draft) The backlog entry "The bake step off the main thread" exists on
   `plan-0096` only; at that plan's merge it is marked taken by this plan.
 

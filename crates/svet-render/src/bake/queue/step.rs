@@ -14,7 +14,7 @@ impl BakeQueue {
         run: &BakeRun<'_>,
         store: &mut Store,
         view: &QueueView<'_>,
-        t0: Instant,
+        t0: StepStart,
     ) -> Result<QueueStats, BakeError> {
         self.laps = Laps::new(t0);
         // Summary time spent outside a step (a one-shot bake, a dig's ring) is not this step's.
@@ -37,8 +37,13 @@ impl BakeQueue {
         let (cap, opened_step) = self.open_step(run, store, view)?;
         self.lp.refresh_tables(run);
         let bind = run.pipeline.bind();
-        run.queue
-            .write_buffer(run.params_buffer, 0, bytemuck::bytes_of(&run.params));
+        write(
+            run.queue,
+            run.params_buffer,
+            0,
+            bytemuck::bytes_of(&run.params),
+            W_JOB,
+        );
         self.laps.lap(S_REFRESH);
         self.submit(run, bind, store, view, cap);
         self.close_step(run, store, view, t0, opened_step);
@@ -264,11 +269,13 @@ impl BakeQueue {
         } else {
             IN_FLIGHT
         };
-        let _ = run.device.poll(wgpu::PollType::Poll);
+        let _ = wgpu_call(|| run.device.poll(wgpu::PollType::Poll));
         self.laps.lap(S_POLL);
         // The sink's own time, the blocks' placement, taken out of the collect's and the
         // submit's laps.
         let place_ms = std::cell::Cell::new(0.0f64);
+        // Of it, the `wgpu` calls' (the store's writes).
+        let place_render = std::cell::Cell::new(0.0f64);
         let ruled = std::mem::take(&mut self.ruled);
         // The ring-1 dig jobs ([`BakeQueue::open_digs`]): opened into the slots the read back
         // frees, and planned ahead of every other job.
@@ -307,9 +314,10 @@ impl BakeQueue {
             landed_word: self.landed_word,
         };
         let mut sink = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>| {
-            let t = stopwatch();
+            let (t, c) = (stopwatch(), calls().ms);
             placement.place(store, coord, first, block);
             place_ms.set(place_ms.get() + seconds_since(t) * 1e3);
+            place_render.set(place_render.get() + calls().ms - c);
         };
         // The rule's zero records land through the same placement as a job's block.
         let sky = run.sky & BAKE_SKY_ON != 0;
@@ -333,16 +341,17 @@ impl BakeQueue {
         let mut d = self
             .lp
             .collect(run, store, &settings, &mut sink, &mut |_| {}, IN_FLIGHT);
-        // Each lap's placement moves from its stage to the placement's.
-        let mut placed = 0.0;
+        // Each lap's placement moves from its stage to the placement's, its `wgpu` calls with
+        // it.
+        let (mut placed, mut placed_render) = (0.0, 0.0);
         let mut lap = |laps: &mut Laps, stage: usize| {
             laps.lap(stage);
             let p = place_ms.get() - placed;
+            let r = place_render.get() - placed_render;
             placed = place_ms.get();
+            placed_render = place_render.get();
             // The placement ran inside the lap; the clamp only absorbs rounding.
-            let p = p.min(laps.ms[stage]);
-            laps.ms[stage] -= p;
-            laps.ms[S_PLACE] += p;
+            laps.shift(stage, S_PLACE, p, r);
         };
         lap(&mut self.laps, S_COLLECT);
         if !ring1.is_empty() {
@@ -420,7 +429,7 @@ impl BakeQueue {
         run: &BakeRun<'_>,
         store: &mut Store,
         view: &QueueView<'_>,
-        t0: Instant,
+        t0: StepStart,
         opened_step: bool,
     ) {
         let record = record_words(self.settings.cell);
@@ -460,16 +469,19 @@ impl BakeQueue {
         self.laps.lap(S_FADES);
         // The summaries' and parents' time ran inside the placement, the fades, the evictions
         // and the window's move: it moves to its own stage, from those in that order.
-        let mut summaries = store.take_summary_ms();
+        let (mut summaries, mut summaries_render) = store.take_summary_ms();
         for stage in [S_PLACE, S_FADES, S_GONE, S_REWINDOW] {
-            let p = summaries.min(self.laps.ms[stage]);
-            self.laps.ms[stage] -= p;
-            self.laps.ms[S_SUMMARIES] += p;
-            summaries -= p;
+            let (m, r) = self
+                .laps
+                .shift(stage, S_SUMMARIES, summaries, summaries_render);
+            summaries -= m;
+            summaries_render -= r;
         }
         self.stats.stages = StepStages {
             ms: self.laps.ms,
-            total_ms: stopwatch().duration_since(t0).as_secs_f64() * 1e3,
+            render_ms: self.laps.render_ms(),
+            bytes: self.laps.bytes(),
+            total_ms: stopwatch().duration_since(t0.at).as_secs_f64() * 1e3,
             opened: opened_step,
         };
     }

@@ -613,6 +613,7 @@ impl Run {
         let field_gpu_ms = field_reader.and_then(|t| t.try_read_ms(&gpu.device));
         let hud_ms = hud_timer.and_then(|t| t.try_read_ms(&gpu.device));
         self.hud.run.push(cpu_ms, stream_ms, gpu_ms);
+        self.queue.push_frame(self.frame, dt, cpu_ms);
         if self.frame > 0
             && let (Some(rec), Some(p)) = (self.recorder.as_mut(), self.player.as_ref())
         {

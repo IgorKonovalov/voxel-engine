@@ -522,8 +522,23 @@ impl JobLoop {
             key_dir[2].to_bits(),
             key_radius.to_bits(),
         ];
-        queue.write_buffer(&run.pipeline.job, 0, bytemuck::cast_slice(&uniform));
-        queue.write_buffer(&run.pipeline.faces, 0, bytemuck::cast_slice(input));
+        write(
+            queue,
+            &run.pipeline.job,
+            0,
+            bytemuck::cast_slice(&uniform),
+            W_JOB,
+        );
+        write(
+            queue,
+            &run.pipeline.faces,
+            0,
+            bytemuck::cast_slice(input),
+            W_JOB,
+        );
+        // The encode, the submit and the map's request: `wgpu` calls, the render thread's
+        // (ADR-0083).
+        let calls_at = stopwatch();
         let own = self.timer.as_ref().and_then(Option::as_ref);
         let size = STAMP_BYTES + u64::from(count) * FACE_BYTES;
         let staging = match self.staging.iter().position(|b| b.size() >= size) {
@@ -583,6 +598,7 @@ impl JobLoop {
                 std::sync::atomic::Ordering::Release,
             );
         });
+        add_call_ms(seconds_since(calls_at) * 1e3);
         self.in_flight.push_back(InFlight {
             entries,
             count: u64::from(count),
@@ -614,7 +630,7 @@ impl JobLoop {
                 if self.in_flight.len() <= unread {
                     break;
                 }
-                let _ = device.poll(wgpu::PollType::wait_indefinitely());
+                let _ = wgpu_call(|| device.poll(wgpu::PollType::wait_indefinitely()));
                 continue;
             }
             let f = self.in_flight.pop_front().expect("front read above");
@@ -622,13 +638,15 @@ impl JobLoop {
             let seconds = seconds_since(f.t);
             let size = STAMP_BYTES + f.count * FACE_BYTES;
             let bytes: Vec<u8> = if mapped {
-                let b = f
-                    .staging
-                    .get_mapped_range(..size)
-                    .expect("bake readback mapped")
-                    .to_vec();
-                f.staging.unmap();
-                b
+                wgpu_call(|| {
+                    let b = f
+                        .staging
+                        .get_mapped_range(..size)
+                        .expect("bake readback mapped")
+                        .to_vec();
+                    f.staging.unmap();
+                    b
+                })
             } else {
                 vec![0; size as usize]
             };
@@ -817,18 +835,27 @@ impl SubmitRoom {
 }
 
 /// Stages `coord`'s candidate table and its chunk in table slot `slot`.
+/// The table is a function of the mirror's light ranges, so its build counts with its writes
+/// as the render thread's (ADR-0083).
 pub(super) fn write_job_table(run: &BakeRun<'_>, coord: ChunkCoord, slot: usize) {
-    let table = job_table(run.gpu, coord);
+    let table = wgpu_call(|| job_table(run.gpu, coord));
     let used = (1 + table.count as usize) * 16;
     let at = slot as u64 * TABLE_SLOT_BYTES;
     let tables = &run.pipeline.tables;
-    run.queue
-        .write_buffer(tables, at, &bytemuck::bytes_of(&table)[..used]);
+    write(
+        run.queue,
+        tables,
+        at,
+        &bytemuck::bytes_of(&table)[..used],
+        W_JOB,
+    );
     let chunk = [coord.0[0], coord.0[1], coord.0[2], 0];
-    run.queue.write_buffer(
+    write(
+        run.queue,
         tables,
         at + (TABLE_SLOT_WORDS - 1) * 16,
         bytemuck::cast_slice(&chunk),
+        W_JOB,
     );
 }
 

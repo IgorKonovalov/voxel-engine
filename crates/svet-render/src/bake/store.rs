@@ -119,8 +119,10 @@ pub struct Store {
     pub(super) parents: Option<ParentTable>,
     /// What a cube face with no brick value reads; in the flags word.
     pub(super) missing: MissingLight,
-    /// Milliseconds spent on summaries and parents since [`Store::take_summary_ms`].
+    /// Milliseconds spent on summaries and parents since [`Store::take_summary_ms`], and of
+    /// them in `wgpu` calls (the parents' writes).
     pub(super) summary_ms: f64,
+    pub(super) summary_render_ms: f64,
 }
 
 /// The chunks of `held` a move of the store's window from `old` to `window` drops: those outside
@@ -153,7 +155,13 @@ impl Store {
     pub(crate) fn set_missing_light(&mut self, queue: &wgpu::Queue, mode: MissingLight) {
         self.missing = mode;
         let flags = self.flags();
-        queue.write_buffer(&self.pool, STORE_FLAGS * 4, bytemuck::bytes_of(&flags));
+        write(
+            queue,
+            &self.pool,
+            STORE_FLAGS * 4,
+            bytemuck::bytes_of(&flags),
+            W_TABLE,
+        );
     }
 
     /// Sets the mode without writing the flags word: a new pool's header carries it from its
@@ -167,9 +175,13 @@ impl Store {
         &self.light
     }
 
-    /// The milliseconds spent on summaries and parents since the last call.
-    pub(crate) fn take_summary_ms(&mut self) -> f64 {
-        std::mem::take(&mut self.summary_ms)
+    /// The milliseconds spent on summaries and parents since the last call, and of them in
+    /// `wgpu` calls.
+    pub(crate) fn take_summary_ms(&mut self) -> (f64, f64) {
+        (
+            std::mem::take(&mut self.summary_ms),
+            std::mem::take(&mut self.summary_render_ms),
+        )
     }
 
     /// Sets `c`'s summary to `block`'s (`None`: no block) and writes the parent records above
@@ -188,14 +200,20 @@ impl Store {
         };
         for (level, p, rec) in writes {
             if let Some(w) = table.word(level, p) {
-                queue.write_buffer(&self.pool, w * 4, bytemuck::cast_slice(&rec));
+                write(
+                    queue,
+                    &self.pool,
+                    w * 4,
+                    bytemuck::cast_slice(&rec),
+                    W_SUMMARY,
+                );
             }
         }
     }
 
     /// Writes `block`'s summary into its words and records it: the parents follow.
     pub(super) fn summarise(&mut self, queue: &wgpu::Queue, c: [i32; 3], block: &mut [u32]) {
-        let t = stopwatch();
+        let (t, calls_at) = (stopwatch(), calls().ms);
         let record = record_words(self.cell);
         let s = block_summary(block, record);
         let at = SUMMARY_AT as usize;
@@ -210,6 +228,7 @@ impl Store {
         }
         self.set_summary(queue, c, s);
         self.summary_ms += seconds_since(t) * 1e3;
+        self.summary_render_ms += calls().ms - calls_at;
     }
 
     /// Notes that `c`'s block or its coarse mark changed.
@@ -254,6 +273,7 @@ impl Store {
             parents: None,
             missing: MissingLight::default(),
             summary_ms: 0.0,
+            summary_render_ms: 0.0,
         }
     }
 
@@ -314,7 +334,13 @@ impl Store {
     pub(super) fn set_cell(&mut self, queue: &wgpu::Queue, cell: u32) {
         self.cell = cell;
         let flags = self.flags();
-        queue.write_buffer(&self.pool, STORE_FLAGS * 4, bytemuck::bytes_of(&flags));
+        write(
+            queue,
+            &self.pool,
+            STORE_FLAGS * 4,
+            bytemuck::bytes_of(&flags),
+            W_TABLE,
+        );
     }
 
     /// `coord`'s block: its first word and its words.
@@ -349,7 +375,7 @@ impl Store {
             header[8 + k] = size[k] as u32;
         }
         header[STORE_FLAGS as usize] = self.flags();
-        queue.write_buffer(&self.pool, 0, bytemuck::cast_slice(&header));
+        write(queue, &self.pool, 0, bytemuck::cast_slice(&header), W_TABLE);
         self.blocks.clear();
         self.words.clear();
         self.light.clear();
@@ -414,7 +440,13 @@ impl Store {
         header.extend(self.light.table_words(&parents));
         self.summary_ms += seconds_since(t) * 1e3;
         // Words 0 to 2 are unused; the frame's counters are a buffer of their own.
-        queue.write_buffer(&self.pool, 12, bytemuck::cast_slice(&header[3..]));
+        write(
+            queue,
+            &self.pool,
+            12,
+            bytemuck::cast_slice(&header[3..]),
+            W_TABLE,
+        );
         dropped
     }
 
@@ -453,7 +485,13 @@ impl Store {
         words: &mut [u32],
     ) {
         self.summarise(queue, coord.0, words);
-        queue.write_buffer(&self.pool, first * 4, bytemuck::cast_slice(words));
+        write(
+            queue,
+            &self.pool,
+            first * 4,
+            bytemuck::cast_slice(words),
+            W_POOL,
+        );
     }
 
     /// Marks `slots`' records of `coord`'s block [`SKY_STALE`] in the store's copy and the
@@ -484,7 +522,13 @@ impl Store {
         if let Some(block) = self.words.get_mut(&coord.0) {
             block[at] = shown[at];
         }
-        queue.write_buffer(&self.pool, first * 4, bytemuck::cast_slice(&shown));
+        write(
+            queue,
+            &self.pool,
+            first * 4,
+            bytemuck::cast_slice(&shown),
+            W_POOL,
+        );
     }
 
     /// The chunk table's word for `coord`.
@@ -505,11 +549,19 @@ impl Store {
         mut block: Vec<u32>,
     ) {
         self.summarise(queue, coord.0, &mut block);
-        queue.write_buffer(&self.pool, first * 4, bytemuck::cast_slice(&block));
-        queue.write_buffer(
+        write(
+            queue,
+            &self.pool,
+            first * 4,
+            bytemuck::cast_slice(&block),
+            W_POOL,
+        );
+        write(
+            queue,
             &self.pool,
             self.table_word(coord) * 4,
             bytemuck::bytes_of(&self.table_value(coord, first)),
+            W_TABLE,
         );
         self.end_words = self.end_words.max(first + block.len() as u64);
         self.blocks.insert(coord.0, (first, block.len() as u64));
@@ -524,14 +576,17 @@ impl Store {
             self.free_place(first, words);
             self.words.remove(&coord.0);
             self.coarse.remove(&coord.0);
-            queue.write_buffer(
+            write(
+                queue,
                 &self.pool,
                 self.table_word(coord) * 4,
                 bytemuck::bytes_of(&0u32),
+                W_TABLE,
             );
-            let t = stopwatch();
+            let (t, calls_at) = (stopwatch(), calls().ms);
             self.set_summary(queue, coord.0, None);
             self.summary_ms += seconds_since(t) * 1e3;
+            self.summary_render_ms += calls().ms - calls_at;
         }
     }
 
