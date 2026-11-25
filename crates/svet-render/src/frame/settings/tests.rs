@@ -110,3 +110,27 @@ fn the_key_at_hit_sets_no_bit() {
         [KeyAt::Face, KeyAt::FaceSmooth, KeyAt::Centre, KeyAt::Hit]
     );
 }
+
+/// Plan 0100 Phase 5b: `key_horizon` is `march` by default, which sets no bit; `walk` sets
+/// LIGHTING2_KEY_WALK alone and leaves the first word; the names round-trip and `next` cycles.
+#[test]
+fn the_key_horizon_march_sets_no_bit() {
+    use super::{KeyHorizon, LIGHTING2_KEY_WALK, Lighting};
+    let d = Lighting::default();
+    assert_eq!(d.key_horizon, KeyHorizon::March);
+    assert_eq!(d.flags2(), 0);
+    let walk = Lighting {
+        key_horizon: KeyHorizon::Walk,
+        ..d
+    };
+    assert_eq!(walk.flags2(), LIGHTING2_KEY_WALK);
+    assert_eq!(walk.flags(), d.flags());
+    assert_eq!(KeyHorizon::ALL.map(KeyHorizon::name), ["march", "walk"]);
+    for k in KeyHorizon::ALL {
+        assert_eq!(KeyHorizon::from_name(k.name()), Some(k));
+    }
+    assert_eq!(
+        KeyHorizon::ALL.map(KeyHorizon::next),
+        [KeyHorizon::Walk, KeyHorizon::March]
+    );
+}

@@ -742,6 +742,9 @@ impl Modes {
             if l.key_at != svet_render::KeyAt::default() {
                 let _ = write!(out, "key at {}, ", l.key_at.name());
             }
+            if l.key_horizon != svet_render::KeyHorizon::default() {
+                let _ = write!(out, "key horizon {}, ", l.key_horizon.name());
+            }
             if l.penumbra != crate::DEFAULT_PENUMBRA {
                 let _ = write!(out, "penumbra {}, ", l.penumbra.name());
             }

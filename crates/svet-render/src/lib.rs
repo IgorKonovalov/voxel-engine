@@ -119,16 +119,17 @@ pub use frame::{
 };
 pub use frame::{
     CrackShares, DigHold, EntityLight, FRAME_PASSES, Frame, GRADIENT_STRATUM, HistoryKill, KeyAt,
-    KeyFar, KeyFarMix, LightHooks, LightWeights, Lighting, LightingResolution, LodParams,
-    LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher, NormalMode, PassTimer, Penumbra,
-    RenderScale, ShadowWalk, SkyNormal, StoreRead, SurfaceTuning, ToneMap, ViewMode, YoungFilter,
-    jitter_at,
+    KeyFar, KeyFarMix, KeyHorizon, LightHooks, LightWeights, Lighting, LightingResolution,
+    LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher, NormalMode, PassTimer,
+    Penumbra, RenderScale, ShadowWalk, SkyNormal, StoreRead, SurfaceTuning, ToneMap, ViewMode,
+    YoungFilter, jitter_at,
 };
 pub use fsr2::{Fsr2, Fsr2Settings, Fsr2Stage, UpscalerKind};
 pub use gpu_world::{
-    BELT_CHUNK_BYTES, BinStats, COLUMN_CELL, COLUMN_CELLS, COLUMN_NONE, DEFAULT_BUDGET_BYTES,
-    DEFAULT_LIGHT_CHUNK_CAP, DEFAULT_LIGHT_RADIUS, DEFAULT_LIGHT_SAMPLES, GpuWorld, MirrorConfig,
-    MirrorError, ShardLayout, SyncClock, SyncPoint, SyncStats, Window,
+    BELT_CHUNK_BYTES, BinStats, COLUMN_BLOCK, COLUMN_BLOCKS, COLUMN_CELL, COLUMN_CELLS,
+    COLUMN_NONE, DEFAULT_BUDGET_BYTES, DEFAULT_LIGHT_CHUNK_CAP, DEFAULT_LIGHT_RADIUS,
+    DEFAULT_LIGHT_SAMPLES, GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncClock, SyncPoint,
+    SyncStats, Window,
 };
 pub use hud::{
     BACKDROP_ALPHA, GRID_COLS as HUD_GRID_COLS, HudBox, HudColour, HudOverlay, HudPaint, HudTile,
@@ -164,6 +165,9 @@ pub const LIGHT_WGSL: &str = include_str!("shaders/light.wgsl");
 pub const GRADIENT_WGSL: &str = include_str!("shaders/gradient.wgsl");
 /// The visibility pair's functions, compiled before `temporal.wgsl`.
 pub const PAIR_WGSL: &str = include_str!("shaders/pair.wgsl");
+/// The key light's horizon walked over every column-map cell (`KeyHorizon::Walk`), composed after
+/// [`PAIR_WGSL`].
+pub const KEY_WALK_WGSL: &str = include_str!("shaders/key_walk.wgsl");
 /// The temporal pass, compiled after the modules its pass names.
 pub const TEMPORAL_WGSL: &str = include_str!("shaders/temporal.wgsl");
 /// The variance estimate and the a-trous filter, compiled after the modules its pass names.

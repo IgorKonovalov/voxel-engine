@@ -153,7 +153,16 @@ fn column_key_visibility(p: vec3<f32>, n: vec3<f32>) -> f32 {
     return clamp((tan_e - tan_h) / (2.0 * r) + 0.5, 0.0, 1.0);
 }
 
-// The column horizon (`column_key_visibility`) of a cube face's hit `p` with face normal `nf`
+// The column horizon at hit `p` with face normal `n`: under LIGHTING2_KEY_WALK the walk over
+// every cell (`column_key_walk`, `key_walk.wgsl`), else the march (`column_key_visibility`).
+fn column_key_horizon(p: vec3<f32>, n: vec3<f32>) -> f32 {
+    if ((params.lighting2 & LIGHTING2_KEY_WALK) != 0u) {
+        return column_key_walk(p, n);
+    }
+    return column_key_visibility(p, n);
+}
+
+// The column horizon (`column_key_horizon`) of a cube face's hit `p` with face normal `nf`
 // on `axis` (`Lighting::key_at`): at the hit; under LIGHTING2_KEY_AT_FACE at the centre of the
 // hit's voxel face (the voxel's centre half a voxel along `nf`), one value a face whatever the
 // jitter; under LIGHTING2_KEY_AT_SMOOTH the bilinear blend of the horizons at the four face
@@ -165,15 +174,15 @@ fn key_horizon_at(p: vec3<f32>, nf: vec3<f32>, axis: i32, px: vec2<u32>) -> f32 
     let bits = params.lighting2
         & (LIGHTING2_KEY_AT_FACE | LIGHTING2_KEY_AT_SMOOTH | LIGHTING2_KEY_AT_CENTRE);
     if (bits == 0u || axis < 0) {
-        return column_key_visibility(p, nf);
+        return column_key_horizon(p, nf);
     }
     if ((bits & LIGHTING2_KEY_AT_CENTRE) != 0u) {
-        return column_key_visibility(key_centre_point(p, axis, px), nf);
+        return column_key_horizon(key_centre_point(p, axis, px), nf);
     }
     let along = axis_mask(axis);
     let centre = vec3<f32>(store_voxel(p, nf)) + 0.5 + 0.5 * nf;
     if ((bits & LIGHTING2_KEY_AT_FACE) != 0u) {
-        return column_key_visibility(centre, nf);
+        return column_key_horizon(centre, nf);
     }
     // Across the plane: the lattice point at or below the hit on each tangent axis, and the
     // hit's place between it and the next; on the face's axis the plane itself.
@@ -186,10 +195,10 @@ fn key_horizon_at(p: vec3<f32>, nf: vec3<f32>, axis: i32, px: vec2<u32>) -> f32 
     let eb = select(vec3<f32>(0.0), vec3<f32>(1.0), axis_mask(b));
     let fa = dot(f, ea);
     let fb = dot(f, eb);
-    let k00 = column_key_visibility(lo, nf);
-    let k10 = column_key_visibility(lo + ea, nf);
-    let k01 = column_key_visibility(lo + eb, nf);
-    let k11 = column_key_visibility(lo + ea + eb, nf);
+    let k00 = column_key_horizon(lo, nf);
+    let k10 = column_key_horizon(lo + ea, nf);
+    let k01 = column_key_horizon(lo + eb, nf);
+    let k11 = column_key_horizon(lo + ea + eb, nf);
     return mix(mix(k00, k10, fa), mix(k01, k11, fa), fb);
 }
 

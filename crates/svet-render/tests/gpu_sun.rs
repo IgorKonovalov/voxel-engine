@@ -628,6 +628,110 @@ fn the_column_map_is_the_top_of_solid() {
     assert_eq!(stamped, top + 5, "the stamp raises the texel at its sync");
 }
 
+/// Plan 0100 Phase 5b: the column map's coarse levels are its maximum. Read back after each
+/// sync, every block-map texel equals the largest of its 8 x 8 map texels, every chunk-map
+/// texel the largest of its tile, and `column_top_max` the largest chunk texel: after the first
+/// sync, after a dig and a stamp, and at every sync of a following window's move across a
+/// 6 x 6 x 3-chunk terrain (a stale coarse texel is a wrong shadow under `key horizon walk`).
+#[test]
+fn the_column_coarse_levels_are_the_maps_maximum() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let h = |x: i32, y: i32| 20 + (x * 7 + y * 13).rem_euclid(37) + 40 * ((x / 64 + y / 64) % 2);
+    let f = move |p: [i32; 3]| if p[2] < h(p[0], p[1]) { ROCK } else { AIR };
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [6, 6, 3]),
+        &FnSource(f),
+        &table(),
+    );
+    let mut gpu = GpuWorld::with_config(&device, MirrorConfig::new(Window::Follow { side: 3 }));
+    gpu.set_focus(VoxelCoord([96, 96, 64]));
+    let sync = |gpu: &mut GpuWorld| {
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        gpu.sync(&world, &queue, &mut enc).expect("the mirror fits");
+        queue.submit([enc.finish()]);
+    };
+    let check = |gpu: &GpuWorld, when: &str| -> i32 {
+        let read = |t: &wgpu::Texture| svet_render::debug::read_r32i(&device, &queue, t);
+        let [blocks_t, chunks_t] = gpu.column_coarse();
+        let (map, blocks, chunks) = (read(gpu.column_map()), read(blocks_t), read(chunks_t));
+        let tiles = [chunks_t.width() as i32, chunks_t.height() as i32];
+        let (b, e, cells) = (
+            svet_render::COLUMN_BLOCKS,
+            svet_render::COLUMN_BLOCK,
+            svet_render::COLUMN_CELLS,
+        );
+        for ty in 0..tiles[1] * b {
+            for tx in 0..tiles[0] * b {
+                let want = (0..e * e)
+                    .map(|j| {
+                        let (x, y) = (tx * e + j % e, ty * e + j / e);
+                        map[(y * tiles[0] * cells + x) as usize]
+                    })
+                    .max()
+                    .expect("cells");
+                let got = blocks[(ty * tiles[0] * b + tx) as usize];
+                assert_eq!(got, want, "{when}: block texel {tx} {ty}");
+            }
+        }
+        for ty in 0..tiles[1] {
+            for tx in 0..tiles[0] {
+                let want = (0..b * b)
+                    .map(|j| blocks[((ty * b + j / b) * tiles[0] * b + tx * b + j % b) as usize])
+                    .max()
+                    .expect("blocks");
+                assert_eq!(
+                    chunks[(ty * tiles[0] + tx) as usize],
+                    want,
+                    "{when}: chunk {tx} {ty}"
+                );
+            }
+        }
+        let top = chunks.iter().copied().max().expect("tiles");
+        assert_eq!(
+            gpu.column_top_max(),
+            top,
+            "{when}: the window's highest top"
+        );
+        top
+    };
+    sync(&mut gpu);
+    let first = check(&gpu, "first sync");
+    assert!(first > 0, "the terrain tops the window: {first}");
+    let centre = |v: [i32; 3]| centre_of_voxel(v);
+    let (x, y) = (100, 100);
+    let top = h(x, y) - 1;
+    world
+        .apply(&EditOp::box_(
+            centre([x - 8, y - 8, top - 6]),
+            centre([x + 8, y + 8, top + 1]),
+            Mode::Carve,
+        ))
+        .expect("the dig");
+    sync(&mut gpu);
+    check(&gpu, "the dig");
+    world
+        .apply(&EditOp::box_(
+            centre([x, y, 150]),
+            centre([x + 1, y + 1, 151]),
+            Mode::Fill(ROCK),
+        ))
+        .expect("the stamp");
+    sync(&mut gpu);
+    assert_eq!(check(&gpu, "the stamp"), 151, "the stamp tops the window");
+    gpu.set_focus(VoxelCoord([300, 280, 64]));
+    for i in 0..4 {
+        sync(&mut gpu);
+        check(&gpu, &format!("the move, sync {i}"));
+    }
+    println!(
+        "coarse levels: {} bytes beside the map's {}",
+        gpu.column_coarse_bytes(),
+        gpu.column_map_bytes()
+    );
+}
+
 /// Bar 6's flags: turning the sun by 10 degrees in one frame raises the sky-change bit on that
 /// frame and no other; a drift of 0.15 of its radius a frame over 64 frames raises it on none;
 /// the list's change is raised on no frame of either. No adapter time to speak of: a 16 x 16

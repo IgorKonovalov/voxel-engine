@@ -97,6 +97,9 @@ pub struct OutdoorArgs {
     /// `--key-at hit|face|face-smooth|centre`: where on a cube face the key light's column horizon is
     /// read (`Lighting::key_at`).
     pub(crate) key_at: svet_render::KeyAt,
+    /// `--key-horizon march|walk`: how the key light's column horizon reads the map
+    /// (`Lighting::key_horizon`).
+    pub(crate) key_horizon: svet_render::KeyHorizon,
 }
 
 impl OutdoorArgs {
@@ -465,6 +468,18 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
                     svet_render::KeyAt::from_name,
                     "hit, face, face-smooth or centre",
                 )?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--key-horizon"],
+            "march|walk",
+            "how the key light's column horizon reads the map: the march (12 distances to 512 \
+                 voxels and one interval's cells) or a walk over every cell to the window's \
+                 side, passing 32 x 32 and 8 x 8 blocks whose tops cannot shade [march]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.key_horizon =
+                    v.named(svet_render::KeyHorizon::from_name, "march or walk")?;
                 Ok(())
             },
         ),

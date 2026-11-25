@@ -209,6 +209,7 @@ impl Frame {
             key_cap: self.state.lighting.key_cap.max(0.0),
             lighting2: self.state.lighting.flags2(),
             window_size: e.size(),
+            column_top: world.column_top_max(),
             lamp: Light::headlamp(camera, light),
             lamp_pose: [light.offset_right, light.offset_down, light.turn],
             size: [self.targets.width, self.targets.height],

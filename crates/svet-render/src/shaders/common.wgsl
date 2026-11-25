@@ -79,7 +79,8 @@ struct Params {
     // (`SurfaceTuning::face_mix`); 0 keeps the field's.
     face_mix: f32,
     window_size: vec3<i32>,
-    _pad3: i32,
+    // The window's highest column top (`GpuWorld::column_top_max`), COLUMN_NONE for none.
+    column_top: i32,
     size: vec2<u32>,
     // Lighting::light_floor; the passes read each slot's own (`Light.floor`).
     light_floor: f32,
@@ -183,6 +184,12 @@ struct Lights {
 // footprint the highest opaque voxel's z among the resident chunks, COLUMN_NONE for none; a
 // chunk column's COLUMN_CELLS^2 tile at its coordinate wrapped by the window size.
 @group(0) @binding(19) var column_map: texture_2d<i32>;
+
+// The column map's coarse levels (`GpuWorld::column_coarse`): the largest texel of each
+// COLUMN_BLOCK^2 map cells (COLUMN_BLOCKS^2 a tile) and of each tile (one texel), at the tile's
+// wrapped coordinate.
+@group(0) @binding(20) var column_blocks: texture_2d<i32>;
+@group(0) @binding(21) var column_chunks: texture_2d<i32>;
 
 // `ExposureState` in exposure.rs: the exposure this frame uses in auto (`current`) and the one
 // the last frame used (`previous`), then the adapted and metered levels, a counter and flags.

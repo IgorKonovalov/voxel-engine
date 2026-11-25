@@ -1076,6 +1076,11 @@ pub static TOGGLES: &[Toggle] = &[
         |m| format!("key at {}", m.lighting.key_at.name()),
         |m| m.lighting.key_at = m.lighting.key_at.next()
     ),
+    diag!(
+        "key horizon",
+        |m| format!("key horizon {}", m.lighting.key_horizon.name()),
+        |m| m.lighting.key_horizon = m.lighting.key_horizon.next()
+    ),
     Toggle {
         press: Press::Menu,
         name: "time",

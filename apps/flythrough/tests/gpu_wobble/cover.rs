@@ -279,7 +279,17 @@ mod reading {
     #[test]
     #[ignore = "reading"]
     fn sun_under_cover() {
-        let pose = std::env::var("SVET_COVER").unwrap_or_else(|_| "w3".into());
+        // `SVET_COVER=<pose>[+<arm spec>]`: the arm (`Arm::from_spec`, `default` unless given)
+        // the frames are rendered under; under `keyhorizon=walk` the port's check reads the CPU
+        // walk (`Columns::horizon_exact`), not the march.
+        let var = std::env::var("SVET_COVER").unwrap_or_else(|_| "w3".into());
+        let (pose, spec) = var.split_once('+').unwrap_or((&var, "default"));
+        let pose = pose.to_owned();
+        let tag = if spec == "default" {
+            pose.clone()
+        } else {
+            format!("{pose}-{}", spec.replace(['=', ','], "-"))
+        };
         let (minutes, built) = match pose.as_str() {
             "w3" | "w1" => (15.0 * 60.0, forest_pose(&pose)),
             "slot" => (12.0 * 60.0, slot_pose()),
@@ -290,7 +300,8 @@ mod reading {
             return;
         };
         let rig = &mut rig;
-        let arm = Arm::from_spec("default");
+        let arm = Arm::from_spec(spec);
+        let walk = arm.key_horizon == svet_render::KeyHorizon::Walk;
         let mut f = frame_for(rig, &arm);
         let sky = flythrough::daylight::Clock {
             minutes,
@@ -388,7 +399,7 @@ mod reading {
         };
         let calm = lumas(&shot.display);
         support::write_png(
-            &dir_of().join(format!("{pose}-still.png")),
+            &dir_of().join(format!("{tag}-still.png")),
             &shot.display,
             OUT[0],
             OUT[1],
@@ -403,7 +414,7 @@ mod reading {
         let off_shot = s.step(rig, &cam);
         let off = lumas(&off_shot.display);
         support::write_png(
-            &dir_of().join(format!("{pose}-keyoff.png")),
+            &dir_of().join(format!("{tag}-keyoff.png")),
             &off_shot.display,
             OUT[0],
             OUT[1],
@@ -431,7 +442,11 @@ mod reading {
                 continue;
             }
             let gpu = support::defects::key_slot(pair[g][1]).0;
-            let cpu = cols.horizon(p, nf, l, radius);
+            let cpu = if walk {
+                cols.horizon_exact(p, nf, l, radius)
+            } else {
+                cols.horizon(p, nf, l, radius)
+            };
             checked += 1;
             agree += usize::from((gpu - cpu).abs() <= 2.0 / 255.0);
             if (gpu - cpu).abs() > 2.0 / 255.0 {
@@ -439,7 +454,8 @@ mod reading {
             }
         }
         out.push_str(&format!(
-            "the CPU horizon at the lighting pixel's hit against the GPU's key value: {agree} of {checked} within 2/255 (grid {gw} wide)\n"
+            "the CPU horizon ({}) at the lighting pixel's hit against the GPU's key value: {agree} of {checked} within 2/255 (grid {gw} wide)\n",
+            arm.key_horizon.name()
         ));
         // The faces, and the CPU pass.
         let mut index = std::collections::HashMap::new();
@@ -741,7 +757,7 @@ mod reading {
         });
         out.push_str(&text);
         print!("{out}");
-        std::fs::write(dir_of().join(format!("{pose}.txt")), out).expect("the table");
+        std::fs::write(dir_of().join(format!("{tag}.txt")), out).expect("the table");
         assert_eq!(unequal, 0, "the levelled walk differs from the walk");
     }
 }

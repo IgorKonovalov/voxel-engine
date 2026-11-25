@@ -111,6 +111,8 @@ struct Arm {
     /// Plan 0100 Phase 1's arms: where on a cube face the key light's column horizon is read
     /// (`keyat=hit|face|face-smooth|centre`).
     key_at: svet_render::KeyAt,
+    /// Plan 0100 Phase 5b's arm: how the column horizon reads the map (`keyhorizon=march|walk`).
+    key_horizon: svet_render::KeyHorizon,
     /// Plan 0100 Phase 3's arms, read by `coarse::reading` alone: the coarse pass's samples a
     /// brick direction (`coarse=N`, the fly-through's by default), the full-first radius
     /// (`ff=N|none`, the fly-through's by default) and the baked sky term read by the face's
@@ -137,7 +139,8 @@ impl Arm {
     /// `normals` (the normals view); Plan 0098 Phase 5's arms `wide` (`far_light_wide`) and
     /// `hfar` (`light_history_far`); Plan 0098 Phase 9's `hist` (`light_history` on, after
     /// `calm`) and `baked` (`key_far baked`); Plan 0100 Phase 1's `keyat=hit|face|face-smooth`
-    /// (`Lighting::key_at`; Phase 1b's `centre`); Plan 0100 Phase 3's `coarse=N`, `ff=N|none` and `skyface`.
+    /// (`Lighting::key_at`; Phase 1b's `centre`); Plan 0100 Phase 3's `coarse=N`, `ff=N|none` and `skyface`; Phase 5b's
+    /// `keyhorizon=march|walk`.
     fn parse() -> Self {
         Self::from_spec(&std::env::var("SVET_WOBBLE").unwrap_or_else(|_| "default".into()))
     }
@@ -190,6 +193,7 @@ impl Arm {
             far_light_wide: false,
             light_history_far: false,
             key_at: flythrough::default_lighting().key_at,
+            key_horizon: flythrough::default_lighting().key_horizon,
             coarse: svet_render::DEFAULT_COARSE_SAMPLES,
             full_first: Some(svet_render::DEFAULT_NEAR),
             sky_face: false,
@@ -262,6 +266,9 @@ impl Arm {
                 "hfar" => a.light_history_far = true,
                 "fly" => a.fly = v.parse().unwrap(),
                 "keyat" => a.key_at = svet_render::KeyAt::from_name(v).expect("keyat=NAME"),
+                "keyhorizon" => {
+                    a.key_horizon = svet_render::KeyHorizon::from_name(v).expect("keyhorizon=NAME")
+                }
                 "coarse" => a.coarse = v.parse().unwrap(),
                 "ff" => a.full_first = (v != "none").then(|| v.parse().unwrap()),
                 "skyface" => a.sky_face = true,
@@ -354,6 +361,7 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
         far_light_wide: arm.far_light_wide,
         light_history_far: arm.light_history_far,
         key_at: arm.key_at,
+        key_horizon: arm.key_horizon,
         sky_normal: if arm.sky_face {
             svet_render::SkyNormal::Face
         } else {

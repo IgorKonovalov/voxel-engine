@@ -151,3 +151,30 @@ impl KeyAt {
         Self::ALL[(i + 1) % Self::ALL.len()]
     }
 }
+
+/// How the key light's column horizon reads the map (Plan 0100 Phase 5b, ADR-0084).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum KeyHorizon {
+    /// ADR-0079's march: the map cell at each of 12 distances to 512 voxels, then every cell
+    /// (at most 8) of the one interval whose far cell stands highest. The default.
+    #[default]
+    March,
+    /// Every map cell along the sun's horizontal direction to the window's side, over the
+    /// coarse levels (the largest top of each 32 x 32 and 8 x 8 cells): a level's block is
+    /// passed whole where its top cannot raise the horizon into the disc, and the walk ends
+    /// where the visibility is 0 or no top of the window can reach the disc.
+    Walk,
+}
+
+named_enum!(KeyHorizon {
+    March => "march",
+    Walk => "walk",
+});
+
+impl KeyHorizon {
+    /// The value after this one in [`KeyHorizon::ALL`], the first after the last.
+    pub fn next(self) -> Self {
+        let i = Self::ALL.iter().position(|&k| k == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+}

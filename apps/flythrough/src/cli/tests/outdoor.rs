@@ -616,3 +616,34 @@ fn key_at_is_hit_unless_named() {
         assert_eq!((tog.get)(&m), want);
     }
 }
+
+/// Plan 0100 Phase 5b: `--key-horizon` is `march` unless named, which the lighting row and the
+/// banner leave out; `walk` reaches the lighting, the row and the banner; the debug page's
+/// `key horizon` cycles march and walk and its row reads the value.
+#[test]
+fn key_horizon_is_march_unless_named() {
+    use crate::hud::HudRow;
+    use svet_render::KeyHorizon;
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(r.start_lighting().key_horizon, KeyHorizon::March);
+    let m = r.start_modes(0.0);
+    assert!(!m.row(HudRow::Lighting).contains("key horizon"));
+    assert!(!m.banner(0.0).unwrap().contains("key horizon"));
+    let r = parse_args_from(argv(&["--source", "outdoor", "--key-horizon", "walk"])).unwrap();
+    assert_eq!(r.start_lighting().key_horizon, KeyHorizon::Walk);
+    let m = r.start_modes(0.0);
+    let row = m.row(HudRow::Lighting);
+    assert!(row.contains("key horizon walk, "), "{row}");
+    let banner = m.banner(0.0).unwrap().replace('\n', ", ");
+    assert!(banner.contains("key horizon walk, "), "{banner}");
+    assert!(parse_args_from(argv(&["--key-horizon", "exact"])).is_err());
+    let tog = crate::toggles::TOGGLES
+        .iter()
+        .find(|t| t.name == "key horizon")
+        .unwrap();
+    let mut m = r.start_modes(0.0);
+    for want in ["key horizon march", "key horizon walk"] {
+        (tog.flip)(&mut m, 0.0);
+        assert_eq!((tog.get)(&m), want);
+    }
+}

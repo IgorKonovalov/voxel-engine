@@ -55,7 +55,9 @@ pub struct Params {
     /// [`SurfaceTuning::face_mix`].
     pub face_mix: f32,
     pub window_size: [i32; 3],
-    pub _pad3: i32,
+    /// The window's highest column top ([`crate::GpuWorld::column_top_max`]): where the
+    /// horizon's walk ([`KeyHorizon::Walk`]) ends once no top can raise it.
+    pub column_top: i32,
     pub size: [u32; 2],
     /// [`Lighting::light_floor`]: a list light reaches `sqrt(intensity / light_floor)` voxels;
     /// the slot rule copies it into each list light's slot (the headlamp's slot takes 0).
@@ -304,6 +306,10 @@ pub(crate) const LIGHTING2_KEY_AT_SMOOTH: u32 = 1 << 2;
 /// `Params::lighting2` bit ([`KeyAt::Centre`]): a cube face's column horizon is read where the
 /// pixel's ray with no jitter meets the hit's face plane.
 pub(crate) const LIGHTING2_KEY_AT_CENTRE: u32 = 1 << 3;
+
+/// `Params::lighting2` bit ([`KeyHorizon::Walk`]): the key light's column horizon walks every
+/// map cell to the window's side over the coarse levels, not the march.
+pub(crate) const LIGHTING2_KEY_WALK: u32 = 1 << 4;
 
 /// The light passes' reading hooks ([`Frame::set_light_hooks`]): switches that take a term or a
 /// test out of the frame to attribute what the image does to it. All off by default; each is
@@ -966,6 +972,8 @@ pub struct Lighting {
     pub key_step: f32,
     /// Where on a cube face the key light's column horizon is read ([`KeyAt`]; default `Hit`).
     pub key_at: KeyAt,
+    /// How the key light's column horizon reads the map ([`KeyHorizon`]; default `March`).
+    pub key_horizon: KeyHorizon,
 }
 
 /// [`Lighting::key_step`] by default, in degrees (Plan 0095 Phase 8, a guess: 10 s of the
@@ -1028,6 +1036,7 @@ impl Default for Lighting {
             column_wait: false,
             key_step: DEFAULT_KEY_STEP,
             key_at: KeyAt::Hit,
+            key_horizon: KeyHorizon::March,
         }
     }
 }
@@ -1136,6 +1145,9 @@ impl Lighting {
             KeyAt::Face => LIGHTING2_KEY_AT_FACE,
             KeyAt::FaceSmooth => LIGHTING2_KEY_AT_SMOOTH,
             KeyAt::Centre => LIGHTING2_KEY_AT_CENTRE,
+        } | match self.key_horizon {
+            KeyHorizon::March => 0,
+            KeyHorizon::Walk => LIGHTING2_KEY_WALK,
         }
     }
 
