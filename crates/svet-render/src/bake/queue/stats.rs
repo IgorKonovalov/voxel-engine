@@ -45,6 +45,10 @@ pub struct QueueStats {
     pub plan_stops: [u64; 3],
     pub in_flight_full: u64,
     pub slotless_stops: u64,
+    /// Steps since the queue started that sent no submit with a submit slot free (neither
+    /// blocked nor sent), and the jobs open after the last step's submit (0 where it sent none).
+    pub idle_steps: u64,
+    pub open_at_draw: u64,
     /// Steps since the queue started.
     pub steps: u64,
     /// The loop's samples read back: kept, and read into nothing (rounds past a face's stop,

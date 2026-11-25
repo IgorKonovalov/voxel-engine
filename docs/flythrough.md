@@ -423,6 +423,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--queue-withdraw on\|off` | Withdraw the jobs of chunks the camera passed |
 | `--bake-thread on\|off` | Run the live queue's sliced steps on the bake thread (ADR-0083; the pre-roll and the one-shot bakes stay lockstep); the banner's queue row and the HUD's queue row read `bake thread on` or `off`; a profile does not set it, every profile's being `off` [on in a window, off under `--headless`] |
 | `--bake-depth N` | The submits the bake thread's steps hold unread at most, 1 to 8 (a reading's knob; lockstep, the pre-roll and the one-shot bakes hold two whatever it is) [3] |
+| `--bake-slots N` | The live queue's table slots the bake thread's steps open jobs into, 16 to 64 (a reading's knob; lockstep and the pre-roll keep 16 whatever it is) [32] |
 | `--queue-census` | Read the queue's view census at every opening, its listing once |
 | `--queue-rule-reading` | Count the jobs opened for chunks the zero rule would answer (a reading) |
 | `--edit-ms MS` | The slice's growth while a dig waits, 0 to 100 ms [3] |
@@ -451,8 +452,12 @@ caps` (the loop's samples left and the listing pool's estimates over the cap at 
 over their bounds, for chunks listed from the world and from prepared masks; 1 until 16 of a
 kind returned) and `pool guard G` (the openings stopped by the pool's limit of 64 candidates).
 Its `out of rounds N (K with no table slot free)` counts the submits whose plan ran out of
-rounds, and of them those planned with all 16 table slots held; `steps with every submit slot
-unread B of S` the steps that could send no submit for the bound in flight, of the steps taken;
+rounds, and of them those planned with every table slot held (16 in lockstep, `--bake-slots`
+on the bake thread); `steps with every submit slot unread B of S` the steps that could send no
+submit for the bound in flight, of the steps taken; `steps neither blocked nor sent I` the steps
+that sent no submit with a submit slot free (out of rounds, every table slot held, or nothing to
+do), since the queue started; `jobs open at the draw p50 J max M` the jobs open after each
+submit since the last line (`NaN` where none was sent);
 its last field, `wasted samples W of D drawn`, the samples read back into nothing (rounds past
 a face's stop, a withdrawn job's, a map that failed) of all the loop read back.
 With the bake thread on, a frame issues at most one submit and carries any later one to the

@@ -581,6 +581,11 @@ impl RenderSettings {
              (Plan 0099 Phase 4c); lockstep holds two whatever it is",
         ),
         (
+            "set_bake_slots",
+            "a reading's knob: the bake thread's table slots, picked by reading (Plan 0099 \
+             Phase 4c2); lockstep keeps 16 whatever it is",
+        ),
+        (
             "set_pipeline_cache",
             "a test hook: the pipeline cache the test devices build through",
         ),

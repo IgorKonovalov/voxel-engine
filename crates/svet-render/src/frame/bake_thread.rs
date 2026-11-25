@@ -38,6 +38,14 @@ impl Frame {
         self.baked.thread_depth = depth.max(1);
     }
 
+    /// The live queue's table slots the bake thread's steps open jobs into, 16 to 64 (a
+    /// reading's knob; [`crate::THREAD_SLOTS`] by default). Lockstep and the pre-roll keep the
+    /// last 16 whatever it is; at the thread's stop the loop returns to them, a job open in a
+    /// slot outside keeping it until it closes. It takes hold at the thread's next start.
+    pub fn set_bake_slots(&mut self, slots: usize) {
+        self.baked.thread_slots = slots;
+    }
+
     /// The bake thread's submits on the render side since the frame was made (a reading,
     /// [`crate::BakeRoundTrip`]).
     pub fn bake_round_trip(&self) -> crate::BakeRoundTrip {
@@ -210,8 +218,9 @@ impl Frame {
             return;
         };
         // The bake thread's openings list through a kept pool and do not wait for it, and its
-        // steps hold its depth of submits unread.
+        // steps hold its depth of submits unread and open jobs into its table slots.
         queue.set_thread_depth(b.thread_depth);
+        queue.set_thread_slots(b.thread_slots);
         if let Err(e) = queue.start_lister(shared.clone()) {
             self.end_failed(BakeError::Thread(format!("spawn: {e}")));
             return;

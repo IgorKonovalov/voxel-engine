@@ -181,16 +181,20 @@ pub(in crate::bake) struct Listing {
 
 impl BakeQueue {
     /// Starts the listing pool on `world`; the bake thread's openings list through it.
+    /// Its steps open jobs into the last [`BakeQueue::set_thread_slots`] table slots from here.
     pub(crate) fn start_lister(&mut self, world: Arc<World>) -> std::io::Result<()> {
         self.lister = Some(Lister::start(world)?);
+        self.lp.set_rows(queue_rows(self.thread_slots));
         Ok(())
     }
 
     /// Stops the listing pool and forgets what it held: those candidates are still in the
-    /// candidate pool, and the next opening lists them again.
+    /// candidate pool, and the next opening lists them again. The loop returns to the last
+    /// [`QUEUE_SLOTS`] table slots: a job open in a slot outside them keeps it until it closes.
     pub(crate) fn stop_lister(&mut self) {
         self.lister = None;
         self.listing.clear();
+        self.lp.set_rows(queue_rows(QUEUE_SLOTS));
     }
 
     /// Whether the openings list through the pool.
@@ -211,6 +215,13 @@ impl BakeQueue {
     /// Sets the bake thread's depth ([`BakeQueue::in_flight_bound`]), at least 1.
     pub(crate) fn set_thread_depth(&mut self, depth: usize) {
         self.thread_depth = depth.max(1);
+    }
+
+    /// Sets the table slots the bake thread's steps open jobs into, [`QUEUE_SLOTS`] to
+    /// [`QUEUE_RESERVE`] ([`crate::THREAD_SLOTS`] by default); it takes hold at the pool's next
+    /// start. Lockstep, the pre-roll and the one-shot bakes keep theirs whatever it is.
+    pub(crate) fn set_thread_slots(&mut self, slots: usize) {
+        self.thread_slots = slots.clamp(QUEUE_SLOTS, QUEUE_RESERVE);
     }
 
     /// Whether `c` is in the pool's hands.

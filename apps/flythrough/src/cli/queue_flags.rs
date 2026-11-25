@@ -75,6 +75,20 @@ pub(super) fn queue_flags() -> Vec<Flag<Parsing>> {
                 Ok(())
             },
         ),
+        Flag::value(
+            &["--bake-slots"],
+            "N",
+            "the bake thread's table slots, 16 to 64",
+            |p: &mut Parsing, v| {
+                p.args.bake.slots = v
+                    .text
+                    .parse()
+                    .ok()
+                    .filter(|d| (16..=64).contains(d))
+                    .ok_or_else(|| v.takes("16 to 64"))?;
+                Ok(())
+            },
+        ),
         Flag::switch(
             &["--queue-census"],
             "read the queue's view census at every opening, its listing once",

@@ -391,6 +391,8 @@ pub struct BakeQueue {
     pub(in crate::bake) fill: lister::Fill,
     /// The submits the bake thread's steps hold unread at most ([`BakeQueue::in_flight_bound`]).
     pub(in crate::bake) thread_depth: usize,
+    /// The table slots the bake thread's steps open jobs into ([`BakeQueue::set_thread_slots`]).
+    pub(in crate::bake) thread_slots: usize,
     /// A test's hook, run after each candidate the opening lists into the loop.
     #[cfg(test)]
     pub(in crate::bake) listed_hook: Option<Box<dyn FnMut() + Send + Sync>>,
@@ -598,7 +600,7 @@ impl BakeQueue {
             listed: Default::default(),
             job_coarse: Default::default(),
             lp: {
-                let mut lp = JobLoop::new(Vec::new(), LOOP_SLOTS..OPEN_JOBS);
+                let mut lp = JobLoop::new(Vec::new(), queue_rows(QUEUE_SLOTS));
                 lp.ended = Some(Vec::new());
                 lp
             },
@@ -642,6 +644,7 @@ impl BakeQueue {
             listing_seq: 0,
             fill: Default::default(),
             thread_depth: THREAD_DEPTH,
+            thread_slots: THREAD_SLOTS,
             #[cfg(test)]
             listed_hook: None,
             pool: Default::default(),

@@ -2,13 +2,31 @@
 
 use super::*;
 
-/// Slots of the candidate tables a one-off bake's jobs take ([`run_jobs`]); the live queue's
-/// take the rest ([`QUEUE_SLOTS`]), so a dig's re-bake between two of its submits leaves its open
-/// jobs' tables.
-pub(super) const LOOP_SLOTS: usize = OPEN_JOBS - QUEUE_SLOTS;
+/// Slots of the candidate tables a one-off bake's jobs take ([`run_jobs`]), the first of
+/// [`OPEN_JOBS`]; the live queue's reserve is the rest ([`QUEUE_RESERVE`]), so a dig's re-bake
+/// between two of the queue's submits leaves its open jobs' tables.
+pub(super) const LOOP_SLOTS: usize = OPEN_JOBS - QUEUE_RESERVE;
 
-/// Slots the live queue's open jobs take, the last of [`OPEN_JOBS`].
+/// The live queue's reserve of slots, the last of [`OPEN_JOBS`]: the most its loop opens into
+/// ([`crate::THREAD_SLOTS`] and the `--bake-slots` reading take at most this many).
+pub(crate) const QUEUE_RESERVE: usize = 64;
+
+/// Slots the live queue's open jobs take in lockstep and the pre-roll, the last 16 of
+/// [`OPEN_JOBS`]; the bake thread's steps take [`crate::THREAD_SLOTS`] of the reserve
+/// ([`JobLoop::set_rows`]).
 pub(crate) const QUEUE_SLOTS: usize = 16;
+
+// The one-shot loop's slots and the queue's reserve do not meet, and both of the queue's
+// counts lie inside its reserve.
+const _: () = assert!(LOOP_SLOTS + QUEUE_RESERVE <= OPEN_JOBS);
+const _: () = assert!(LOOP_SLOTS == 192);
+const _: () = assert!(QUEUE_SLOTS <= QUEUE_RESERVE && crate::THREAD_SLOTS <= QUEUE_RESERVE);
+
+/// The last `n` slots of [`OPEN_JOBS`], `n` clamped to the queue's slots by mode
+/// ([`QUEUE_SLOTS`] to [`QUEUE_RESERVE`]).
+pub(crate) fn queue_rows(n: usize) -> std::ops::Range<usize> {
+    OPEN_JOBS - n.clamp(QUEUE_SLOTS, QUEUE_RESERVE)..OPEN_JOBS
+}
 
 /// What one submit of a [`JobLoop`] did.
 #[derive(Clone, Copy, Debug, Default)]
@@ -111,6 +129,9 @@ pub(crate) struct JobLoop {
     /// nothing, each slot freed once its rounds are.
     pub(super) withdrawn: Vec<OpenJob>,
     pub(super) free: Vec<usize>,
+    /// The slots a job may open into: a slot freed outside them is not free again
+    /// ([`JobLoop::set_rows`]).
+    pub(super) rows: std::ops::Range<usize>,
     pub(super) in_flight: VecDeque<Planned>,
     /// The jobs opened since the last submit went out, `(slot, chunk)`: the render half writes
     /// their candidate tables ahead of it.
@@ -152,7 +173,8 @@ impl JobLoop {
             pending: jobs.into(),
             open: Vec::new(),
             withdrawn: Vec::new(),
-            free: slots.rev().collect(),
+            free: slots.clone().rev().collect(),
+            rows: slots,
             in_flight: VecDeque::new(),
             new_tables: Vec::new(),
             stamp: 0,
@@ -161,6 +183,35 @@ impl JobLoop {
             plan_stops: [0; 3],
             slotless_stops: 0,
             ended: None,
+        }
+    }
+
+    /// Sets the slots jobs open into to `rows`: a free slot outside them leaves the free list, and
+    /// one inside that no job holds becomes free, taken after those free already. A job open in
+    /// a slot outside keeps it until it closes, and the slot is not free again.
+    pub(crate) fn set_rows(&mut self, rows: std::ops::Range<usize>) {
+        self.free.retain(|s| rows.contains(s));
+        let held: std::collections::HashSet<usize> = self
+            .open
+            .iter()
+            .chain(&self.withdrawn)
+            .map(|j| j.slot)
+            .chain(self.free.iter().copied())
+            .collect();
+        let new: Vec<usize> = rows.clone().filter(|s| !held.contains(s)).collect();
+        self.free.splice(0..0, new);
+        self.rows = rows;
+    }
+
+    /// The jobs open.
+    pub(crate) fn open_jobs(&self) -> usize {
+        self.open.len()
+    }
+
+    /// Frees `slot` where jobs open into it ([`JobLoop::set_rows`]).
+    fn release(free: &mut Vec<usize>, rows: &std::ops::Range<usize>, slot: usize) {
+        if rows.contains(&slot) {
+            free.push(slot);
         }
     }
 
@@ -255,7 +306,7 @@ impl JobLoop {
                     .sum(),
             });
             if job.states.iter().all(|s| s.queued == 0) {
-                self.free.push(job.slot);
+                Self::release(&mut self.free, &self.rows, job.slot);
             } else {
                 self.withdrawn.push(job);
             }
@@ -618,11 +669,11 @@ impl JobLoop {
                 }
             }
             // A withdrawn job whose rounds are all read back frees its slot.
-            let free = &mut self.free;
+            let (free, rows) = (&mut self.free, &self.rows);
             self.withdrawn.retain(|j| {
                 let drained = j.states.iter().all(|s| s.queued == 0);
                 if drained {
-                    free.push(j.slot);
+                    Self::release(free, rows, j.slot);
                 }
                 !drained
             });
@@ -679,7 +730,7 @@ impl JobLoop {
             let j = &self.open[k];
             if j.live.is_empty() && j.states.iter().all(|s| s.queued == 0) {
                 let job = self.open.remove(k);
-                self.free.push(job.slot);
+                Self::release(&mut self.free, &self.rows, job.slot);
                 if let Some(ended) = self.ended.as_mut() {
                     let drawn = job.states.iter().map(|s| u64::from(s.n)).sum();
                     ended.push((job.coord, drawn));

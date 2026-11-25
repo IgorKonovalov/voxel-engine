@@ -521,6 +521,10 @@ impl BakeQueue {
             lap(&mut self.laps, S_COLLECT);
         }
         self.read_stats(&d, cap, submitted, in_flight_full);
+        // A step that sent nothing with a submit slot free: out of rounds, every table slot
+        // held, or nothing to do.
+        self.stats.idle_steps += u64::from(!sent && !in_flight_full);
+        self.stats.open_at_draw = if sent { self.lp.open_jobs() as u64 } else { 0 };
         self.stats.stretched = stretched;
         self.stats.projected = projected
             .filter(|_| sent)

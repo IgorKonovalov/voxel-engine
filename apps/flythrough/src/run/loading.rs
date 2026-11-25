@@ -672,6 +672,7 @@ impl Run {
         frame.share_bake_world(self.world.clone());
         frame.set_bake_thread(&gpu.queue, self.args.bake_thread());
         frame.set_bake_depth(self.args.bake.depth);
+        frame.set_bake_slots(self.args.bake.slots);
         if frame.bake_queue().is_some() {
             let (order, withdraw) = (self.args.queue_order(), self.args.bake.queue_withdraw);
             let (census, rule) = (

@@ -122,6 +122,8 @@ pub(super) struct BakeLink {
     pub(super) last_apply: (f64, usize),
     /// The bake thread's depth in flight ([`Frame::set_bake_depth`]).
     pub(super) thread_depth: usize,
+    /// The table slots the bake thread's steps open jobs into ([`Frame::set_bake_slots`]).
+    pub(super) thread_slots: usize,
     /// The reading [`Frame::bake_round_trip`] returns.
     pub(super) round_trip: crate::BakeRoundTrip,
 }
@@ -186,6 +188,7 @@ impl BakeLink {
             last_issue: (0.0, 0),
             last_apply: (0.0, 0),
             thread_depth: crate::THREAD_DEPTH,
+            thread_slots: crate::THREAD_SLOTS,
             round_trip: Default::default(),
         }
     }

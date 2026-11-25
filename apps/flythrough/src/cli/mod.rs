@@ -630,6 +630,10 @@ pub struct BakeArgs {
     /// (`svet_render::Frame::set_bake_depth`; default `svet_render::THREAD_DEPTH`); lockstep
     /// holds two whatever it is.
     pub(crate) depth: usize,
+    /// `--bake-slots N`: the live queue's table slots the bake thread's steps open jobs into,
+    /// 16 to 64 (`svet_render::Frame::set_bake_slots`; default `svet_render::THREAD_SLOTS`);
+    /// lockstep keeps 16 whatever it is.
+    pub(crate) slots: usize,
     /// `--read-missing`: while a dig's rings 1 and 2 wait, the store's no-value count is read back
     /// each frame (blocking) for the `dig settled:` line.
     pub(crate) read_missing: bool,

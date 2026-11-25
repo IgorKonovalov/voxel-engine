@@ -118,6 +118,8 @@ pub(crate) struct QueueRun {
     /// The projection over the cap at each draw since the last line, with the bake thread's
     /// listing pool (`QueueStats::projected`).
     pub(crate) projected: Vec<f64>,
+    /// The jobs open at each draw since the last line (`QueueStats::open_at_draw`).
+    pub(crate) open_at_draw: Vec<f64>,
     pub(crate) emptied: bool,
     pub(crate) stats: Option<svet_render::QueueStats>,
     pub(crate) failed: bool,
@@ -206,6 +208,22 @@ impl DigFrame {
 }
 
 impl QueueRun {
+    /// A step's figures the per-second lines and the teardown read: the slice drawn, the
+    /// projection and the jobs open at the draw, the stages.
+    fn note_step(&mut self, st: &svet_render::QueueStats) {
+        if st.samples > 0 {
+            self.slices.push(st.ms);
+        }
+        if st.projected > 0.0 {
+            self.projected.push(st.projected);
+        }
+        if st.open_at_draw > 0 {
+            self.open_at_draw.push(st.open_at_draw as f64);
+        }
+        self.line_stages.push(st.stages);
+        self.tally.push(st.stages);
+    }
+
     /// Files frame `frame`'s wall (`dt` s, not on the first frame, whose delta spans the
     /// start-up) and CPU ms under the queue's state at its last step; nothing before the live
     /// queue's first step.
@@ -629,14 +647,7 @@ impl Run {
         print_listing_census(gfx, &self.world, &view, &mut self.queue);
         match stepped {
             Some(Ok(st)) => {
-                if st.samples > 0 {
-                    self.queue.slices.push(st.ms);
-                }
-                if st.projected > 0.0 {
-                    self.queue.projected.push(st.projected);
-                }
-                self.queue.line_stages.push(st.stages);
-                self.queue.tally.push(st.stages);
+                self.queue.note_step(&st);
                 if new_box {
                     self.queue
                         .dig_frames
@@ -920,7 +931,9 @@ impl Run {
                 class_ns,
             );
             let mut projected = std::mem::take(&mut self.queue.projected);
-            print_slice_line(t, &st, p50, percentile(&mut projected, 50.0));
+            let mut open = std::mem::take(&mut self.queue.open_at_draw);
+            let open = [percentile(&mut open, 50.0), percentile(&mut open, 100.0)];
+            print_slice_line(t, &st, p50, percentile(&mut projected, 50.0), open);
             // The next second's line and the HUD's row read the next opening's census: asked
             // through the frame's message, so the bake thread's queue takes it too.
             gfx.frame
@@ -986,10 +999,17 @@ impl Run {
 /// why the submits' plans stopped, and the reads of the in-view set with their mean and longest
 /// cost; with the bake thread's listing pool, the projection over the cap at the draws (p50),
 /// the listing bounds' two fills (from the world, from prepared masks) and the openings the
-/// pool's guard stopped.
-fn print_slice_line(t: f64, st: &svet_render::QueueStats, p50: f64, projected: f64) {
+/// pool's guard stopped; the steps that neither were blocked nor sent a submit, and the jobs
+/// open at the draws since the last line (p50 and max).
+fn print_slice_line(
+    t: f64,
+    st: &svet_render::QueueStats,
+    p50: f64,
+    projected: f64,
+    open_at_draw: [f64; 2],
+) {
     println!(
-        "bake queue slice: at {:.1} s, granted {:.2} ms ({}, {} in view waiting for their tier), drawn p50 {:.2} ms, plans stopped at the cap {} at the batch {} out of rounds {} ({} with no table slot free), steps with every submit slot unread {} of {}, the in-view set read {} times, mean {:.3} ms, max {:.3} ms, projected at the draw p50 {:.2} caps, fill world {:.3} masks {:.3}, pool guard {}, wasted samples {} of {} drawn",
+        "bake queue slice: at {:.1} s, granted {:.2} ms ({}, {} in view waiting for their tier), drawn p50 {:.2} ms, plans stopped at the cap {} at the batch {} out of rounds {} ({} with no table slot free), steps with every submit slot unread {} of {}, steps neither blocked nor sent {}, jobs open at the draw p50 {:.0} max {:.0}, the in-view set read {} times, mean {:.3} ms, max {:.3} ms, projected at the draw p50 {:.2} caps, fill world {:.3} masks {:.3}, pool guard {}, wasted samples {} of {} drawn",
         t / 1e3,
         st.slice_ms,
         if st.draining { "drain" } else { "line" },
@@ -1001,6 +1021,9 @@ fn print_slice_line(t: f64, st: &svet_render::QueueStats, p50: f64, projected: f
         st.slotless_stops,
         st.in_flight_full,
         st.steps,
+        st.idle_steps,
+        open_at_draw[0],
+        open_at_draw[1],
         st.waiting_reads,
         st.waiting_ms / st.waiting_reads.max(1) as f64,
         st.waiting_max_ms,

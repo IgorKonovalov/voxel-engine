@@ -314,3 +314,225 @@ fn the_thread_plans_to_its_depth_and_lockstep_to_two() {
     assert_eq!(issued, 2, "lockstep plans two");
     assert_eq!(blocked, STEPS - full_at.expect("two are planned"));
 }
+
+/// One step of [`slots_run`]: the samples of the submit it sent (0 for none), whether it was
+/// counted blocked, whether it was counted neither blocked nor sent, and the jobs open after it.
+#[derive(Debug, PartialEq)]
+struct SlotsStep {
+    sent: u64,
+    blocked: bool,
+    idle: bool,
+    open: usize,
+}
+
+/// `steps` frames of the rig, its read-backs withheld (a lone-voxel face draws one round of
+/// `count`), each step's [`SlotsStep`]; and the plans out of rounds with no table slot free.
+fn slots_run(rig: &mut Rig, steps: usize, count: u32) -> (Vec<SlotsStep>, u64) {
+    rig.half.hold = true;
+    let mut out = Vec::new();
+    for _ in 0..steps {
+        let before = rig.half.issued.len();
+        let (blocked, idle) = (rig.queue.stats.in_flight_full, rig.queue.stats.idle_steps);
+        if rig.queue.lists_off_the_loop() {
+            pooled_step(rig);
+        } else {
+            rig.queue.cost = SampleCost::new(2.0);
+            rig.step();
+        }
+        let issued = &rig.half.issued[before..];
+        assert!(issued.len() <= 1, "one submit a step");
+        out.push(SlotsStep {
+            sent: issued
+                .iter()
+                .map(|(_, slots)| slots.len() as u64 * u64::from(count))
+                .sum(),
+            blocked: rig.queue.stats.in_flight_full > blocked,
+            idle: rig.queue.stats.idle_steps > idle,
+            open: rig.queue.lp.open.len(),
+        });
+    }
+    (out, rig.queue.lp.slotless_stops)
+}
+
+/// The submits of `steps`, each its samples and the jobs open after it.
+fn sent(steps: &[SlotsStep]) -> Vec<(u64, usize)> {
+    steps
+        .iter()
+        .filter(|s| s.sent > 0)
+        .map(|s| (s.sent, s.open))
+        .collect()
+}
+
+/// [`pooled_rig`] over 64 chunks at a 4.0 ms slice, its bake thread's table slots `slots` and
+/// its depth `depth`.
+fn slots_rig(slots: usize, depth: usize) -> Rig {
+    let (k, count) = LONE;
+    let mut rig = sliced_rig(64, k, count, 4.0, true);
+    rig.queue.set_thread_slots(slots);
+    rig.queue.set_thread_depth(depth);
+    rig.queue
+        .start_lister(Arc::new(lone_voxels(64, k)))
+        .expect("the pool's threads start");
+    rig
+}
+
+/// Done when (1) of Plan 0099 Phase 4c2. The pooled rig, read-backs withheld, jobs of 198 750
+/// samples in 318 faces of 625 ([`LONE`]), a 4.0 ms slice at 2 ns (cap 2 000 000), depth 3. At
+/// 16 table slots: two submits, 2 000 000 (ten jobs whole and 20 faces of the eleventh) and
+/// 1 180 000 (the eleventh's 186 250 and five jobs), the second out of rounds with no slot
+/// free, and the step after sends nothing and is not counted blocked. At 32: three submits of
+/// 2 000 000, 21 jobs open after the second and 31 after the third, none stopped for a slot. At
+/// 32 and depth 4 the fourth is 360 000 (the thirty-first's 161 250 and one job), out of rounds
+/// with no slot free; at 48 it is 2 000 000 with 41 open. The rig's first step hands its
+/// candidates to the pool and sends nothing; its submits start at the second.
+#[test]
+fn the_threads_slots_hold_its_depth_in_caps() {
+    let count = LONE.1;
+    let (steps, slotless) = slots_run(&mut slots_rig(16, 3), 6, count);
+    assert_eq!(sent(&steps), [(2_000_000, 11), (1_180_000, 16)], "16 slots");
+    assert_eq!(
+        slotless, 1,
+        "16 slots: the second out of rounds with no slot free"
+    );
+    let second = steps.iter().rposition(|s| s.sent > 0).expect("two sent");
+    assert_eq!(
+        steps[second + 1],
+        SlotsStep {
+            sent: 0,
+            blocked: false,
+            idle: true,
+            open: 16
+        },
+        "16 slots: the step after the second sends nothing, not blocked: {steps:?}"
+    );
+
+    let (steps, slotless) = slots_run(&mut slots_rig(32, 3), 6, count);
+    assert_eq!(
+        sent(&steps),
+        [(2_000_000, 11), (2_000_000, 21), (2_000_000, 31)],
+        "32 slots"
+    );
+    assert_eq!(slotless, 0, "32 slots: none stopped for a slot");
+
+    let (steps, slotless) = slots_run(&mut slots_rig(32, 4), 7, count);
+    assert_eq!(
+        sent(&steps),
+        [
+            (2_000_000, 11),
+            (2_000_000, 21),
+            (2_000_000, 31),
+            (360_000, 32)
+        ],
+        "32 slots, depth 4"
+    );
+    assert_eq!(
+        slotless, 1,
+        "32 slots, depth 4: the fourth with no slot free"
+    );
+
+    let (steps, slotless) = slots_run(&mut slots_rig(48, 4), 7, count);
+    assert_eq!(
+        sent(&steps),
+        [
+            (2_000_000, 11),
+            (2_000_000, 21),
+            (2_000_000, 31),
+            (2_000_000, 41)
+        ],
+        "48 slots, depth 4"
+    );
+    assert_eq!(slotless, 0, "48 slots, depth 4");
+}
+
+/// Done when (2) of Plan 0099 Phase 4c2: the same jobs in lockstep (no pool), the bake
+/// thread's count set to 64, plan 2 000 000 then 1 180 000 and hold 16 jobs, every slot in the
+/// last 16 table rows.
+#[test]
+fn lockstep_keeps_sixteen_slots_whatever_the_count() {
+    let (k, count) = LONE;
+    let mut rig = sliced_rig(64, k, count, 4.0, true);
+    rig.queue.set_thread_slots(64);
+    let (steps, slotless) = slots_run(&mut rig, 6, count);
+    assert_eq!(sent(&steps), [(2_000_000, 11), (1_180_000, 16)]);
+    assert_eq!(slotless, 1, "the second out of rounds with no slot free");
+    let lockstep = OPEN_JOBS - QUEUE_SLOTS..OPEN_JOBS;
+    assert_eq!(rig.queue.lp.open.len(), 16);
+    assert!(
+        rig.queue.lp.open.iter().all(|j| lockstep.contains(&j.slot)),
+        "every slot in the last 16 rows"
+    );
+    let held: Vec<u32> = rig
+        .half
+        .issued
+        .iter()
+        .flat_map(|(_, slots)| slots.iter().copied())
+        .collect();
+    assert!(held.iter().all(|&s| lockstep.contains(&(s as usize))));
+}
+
+/// Done when (3) of Plan 0099 Phase 4c2: the pool stopped with 31 jobs open (32 slots, depth
+/// 3); the read-backs released, every job opened after the stop takes one of the last 16 rows,
+/// and once the 31 have closed the loop's free rows are those 16 less those the later jobs hold.
+#[test]
+fn a_join_returns_the_loop_to_its_sixteen() {
+    let count = LONE.1;
+    let mut rig = slots_rig(32, 3);
+    let (steps, _) = slots_run(&mut rig, 6, count);
+    assert_eq!(sent(&steps).last(), Some(&(2_000_000, 31)));
+    rig.queue.stop_lister();
+    let lockstep = OPEN_JOBS - QUEUE_SLOTS..OPEN_JOBS;
+    let first: std::collections::HashSet<[i32; 3]> =
+        rig.queue.lp.open.iter().map(|j| j.coord.0).collect();
+    assert_eq!(first.len(), 31);
+    assert!(
+        rig.queue.lp.free.iter().all(|s| lockstep.contains(s)),
+        "no slot outside the 16 is free after the stop"
+    );
+    rig.half.hold = false;
+    let mut closed_at = None;
+    let mut later = std::collections::HashSet::new();
+    for frame in 0..400 {
+        rig.queue.cost = SampleCost::new(2.0);
+        rig.step();
+        let lp = &rig.queue.lp;
+        for j in lp.open.iter().filter(|j| !first.contains(&j.coord.0)) {
+            later.insert(j.coord.0);
+            assert!(
+                lockstep.contains(&j.slot),
+                "a job opened after the stop in slot {}",
+                j.slot
+            );
+        }
+        assert!(lp.free.iter().all(|s| lockstep.contains(s)));
+        let left = lp.open.iter().any(|j| first.contains(&j.coord.0))
+            || lp.withdrawn.iter().any(|j| first.contains(&j.coord.0));
+        if !left && closed_at.is_none() {
+            closed_at = Some(frame);
+            let mut rows: Vec<usize> = lp
+                .free
+                .iter()
+                .copied()
+                .chain(lp.open.iter().map(|j| j.slot))
+                .chain(lp.withdrawn.iter().map(|j| j.slot))
+                .collect();
+            rows.sort_unstable();
+            assert_eq!(
+                rows,
+                lockstep.clone().collect::<Vec<_>>(),
+                "the free rows and the later jobs' are the 16"
+            );
+        }
+        if rig.read().empty() {
+            break;
+        }
+    }
+    assert!(closed_at.is_some(), "the 31 close");
+    assert!(
+        later.len() >= QUEUE_SLOTS,
+        "jobs opened after the stop: {}",
+        later.len()
+    );
+    let mut free = rig.queue.lp.free.clone();
+    free.sort_unstable();
+    assert_eq!(free, lockstep.collect::<Vec<_>>(), "drained: the 16 free");
+}

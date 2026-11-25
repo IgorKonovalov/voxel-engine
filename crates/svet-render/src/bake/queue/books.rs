@@ -184,6 +184,11 @@ impl QueueStats {
             } else {
                 earlier.projected
             },
+            open_at_draw: if self.open_at_draw > 0 {
+                self.open_at_draw
+            } else {
+                earlier.open_at_draw
+            },
             ..self
         }
     }
@@ -196,6 +201,7 @@ impl QueueStats {
             read_submits: 0,
             submitted: 0,
             projected: 0.0,
+            open_at_draw: 0,
             ..self
         }
     }
