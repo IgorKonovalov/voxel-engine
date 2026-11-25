@@ -913,6 +913,7 @@ impl Args {
         m.clock = self.outdoor.clock;
         m.leaf_shadow = self.outdoor.leaf_shadow;
         m.dump_black = self.outdoor.dump_black;
+        m.light_cap = self.light_cap;
         m.profile = self.profile_row(&self.render_settings(), &[]);
         m.set_auto(self.light.adaptation, self.start_auto());
         m.show_look(&self.look.preset, self.look.preset.far_normal, now_ms);

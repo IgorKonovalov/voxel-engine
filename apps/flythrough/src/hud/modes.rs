@@ -153,6 +153,8 @@ pub struct Modes {
     pub(crate) queue: QueueModes,
     /// The testbed's list of lights: `1` drops, `2` carries, `4` removes, `6` fires.
     pub lights: crate::lights::TestLights,
+    /// The frame's light cap (`RenderSettings::light_cap`), which the lights row counts against.
+    pub light_cap: u32,
     /// The banner's lights row after the last light key (`lights 3/16`, `carry on`).
     lights_words: Option<String>,
     /// The testbed's walkers: `` ` `` places one, `4` removes the newest thing placed.
@@ -318,6 +320,7 @@ impl Modes {
             dig_radius: crate::edits::DIG_RADIUS,
             queue: QueueModes::default(),
             lights: crate::lights::TestLights::default(),
+            light_cap: svet_render::MAX_LIGHTS as u32,
             lights_words: None,
             walkers: crate::entities::Walkers::default(),
             structures: crate::structures::Library::default(),
@@ -463,7 +466,9 @@ impl Modes {
                     self.dig_radius as f64 / (10 * svet_world::FIXED_ONE) as f64
                 );
             }
-            HudRow::Lights => self.lights.write_row(self.lighting.lamp, out),
+            HudRow::Lights => self
+                .lights
+                .write_row(self.lighting.lamp, self.light_cap, out),
             HudRow::Structures => {
                 let _ = write!(
                     out,
@@ -756,6 +761,9 @@ impl Modes {
             }
             if l.key_history != svet_render::DEFAULT_KEY_HISTORY {
                 let _ = write!(out, "key history {}, ", l.key_history);
+            }
+            if l.sky_history != svet_render::DEFAULT_SKY_HISTORY {
+                let _ = write!(out, "sky history {}, ", l.sky_history);
             }
             if l.column_wait {
                 out.push_str("column wait on, ");
