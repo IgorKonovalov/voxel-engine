@@ -1063,7 +1063,7 @@ fixture, its `INERT` list holding each row that changes under 0.1 % of the image
 walks every row a flag sets and every menu entry against the HUD's text. The banner half of (2)
 done 2026-11-25 on branch `chore-harness-3`: a menu entry whose row is inert under the run's live
 settings ends `(inert: <reason>)`, from one table (`apps/flythrough/src/inert.rs`) the walk proves.
-(1) remains. **The walk's renders were not independent** until then: `Frame::reset_exposure`
+Item (1) done 2026-11-25 on branch `chore-harness-3`: the fly-through's `--still` and `--mode-text` (a headless run's last frame and its banner, mode and stats rows) and `scripts/rehearse-window.mjs` (a runner's runs, or a list, rendered headless into one sheet with loud lines; the live-runner lib's `REHEARSE=`). **The walk's renders were not independent** until then: `Frame::reset_exposure`
 jumps the adapted level at the end of the next frame, whose passes still use the exposure the
 render before left, and that frame stays in the upscaler's history, so a row's count depended on
 the row rendered before it (the same settings twice in a row differed by up to 1654 pixels under
