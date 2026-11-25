@@ -1,7 +1,7 @@
 # 0104: The wobble anchored to the owner's eye: clips he ranks, a measure that ranks them, then the remedy
 
-> **Status:** in progress: Phase 1 landed (2026-11-25), Phase 2 (the owner's viewing) next,
-> Phase 0 to follow; approved (owner's go, 2026-11-25; drafted the same day with no interview from
+> **Status:** in progress: Phases 0, 1 and 2 landed (2026-11-25); Phase 4 next (Phase 3 not
+> needed: every subject anchored); approved (owner's go, 2026-11-25; drafted the same day with no interview from
 > Plan 0100's close; questions 1 to 3 answered (a), (a), (a), recorded under "Risks & open
 > questions"). **Order (owner, question 1 (a)):** Phases 0 to 2 and 4 run as a lane beside
 > Plan 0099 now; Phase 3 and every remedy phase start on a main that holds Plan 0099.
@@ -493,7 +493,7 @@ his 2026-11-12 rule that cheap unpicked modes stay settings, for these settings)
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 0: the wobble rigs read a baked store | dev | not started | |
+| 0: the wobble rigs read a baked store | dev | done: the shared settle (`support/baked.rs`); both soak tests pass on a whole census on the RTX, the gate test on lavapipe (the forest test on lavapipe running); W1 unexplained; readings in [`logs/0104.md`](logs/0104.md) | 565bdee2, this commit |
 | 1: the owner's move as clips | dev | done: six files under `live/anchor/`, readings in [`logs/0104.md`](logs/0104.md) | this commit |
 | 2: the owner watches the clips | human | done: T, C, S anchored; T and C orders confirmed blind; answers in [`logs/0104.md`](logs/0104.md) | this commit |
 | 3: the owner's own flight, recorded and rendered again (only for a subject not shown) | dev | not started | |
