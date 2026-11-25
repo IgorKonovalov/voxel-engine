@@ -1012,9 +1012,11 @@ pub(crate) fn render_laps_line(laps: &[[f32; 8]]) -> Option<String> {
 }
 
 /// The edit's frames with the bake thread on (a reading, the teardown's `bake thread dig wait:`
-/// line): the dig frames, the wait for the dig's step p50 / p99 / max in ms, and the dig frames
-/// that issued two submits or more. `None` with no dig frame.
-pub(crate) fn dig_wait_line(waits: &[[f32; 2]]) -> Option<String> {
+/// line): the dig frames, the wait for the dig's step p50 / p99 / max in ms, the dig frames that
+/// issued two submits or more, and the frames that applied bytes over the frame's cap (the
+/// edit's list takes every list made before it) with those bytes' p50 and max. `None` with no
+/// dig frame.
+pub(crate) fn dig_wait_line(waits: &[[f32; 3]]) -> Option<String> {
     if waits.is_empty() {
         return None;
     }
@@ -1023,8 +1025,16 @@ pub(crate) fn dig_wait_line(waits: &[[f32; 2]]) -> Option<String> {
     let p99 = crate::report::percentile(&mut v, 99.0);
     let max = v.last().copied().unwrap_or(0.0);
     let two = waits.iter().filter(|w| w[1] >= 2.0).count();
+    let mut over: Vec<f64> = waits
+        .iter()
+        .filter(|w| w[2] > 0.0)
+        .map(|w| f64::from(w[2]))
+        .collect();
+    let over_p50 = crate::report::percentile(&mut over, 50.0);
+    let over_max = over.last().copied().unwrap_or(0.0);
     Some(format!(
-        "bake thread dig wait: {} dig frames, wait p50 {p50:.3} p99 {p99:.3} max {max:.3} ms, two submits {two}",
-        waits.len()
+        "bake thread dig wait: {} dig frames, wait p50 {p50:.3} p99 {p99:.3} max {max:.3} ms, two submits {two}, over the cap {} frames p50 {over_p50:.0} max {over_max:.0} bytes",
+        waits.len(),
+        over.len()
     ))
 }

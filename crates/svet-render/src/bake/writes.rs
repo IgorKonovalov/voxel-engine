@@ -3,9 +3,10 @@
 //!
 //! A **unit** is the writes that must land in one frame together: a block's words with its table
 //! word, a fade's shown words with the block they show, an eviction's table word with its
-//! summaries. A list holds whole units. An edit's list (a dig's sky-stale marks, its held and
-//! provisional blocks) is never carried: it is applied in the frame it reaches the render half,
-//! ahead of every landing, and counts against that frame's cap first.
+//! summaries. A list holds whole units. Lists are applied in the order they were made, so a later
+//! write of a word always lands after an earlier one. An edit's list (a dig's sky-stale marks,
+//! its held and provisional blocks) is never carried: it is applied in the frame it reaches the
+//! render half, and every list made before it goes with it, whatever the frame's cap.
 
 use std::collections::VecDeque;
 
@@ -41,7 +42,8 @@ pub(crate) struct WriteList {
     pub(crate) frame: u64,
     pub(crate) writes: Vec<Write>,
     pub(crate) bytes: usize,
-    /// An edit's list: never carried, applied ahead of the landings.
+    /// An edit's list (or a unit over the cap sent whole): never carried; the lists made before
+    /// it are applied with it.
     pub(crate) edit: bool,
 }
 
@@ -64,7 +66,8 @@ pub(crate) struct OverCap {
 }
 
 /// The bake half's list maker: units appended whole, a list closed when the next unit would
-/// take it over the cap. With no cap (lockstep's default) a step makes one list.
+/// take it over the cap, and the lists given in the order they were made. With no cap
+/// (lockstep's default) a step makes one list, or up to three around an edit.
 #[derive(Debug, Default)]
 pub(crate) struct ListMaker {
     pub(crate) cap: Option<usize>,
@@ -73,14 +76,16 @@ pub(crate) struct ListMaker {
     /// The unit being written ([`ListMaker::seal`] closes it).
     unit: Vec<Write>,
     unit_bytes: usize,
-    /// An edit's writes since the step took its box: one list, whatever its size.
-    edit: WriteList,
+    /// The open list: the landings', or the edit's while [`ListMaker::editing`] (one list,
+    /// whatever its size).
     current: WriteList,
     pub(crate) done: Vec<WriteList>,
-    /// Whether writes go to [`ListMaker::edit`] (an edit's) or to the landings.
+    /// Whether writes go to an edit's list or to the landings'. A unit sealed after it changes
+    /// closes the open list first, so the edit's list sits between the landings made before
+    /// and after it.
     pub(crate) editing: bool,
     /// Units over the cap the maker refused (a block larger than a frame's cap), kept for the
-    /// caller: [`ListMaker::force`] sends one as a list of its own that is never carried.
+    /// caller: [`ListMaker::force`] sends each as a list of its own that is never carried.
     pub(crate) refused: Vec<Vec<Write>>,
 }
 
@@ -99,7 +104,7 @@ impl ListMaker {
         self.unit.push(w);
     }
 
-    /// Closes the open unit: an edit's joins the edit list; a landing's joins the current list,
+    /// Closes the open unit: an edit's joins the edit's list; a landing's joins the current list,
     /// which is closed first if the unit would take it over the cap. A unit alone over the cap
     /// is refused ([`OverCap`]) and kept in [`ListMaker::refused`]; never split.
     pub(crate) fn seal(&mut self) -> Result<(), OverCap> {
@@ -108,12 +113,12 @@ impl ListMaker {
         }
         let bytes = std::mem::take(&mut self.unit_bytes);
         let unit = std::mem::take(&mut self.unit);
-        if self.editing {
-            self.edit.bytes += bytes;
-            self.edit.writes.extend(unit);
-            return Ok(());
+        if self.editing != self.current.edit {
+            self.close();
         }
-        if let Some(cap) = self.cap {
+        if !self.editing
+            && let Some(cap) = self.cap
+        {
             if bytes > cap {
                 self.refused.push(unit);
                 return Err(OverCap { bytes, cap });
@@ -127,12 +132,15 @@ impl ListMaker {
         Ok(())
     }
 
-    /// Sends the refused units as edit lists: applied whole in the frame they arrive, ahead of
-    /// the landings (the store's books already hold them, so they cannot wait or drop).
+    /// Sends the refused units whole, each as a list of its own in its place in the order (the
+    /// store's books already hold them, so they cannot wait or drop): never carried.
     pub(crate) fn force(&mut self) {
         for unit in std::mem::take(&mut self.refused) {
-            self.edit.bytes += unit.iter().map(|w| w.data.len()).sum::<usize>();
-            self.edit.writes.extend(unit);
+            self.close();
+            self.current.bytes = unit.iter().map(|w| w.data.len()).sum::<usize>();
+            self.current.writes = unit;
+            self.current.edit = true;
+            self.close();
         }
     }
 
@@ -142,26 +150,24 @@ impl ListMaker {
             l.frame = self.frame;
             self.done.push(l);
         }
+        self.current.edit = self.editing;
     }
 
-    /// The step's lists: the edit's first (flagged), then the landings' in order.
+    /// The step's lists in the order made: the landings before an edit, the edit's (flagged),
+    /// the landings after.
     pub(crate) fn finish(&mut self) -> Vec<WriteList> {
         // An unsealed unit is a caller's slip; it is sealed whole here rather than lost.
-        let _ = self.seal();
-        self.close();
-        let mut out = Vec::with_capacity(self.done.len() + 1);
-        if !self.edit.is_empty() {
-            let mut e = std::mem::take(&mut self.edit);
-            e.frame = self.frame;
-            e.edit = true;
-            out.push(e);
+        if self.seal().is_err() {
+            self.force();
         }
-        out.append(&mut self.done);
-        out
+        self.close();
+        self.editing = false;
+        self.current.edit = false;
+        std::mem::take(&mut self.done)
     }
 }
 
-/// The render half's lists waiting to apply, in order.
+/// The render half's lists waiting to apply, in the order they were made.
 #[derive(Debug, Default)]
 pub(crate) struct Lists {
     /// Bytes a frame applies at most; `None` applies every list the frame it arrives.
@@ -169,6 +175,9 @@ pub(crate) struct Lists {
     pub(crate) waiting: VecDeque<WriteList>,
     /// Lists applied in a later frame than the first they could have been.
     pub(crate) carried: u64,
+    /// The bytes the last [`Lists::apply`] applied over its cap: an edit's list and the lists
+    /// made before it go whatever the cap (0 within it).
+    pub(crate) over: usize,
     /// The landing words written that the bake half's copy may not hold yet, by chunk: the word,
     /// and the message's frame that carried it to the bake half (`None`: not sent yet).
     pub(crate) unconfirmed: std::collections::HashMap<[i32; 3], (u32, Option<u64>)>,
@@ -177,7 +186,8 @@ pub(crate) struct Lists {
 }
 
 impl Lists {
-    /// Takes a step's lists. A landing list over the cap is refused at its making, never split.
+    /// Takes a step's lists, in the order given. A landing list over the cap is refused at its
+    /// making, never split.
     pub(crate) fn take(&mut self, lists: Vec<WriteList>) -> Result<(), OverCap> {
         for l in lists {
             if let Some(cap) = self.cap
@@ -189,21 +199,16 @@ impl Lists {
                     cap,
                 });
             }
-            if l.edit {
-                // Ahead of every landing still waiting, behind the edits before it.
-                let at = self.waiting.iter().take_while(|w| w.edit).count();
-                self.waiting.insert(at, l);
-            } else {
-                self.waiting.push_back(l);
-            }
+            self.waiting.push_back(l);
         }
         Ok(())
     }
 
-    /// Applies whole lists in order: every edit list, then landing lists while the next fits in
-    /// what the cap leaves (the first landing list of a frame applies if the edits left room
-    /// for it). `frame` is the frame applying them: a first block's landing word reads
-    /// `frame + 1`. Returns the bytes applied and the landing words written, by chunk.
+    /// Applies whole lists in order: every list up to and with the last edit's list waiting,
+    /// whatever the cap, then landing lists while the next fits in what the cap leaves. `frame`
+    /// is the frame applying them: a first block's landing word reads `frame + 1`. Returns the
+    /// bytes applied and the landing words written, by chunk; [`Lists::over`] reads the bytes
+    /// past the cap.
     pub(crate) fn apply(
         &mut self,
         frame: u64,
@@ -211,11 +216,18 @@ impl Lists {
     ) -> (usize, Vec<([i32; 3], u32)>) {
         let mut bytes = 0usize;
         let mut landed = Vec::new();
+        // The lists that go whatever the cap: up to and with the last edit's.
+        let mut forced = self
+            .waiting
+            .iter()
+            .rposition(|l| l.edit)
+            .map_or(0, |k| k + 1);
         while let Some(l) = self.waiting.front() {
-            let fits = l.edit || self.cap.is_none_or(|cap| bytes + l.bytes <= cap);
+            let fits = forced > 0 || self.cap.is_none_or(|cap| bytes + l.bytes <= cap);
             if !fits {
                 break;
             }
+            forced = forced.saturating_sub(1);
             let l = self.waiting.pop_front().expect("front above");
             bytes += l.bytes;
             self.newest = self.newest.max(l.frame);
@@ -224,6 +236,7 @@ impl Lists {
                 .retain(|_, (_, sent)| sent.is_none_or(|f| f > l.frame));
             apply_list(l, frame, out, &mut landed, &mut self.unconfirmed);
         }
+        self.over = self.cap.map_or(0, |cap| bytes.saturating_sub(cap));
         self.carried += self.waiting.len() as u64;
         (bytes, landed)
     }
@@ -441,7 +454,60 @@ mod tests {
         assert!(landed.is_empty());
     }
 
-    /// An edit's list goes ahead of the landings still waiting and is applied whatever its size.
+    /// A byte-addressed pool the writes land in, in the order applied.
+    #[derive(Default)]
+    struct Pool(Vec<u8>);
+
+    impl Applier for Pool {
+        fn write(&mut self, offset: u64, data: &[u8], _kind: usize) {
+            let at = offset as usize;
+            if self.0.len() < at + data.len() {
+                self.0.resize(at + data.len(), 0);
+            }
+            self.0[at..at + data.len()].copy_from_slice(data);
+        }
+    }
+
+    impl Pool {
+        fn word(&self, at: u64) -> u32 {
+            let at = at as usize;
+            u32::from_le_bytes(self.0[at..at + 4].try_into().expect("4 bytes"))
+        }
+    }
+
+    /// A write of `words` at byte `offset`.
+    fn words_at(offset: u64, words: &[u32], kind: usize) -> Write {
+        Write {
+            offset,
+            data: words.iter().flat_map(|w| w.to_le_bytes()).collect(),
+            kind,
+            landing: None,
+        }
+    }
+
+    /// One unit's list made from message `frame`: a landing's, or an edit's when `edit`.
+    fn made(frame: u64, edit: bool, unit: Vec<Write>) -> Vec<WriteList> {
+        let mut m = ListMaker::new(Some(1 << 20), frame);
+        m.editing = edit;
+        for w in unit {
+            m.push(w);
+        }
+        m.seal().expect("under the maker's cap");
+        m.finish()
+    }
+
+    /// A list of `bytes` with no writes: what the cap counts.
+    fn sized(frame: u64, bytes: usize, edit: bool) -> WriteList {
+        WriteList {
+            frame,
+            writes: vec![],
+            bytes,
+            edit,
+        }
+    }
+
+    /// The edit's list and the two landings made before it apply in its frame whatever the cap
+    /// (660 bytes over a cap of 100); the landing made after it waits.
     #[test]
     fn an_edit_list_is_never_carried() {
         let cap = 100;
@@ -449,22 +515,129 @@ mod tests {
             cap: Some(cap),
             ..Lists::default()
         };
-        let l = |bytes, edit| WriteList {
-            frame: 1,
-            writes: vec![],
-            bytes,
-            edit,
-        };
-        q.take(vec![l(80, false), l(80, false)]).expect("under");
-        q.take(vec![l(500, true)])
+        q.take(vec![sized(1, 80, false), sized(1, 80, false)])
+            .expect("under");
+        q.take(vec![sized(2, 500, true), sized(2, 80, false)])
             .expect("an edit's is never refused");
         let mut rec = Recorder::default();
-        let (bytes, _) = q.apply(1, &mut rec);
-        // The edit's 500, and no landing beside it: the edit took the frame's room first.
-        assert_eq!(bytes, 500);
-        assert_eq!(q.waiting.len(), 2);
         let (bytes, _) = q.apply(2, &mut rec);
+        assert_eq!(bytes, 660, "the two landings ahead and the edit's 500");
+        assert_eq!(q.over, 560);
+        assert_eq!(q.waiting.len(), 1, "none behind it");
+        let (bytes, _) = q.apply(3, &mut rec);
         assert_eq!(bytes, 80);
+        assert_eq!(q.over, 0);
+    }
+
+    /// Done when (1) of Plan 0099 Phase 3c (the recording applier). A fade's show of a chunk's
+    /// place made from message 5 and an edit's held block at the same place made from message
+    /// 6, taken in one frame under a cap that fits neither: the place holds the edit's block.
+    /// A landing (block at P, table word to P) from message 5 and the edit's block at Q with
+    /// its table word: the table reads Q. 2 MiB of landings ahead of the edit under a 1 MiB
+    /// cap: all applied in that frame, 1 MiB over; two landings made after the edit wait.
+    #[test]
+    fn an_edits_list_lands_after_the_writes_made_before_it() {
+        const P: u64 = 4096;
+        const Q: u64 = 8192;
+        const TABLE: u64 = 64;
+        let shown = [7u32; 16];
+        let held = [9u32; 16];
+        let mut q = Lists {
+            cap: Some(68),
+            ..Lists::default()
+        };
+        q.take(made(5, false, vec![words_at(P, &shown, 0)]))
+            .expect("under");
+        q.take(made(6, true, vec![words_at(P, &held, 0)]))
+            .expect("an edit's");
+        let mut pool = Pool::default();
+        q.apply(7, &mut pool);
+        assert!(q.waiting.is_empty(), "both in the edit's frame");
+        assert_eq!(pool.word(P), 9, "the place holds the edit's block");
+        assert_eq!(pool.word(P + 60), 9);
+
+        // A landing pointing the table at P, then the edit's block at Q pointing it at Q.
+        let mut q = Lists {
+            cap: Some(68),
+            ..Lists::default()
+        };
+        let p_word = u32::try_from(P / 4).expect("small");
+        let q_word = u32::try_from(Q / 4).expect("small");
+        q.take(made(
+            5,
+            false,
+            vec![words_at(P, &shown, 0), words_at(TABLE, &[p_word], 1)],
+        ))
+        .expect("under");
+        q.take(made(
+            6,
+            true,
+            vec![words_at(Q, &held, 0), words_at(TABLE, &[q_word], 1)],
+        ))
+        .expect("an edit's");
+        let mut pool = Pool::default();
+        q.apply(7, &mut pool);
+        assert!(q.waiting.is_empty());
+        assert_eq!(pool.word(TABLE), q_word, "the table reads the edit's place");
+        assert_eq!(pool.word(Q), 9);
+
+        // 2 MiB of landings ahead of a 512-byte edit under a 1 MiB cap.
+        const MIB: usize = 1 << 20;
+        let mut q = Lists {
+            cap: Some(MIB),
+            ..Lists::default()
+        };
+        let landing = (2 * MIB - 512) / 4;
+        q.take((0..4).map(|_| sized(5, landing, false)).collect())
+            .expect("each under the cap");
+        q.take(vec![sized(6, 512, true)]).expect("an edit's");
+        q.take(vec![sized(7, 100, false)]).expect("under");
+        q.take(vec![sized(8, 100, false)]).expect("under");
+        let mut rec = Recorder::default();
+        let (bytes, _) = q.apply(8, &mut rec);
+        assert_eq!(bytes, 2 * MIB, "every list up to and with the edit's");
+        assert_eq!(q.over, MIB, "1 MiB over the cap");
+        assert_eq!(q.waiting.len(), 2, "the landings made after the edit wait");
+        let (bytes, _) = q.apply(9, &mut rec);
+        assert_eq!((bytes, q.over), (200, 0), "and apply in the next frame");
+    }
+
+    /// Done when (2) of Plan 0099 Phase 3c. A table write made before the box, the edit's write
+    /// of the same word, a landing after: three lists in that order, the word the edit's. A
+    /// unit over the maker's cap after them is sent whole as a list of its own, in its place.
+    #[test]
+    fn a_steps_lists_keep_the_order_they_were_made() {
+        const TABLE: u64 = 64;
+        let mut m = ListMaker::new(Some(256), 3);
+        m.push(words_at(TABLE, &[1], 1));
+        m.seal().expect("under");
+        m.editing = true;
+        m.push(words_at(TABLE, &[2], 1));
+        m.push(words_at(1024, &[2; 8], 0));
+        m.seal().expect("an edit's");
+        m.editing = false;
+        m.push(words_at(2048, &[3; 8], 0));
+        m.seal().expect("under");
+        m.push(words_at(4096, &[4; 128], 0));
+        assert!(m.seal().is_err(), "512 bytes over the 256 cap");
+        m.force();
+        let lists = m.finish();
+        let shape: Vec<(bool, usize)> = lists.iter().map(|l| (l.edit, l.bytes)).collect();
+        assert_eq!(
+            shape,
+            [(false, 4), (true, 36), (false, 32), (true, 512)],
+            "the order made, the unit over the cap whole and never carried"
+        );
+        let mut q = Lists {
+            cap: Some(256),
+            ..Lists::default()
+        };
+        q.take(lists).expect("the landings under the cap");
+        let mut pool = Pool::default();
+        let (bytes, _) = q.apply(3, &mut pool);
+        assert_eq!(bytes, 584);
+        assert_eq!(pool.word(TABLE), 2, "the edit's word over the earlier one");
+        assert_eq!(pool.word(2048), 3);
     }
 
     /// Done when (9) of Plan 0099 Phase 3a: a first block's list made from message 5 and a
@@ -489,17 +662,7 @@ mod tests {
                 first,
             }),
         };
-        struct Pool(Vec<u8>);
-        impl Applier for Pool {
-            fn write(&mut self, offset: u64, data: &[u8], _kind: usize) {
-                let at = offset as usize;
-                if self.0.len() < at + data.len() {
-                    self.0.resize(at + data.len(), 0);
-                }
-                self.0[at..at + data.len()].copy_from_slice(data);
-            }
-        }
-        let word = |p: &Pool| u32::from_le_bytes(p.0[804..808].try_into().expect("4 bytes"));
+        let word = |p: &Pool| p.word(804);
         let list = |frame: u64, w: Write| {
             let mut m = ListMaker::new(Some(1 << 20), frame);
             m.push(w);
@@ -514,7 +677,7 @@ mod tests {
         // show, the copy's word still 6).
         q.take(list(5, block(6, true))).expect("under");
         q.take(list(6, block(6, false))).expect("under");
-        let mut pool = Pool(Vec::new());
+        let mut pool = Pool::default();
         // Frame 8 applies the first; the frame cap lets the second wait to frame 9.
         q.cap = Some(12);
         let (_, landed) = q.apply(8, &mut pool);

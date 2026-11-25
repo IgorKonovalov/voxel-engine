@@ -35,6 +35,9 @@ mod dig_line {
             /// Per frame: the wait for an edit's step in ms and the submits the frame issued
             /// ([`svet_render::Frame::bake_frame_issue`]).
             pub issue: Vec<(f64, u64)>,
+            /// Per frame: the apply in ms and the bytes applied over the frame's cap
+            /// ([`svet_render::Frame::bake_frame_apply`]).
+            pub apply: Vec<(f64, usize)>,
             /// Per frame from the first dig on, the newest dig's ring as the pool holds it: whether
             /// its ring-1 records have held the dig's block ([`support::queue::dig_held`] against
             /// the pool read after the edit, before a step), and whether ring 1's re-bake has
@@ -182,10 +185,11 @@ mod dig_line {
             let t = support::defects::march(&rig.world, eye, fwd, 400.0).expect("the view hits ground");
             let centre = [0, 1, 2].map(|k| eye[k] + fwd[k] * t);
             let (mut frames, mut traces, mut digs, mut edit_ms) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-            let (mut issue, mut pool) = (Vec::new(), Vec::new());
+            let (mut issue, mut pool, mut apply) = (Vec::new(), Vec::new(), Vec::new());
             let mut read = |rig: &mut Rig, s: &mut Stepper, frames: &mut Vec<HoleFrame>, traces: &mut Vec<svet_render::DigTrace>, label: String, ring: Option<&mut Ring>| {
                 let q = queue_step(rig, &mut s.frame, &cam);
                 issue.push(s.frame.bake_frame_issue());
+                apply.push(s.frame.bake_frame_apply());
                 pool.push(ring.map(|ring| {
                     let cur = pool_ring(&s.frame, rig, ring.lo, ring.hi);
                     if ring.held.is_none() && support::queue::dig_held(&ring.pre, &cur) {
@@ -243,7 +247,7 @@ mod dig_line {
                     }
                 }
             }
-            Some((LineRun { frames, traces, digs, edit_ms, issue, pool, thread, out, eye, head }, rig))
+            Some((LineRun { frames, traces, digs, edit_ms, issue, apply, pool, thread, out, eye, head }, rig))
         }
 
         /// A dig's ring-1 records as the pool held them after the edit, before a step read its box,
@@ -260,7 +264,7 @@ mod dig_line {
 
         /// The ring-1 records of the box `lo ..= hi` (every brick within a voxel of it) as the
         /// pool holds them now, by chunk and slot, from the blocks the frame reads
-        /// (`Frame::read_store_block`, the bake thread's books' places with it on).
+        /// (`Frame::read_store_block`: each at the place the pool's chunk table names, read back).
         fn pool_ring(f: &svet_render::Frame, rig: &Rig, lo: [i64; 3], hi: [i64; 3]) -> RingRecords {
             let mut out = BTreeMap::new();
             let a = lo.map(|v| (v - 1).div_euclid(64) as i32);
@@ -476,9 +480,10 @@ mod dig_line {
                 let fade = fresh.map(|r| (d0 + r..d0 + r + 4).filter(|&i| took(i)).count());
                 let unread = d0 > 0 && run.frames[d0].q.in_flight_full > run.frames[d0 - 1].q.in_flight_full;
                 let (wait, submits) = run.issue.get(d0).copied().unwrap_or((f64::NAN, 0));
+                let (apply_ms, over) = run.apply.get(d0).copied().unwrap_or((f64::NAN, 0));
                 let _ = writeln!(
                     out,
-                    "  pool {}: held record D+{} ring-1 records fresh D+{}; D+0 wait {wait:.3} ms submits {submits}, every slot unread {}, fade steps {}/4",
+                    "  pool {}: held record D+{} ring-1 records fresh D+{}; D+0 wait {wait:.3} ms submits {submits}, every slot unread {}, fade steps {}/4; D+0 apply {apply_ms:.3} ms over the cap {over} bytes",
                     if run.thread { "thread" } else { "lockstep" },
                     held.map_or("-".into(), |x| x.to_string()),
                     fresh.map_or("-".into(), |x| x.to_string()),

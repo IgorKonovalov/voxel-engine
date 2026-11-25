@@ -18,6 +18,8 @@ struct ThreadRig {
     link: ThreadLink,
     lists: Lists,
     applied: Vec<Applied>,
+    /// The pool's bytes as the applied writes leave them, where a test asks for it.
+    pool: Option<Vec<u8>>,
 }
 
 impl ThreadRig {
@@ -55,6 +57,7 @@ impl ThreadRig {
                 ..Lists::default()
             },
             applied: Vec::new(),
+            pool: None,
         }
     }
 
@@ -64,6 +67,7 @@ impl ThreadRig {
         let msg = self.rig.message();
         let mut out = Recorder {
             out: &mut self.applied,
+            pool: self.pool.as_mut(),
         };
         render_frame(
             &mut self.link,
@@ -777,6 +781,84 @@ fn the_edits_frame_waits_for_its_list_and_no_other_frame_does() {
             .iter()
             .map(|(f, s)| (*f, s.len()))
             .collect::<Vec<_>>()
+    );
+    a_dig_into_a_fading_chunk_shows_its_held_block();
+}
+
+/// Done when (3) of Plan 0099 Phase 3c, the case of [`the_edits_frame_waits_for_its_list_and_no_other_frame_does`]:
+/// a dig into chunk 0 while its ring 1's fade runs, with the step before the dig's held so that
+/// its lists (a fade's show of chunk 0) and the dig's come in one frame. The frame returns with
+/// chunk 0's held block's words at the place the pool's chunk table names, as the store's copy
+/// holds them.
+fn a_dig_into_a_fading_chunk_shows_its_held_block() {
+    use std::sync::atomic::Ordering::SeqCst;
+    const A: [i32; 3] = [0, 0, 0];
+    let (hook, from, gate) = hold_armed();
+    let mut t = ThreadRig::new(Some(hook), OUTBOX_BYTES);
+    t.pool = Some(Vec::new());
+    drain(&mut t);
+    t.carve([20, 20, 4], [23, 23, 7]);
+    t.frame().expect("the first dig's frame");
+    let mut fading = false;
+    for _ in 0..400 {
+        t.frame().expect("the frame returns");
+        if t.link.books.stats.fading > 0 {
+            fading = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(fading, "the first dig's ring 1 lands and fades");
+    // The next step (S) shows the fade and is held; the dig's step (D) reads the box after it.
+    from.store(t.rig.half.frame + 1, SeqCst);
+    t.frame().expect("the held step's message goes out");
+    assert!(
+        within(|| t.link.peek(|m| m.is_none())),
+        "the step took its message and is held"
+    );
+    t.frame().expect("the frame returns");
+    let before = t.applied.len();
+    t.carve([24, 20, 4], [27, 23, 7]);
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        drop(gate);
+    });
+    t.frame().expect("the edit's frame returns with its list");
+    release.join().expect("released");
+    let (first, words) = *t.link.books.blocks.get(&A).expect("chunk 0 keeps a block");
+    let shows = t.applied[before..]
+        .iter()
+        .filter(|a| a.kind == W_POOL && a.offset == first * 4)
+        .count();
+    assert!(
+        shows >= 2,
+        "the fade's show and the held block both written at chunk 0's place in the edit's frame ({shows})"
+    );
+    let ThreadRig {
+        link, rig, pool, ..
+    } = t;
+    let pool = pool.expect("kept");
+    let st = link.stop().expect("the thread stops");
+    let held = st
+        .side
+        .store
+        .block_words(ChunkCoord(A))
+        .expect("the store's copy");
+    assert_eq!(held.len() as u64, words);
+    let mut store = Store::new(64 << 20);
+    store.start_queue(rig.mirror.window(), rig.queue.settings.cell);
+    let table = store.table_word(ChunkCoord(A)) as usize * 4;
+    let word = u32::from_le_bytes(pool[table..table + 4].try_into().expect("4 bytes"));
+    assert_eq!(
+        u64::from(word & !crate::bake::TABLE_COARSE),
+        first,
+        "the pool's table names the books' place"
+    );
+    let at = first as usize * 4;
+    let shown: Vec<u32> = bytemuck::pod_collect_to_vec(&pool[at..at + held.len() * 4]);
+    assert!(
+        shown == held,
+        "chunk 0's place holds the held block after the edit's frame"
     );
 }
 

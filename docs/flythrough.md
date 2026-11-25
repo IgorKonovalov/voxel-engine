@@ -461,9 +461,11 @@ their round trip in frames from the issue to the frame whose message carried the
 (p50, p99, max), the frames that carried a submit and the issuer's peak readback buffers.
 The one exception is an edit's frame: it waits for the step that read its box, applies the
 held block in that frame, and issues the dig's submit behind any carried one, so it may issue
-two. The teardown's `frames: bake thread dig wait:` line reads those frames, the wait's p50,
-p99 and max in ms and the dig frames that issued two submits; the `bake thread render laps:`
-line's `wait` lap is the same wait.
+two. Write lists apply in the order the bake thread made them, so the edit's frame applies
+every list made before the edit's with it, whatever the frame's byte cap. The teardown's
+`frames: bake thread dig wait:` line reads those frames, the wait's p50, p99 and max in ms,
+the dig frames that issued two submits, and the frames that applied bytes over the cap with
+those bytes' p50 and max; the `bake thread render laps:` line's `wait` lap is the same wait.
 
 ### Audio
 

@@ -111,12 +111,15 @@ pub(super) struct BakeLink {
     /// The readings [`Frame::bake_render_laps`] and [`Frame::bake_fade_frames`] return.
     pub(super) render_laps: Vec<[f32; 8]>,
     pub(super) fade_frames: [u64; 2],
-    /// The edit's frames with the bake thread on: the wait for the dig's step in ms and the
-    /// submits the frame issued ([`Frame::bake_dig_waits`]).
-    pub(super) dig_waits: Vec<[f32; 2]>,
+    /// The edit's frames with the bake thread on: the wait for the dig's step in ms, the
+    /// submits the frame issued and the bytes applied over the cap ([`Frame::bake_dig_waits`]).
+    pub(super) dig_waits: Vec<[f32; 3]>,
     /// The last live-queue frame's wait for an edit's step in ms (0 with none, or in lockstep)
     /// and the submits it issued ([`Frame::bake_frame_issue`]).
     pub(super) last_issue: (f64, u64),
+    /// The last live-queue frame's apply in ms and its bytes over the cap
+    /// ([`Frame::bake_frame_apply`]).
+    pub(super) last_apply: (f64, usize),
     /// The bake thread's depth in flight ([`Frame::set_bake_depth`]).
     pub(super) thread_depth: usize,
     /// The reading [`Frame::bake_round_trip`] returns.
@@ -181,6 +184,7 @@ impl BakeLink {
             fade_frames: [0; 2],
             dig_waits: Vec::new(),
             last_issue: (0.0, 0),
+            last_apply: (0.0, 0),
             thread_depth: crate::THREAD_DEPTH,
             round_trip: Default::default(),
         }
@@ -496,6 +500,15 @@ impl Frame {
                 .filter(|l| l.waited)
                 .map_or(0.0, |l| l.laps[5]);
             self.baked.last_issue = (wait, self.baked.issuer.issued - issued_before);
+            self.baked.last_apply = match &self.baked.thread {
+                Some(l) => (l.laps[2], self.baked.lists.over),
+                None => (
+                    out.as_ref()
+                        .and_then(|r| r.as_ref().ok())
+                        .map_or(0.0, |s| s.stages.ms[crate::bake::S_APPLY]),
+                    0,
+                ),
+            };
         }
         out
     }
@@ -880,20 +893,63 @@ impl Frame {
         &self.baked.store
     }
 
-    /// `coord`'s block in the pool as its words, the directory first: a blocking read.
+    /// `coord`'s block in the pool as its words, the directory first: blocking reads. The place
+    /// is the one the pool's own chunk table names (what the frame reads), read back; the words
+    /// are the books' where that is the books' place, else the directory's run. `None` where the
+    /// table names no block or the books hold none.
     pub fn read_store_block(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         coord: ChunkCoord,
     ) -> Option<Vec<u32>> {
-        let (first, words) = match &self.baked.thread {
+        let (books_first, books_words) = match &self.baked.thread {
             Some(link) => *link.books.blocks.get(&coord.0)?,
             None => self.baked.store.block(coord)?,
         };
-        let bytes =
-            crate::readback::read_buffer(device, queue, &self.baked.pool, first * 4, words * 4);
-        Some(bytemuck::pod_collect_to_vec(&bytes))
+        let read = |first: u64, words: u64| -> Vec<u32> {
+            let bytes =
+                crate::readback::read_buffer(device, queue, &self.baked.pool, first * 4, words * 4);
+            bytemuck::pod_collect_to_vec(&bytes)
+        };
+        let first =
+            u64::from(self.read_table_word(device, queue, coord)? & !crate::bake::TABLE_COARSE);
+        if first == 0 {
+            return None;
+        }
+        if first == books_first {
+            return Some(read(first, books_words));
+        }
+        let dir = read(first, crate::bake::DIRECTORY_WORDS);
+        let words = dir
+            .iter()
+            .map(|d| u64::from(d >> 11))
+            .max()
+            .unwrap_or(0)
+            .max(crate::bake::BLOCK_HEAD_WORDS);
+        Some(read(first, words))
+    }
+
+    /// `coord`'s word of the pool's chunk table, read back with the window the pool's header
+    /// holds (a blocking read). `None` outside that window.
+    pub fn read_table_word(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        coord: ChunkCoord,
+    ) -> Option<u32> {
+        let head = crate::readback::read_buffer(device, queue, &self.baked.pool, 0, 16 * 4);
+        let head: Vec<u32> = bytemuck::pod_collect_to_vec(&head);
+        let min = [0, 1, 2].map(|k| head[4 + k] as i32);
+        let size = [0, 1, 2].map(|k| i64::from(head[8 + k]));
+        let w = [0, 1, 2].map(|k| i64::from(coord.0[k]) - i64::from(min[k]));
+        if (0..3).any(|k| w[k] < 0 || w[k] >= size[k]) {
+            return None;
+        }
+        let index = w[0] + size[0] * (w[1] + size[1] * w[2]);
+        let at = (crate::bake::STORE_TABLE + index as u64) * 4;
+        let word = crate::readback::read_buffer(device, queue, &self.baked.pool, at, 4);
+        Some(u32::from_le_bytes(word[..4].try_into().ok()?))
     }
 
     /// Rebuilds the store empty where its pool's size changes: [`Lighting::bake_pool_bytes`]

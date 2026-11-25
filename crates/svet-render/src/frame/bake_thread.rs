@@ -62,8 +62,9 @@ impl Frame {
     }
 
     /// The edit's frames with the bake thread on (ADR-0083's one wait), each the wait for the
-    /// dig's step in ms and the submits the frame issued (a reading).
-    pub fn bake_dig_waits(&self) -> &[[f32; 2]] {
+    /// dig's step in ms, the submits the frame issued and the bytes it applied over the frame's
+    /// cap (the edit's list and every list made before it go whatever the cap; a reading).
+    pub fn bake_dig_waits(&self) -> &[[f32; 3]] {
         &self.baked.dig_waits
     }
 
@@ -71,6 +72,13 @@ impl Frame {
     /// in lockstep) and the submits it issued, the carried ones with them (a reading).
     pub fn bake_frame_issue(&self) -> (f64, u64) {
         self.baked.last_issue
+    }
+
+    /// The last live-queue frame's apply in ms (with the bake thread on, the render thread's
+    /// apply lap; in lockstep the step's apply stage) and the bytes it applied over the frame's
+    /// cap (a reading).
+    pub fn bake_frame_apply(&self) -> (f64, usize) {
+        self.baked.last_apply
     }
 
     /// Of the live queue's frames whose newest books held a block fading, those that applied
@@ -275,6 +283,7 @@ impl Frame {
         stats.stages.total_ms = wall;
         stats.stages.render_ms = [0.0; crate::bake::STEP_STAGES.len()];
         stats.stages.render_ms[crate::bake::S_APPLY] = wall;
+        let b_over = self.baked.lists.over;
         if let Some(link) = self.baked.thread.as_mut() {
             let trip = std::mem::take(&mut link.round_trip);
             self.baked.round_trip.merge(&trip);
@@ -295,7 +304,7 @@ impl Frame {
             if link.waited && self.baked.dig_waits.len() < READING_FRAMES {
                 self.baked
                     .dig_waits
-                    .push([l[5] as f32, link.issued_now as f32]);
+                    .push([l[5] as f32, link.issued_now as f32, b_over as f32]);
             }
             if link.fading_before > 0 {
                 self.baked.fade_frames[0] += 1;

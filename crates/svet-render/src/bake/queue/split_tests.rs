@@ -87,6 +87,8 @@ struct Applied {
 
 struct Recorder<'a> {
     out: &'a mut Vec<Applied>,
+    /// The pool's bytes as the writes leave them, in the order applied, where a test keeps one.
+    pool: Option<&'a mut Vec<u8>>,
 }
 
 impl Applier for Recorder<'_> {
@@ -96,6 +98,13 @@ impl Applier for Recorder<'_> {
             kind,
             bytes: data.len(),
         });
+        if let Some(pool) = self.pool.as_mut() {
+            let at = offset as usize;
+            if pool.len() < at + data.len() {
+                pool.resize(at + data.len(), 0);
+            }
+            pool[at..at + data.len()].copy_from_slice(data);
+        }
     }
 }
 
@@ -148,6 +157,7 @@ impl RenderHalf for Half {
             .expect("no landing list over the cap");
         let mut out = Recorder {
             out: &mut self.applied,
+            pool: None,
         };
         let landed = self.lists.apply(frame, &mut out).1;
         self.lists.confirm_all();
@@ -386,11 +396,11 @@ fn a_change_after_a_submit_stales_its_result_and_one_before_does_not() {
     );
 }
 
-/// Done-when (7) of Plan 0099 Phase 2: with landings over the frame's cap already waiting, the
-/// step that takes a dig's box makes one edit list holding, for each touched chunk, its
-/// sky-stale marks and its held block's words with its table word, all applied in that frame;
-/// that step's submit plans ring 1's rounds ahead of every other job's; the landings applied
-/// are the ones carried.
+/// Done-when (7) of Plan 0099 Phase 2, under Phase 3c's order: with landings over the frame's
+/// cap already waiting, the step that takes a dig's box makes one edit list holding, for each
+/// touched chunk, its sky-stale marks and its held block's words with its table word, all
+/// applied in that frame behind the landings made before it; that step's submit plans ring 1's
+/// rounds ahead of every other job's.
 #[test]
 fn a_dig_is_served_whole_in_the_edits_step() {
     let mut rig = Rig::new(Some(64 << 10));
@@ -449,29 +459,22 @@ fn a_dig_is_served_whole_in_the_edits_step() {
             );
         }
     }
-    // The edit's writes come first; the landings applied after them are the carried ones, in
-    // order, and what the cap leaves waits.
-    let carried: Vec<&Applied> = applied.iter().filter(|a| a.offset == 1 << 30).collect();
-    let n = carried.len();
-    let waiting: Vec<u64> = rig.half.lists.waiting.iter().map(|l| l.frame).collect();
-    assert_eq!(
-        waiting.iter().take(2 - n).copied().collect::<Vec<_>>(),
-        [901, 902][n..],
-        "the carried landings wait ahead of this step's"
-    );
-    if n < 2 {
-        let edit_end = applied
-            .iter()
-            .position(|a| a.offset == 1 << 30)
-            .unwrap_or(applied.len());
-        assert!(
-            applied[edit_end..].iter().all(|a| a.offset == 1 << 30),
-            "no landing of this step ahead of a carried one"
-        );
-    }
+    // Lists apply in the order made (ADR-0083, Plan 0099 Phase 3c): the carried landings were
+    // made before the edit, so both apply in its frame, ahead of its writes, whatever the cap.
+    let carried: Vec<usize> = applied
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| a.offset == 1 << 30)
+        .map(|(k, _)| k)
+        .collect();
+    assert_eq!(carried, [0, 1], "the carried landings first, both applied");
     assert!(
-        applied.iter().take_while(|a| a.offset != 1 << 30).count() >= 2,
-        "the edit's writes first"
+        rig.half
+            .lists
+            .waiting
+            .iter()
+            .all(|l| l.frame != 901 && l.frame != 902),
+        "no carried landing waits behind the edit"
     );
     // The step's submit: ring 1's rounds first.
     let ring1: Vec<u32> = rig
