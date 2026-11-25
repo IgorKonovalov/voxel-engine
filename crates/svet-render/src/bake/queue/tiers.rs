@@ -139,7 +139,7 @@ impl BakeQueue {
 
     /// Removes from [`BakeQueue::view_waiting`] each chunk that waits for nothing now: its record at
     /// its band's count, out of the mirror's full chunks, or known to hold no face.
-    pub(super) fn land_waiting(&mut self, gpu: &GpuWorld, store: &Store) {
+    pub(super) fn land_waiting(&mut self, gpu: &Shadow, store: &Store) {
         if self.view_waiting.is_empty() {
             self.stats.drain_waiting = 0;
             return;
@@ -231,7 +231,7 @@ impl BakeQueue {
 
     /// Whether chunk `c` waits for no record: not mirrored full, faceless, sealed, or holding
     /// a block at its band's count.
-    pub(super) fn landed(&self, gpu: &GpuWorld, store: &Store, c: [i32; 3]) -> bool {
+    pub(super) fn landed(&self, gpu: &Shadow, store: &Store, c: [i32; 3]) -> bool {
         let cc = ChunkCoord(c);
         !gpu.is_mirrored(cc)
             || gpu.is_lod(cc)

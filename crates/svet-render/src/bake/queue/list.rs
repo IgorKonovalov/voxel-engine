@@ -89,7 +89,7 @@ impl BakeQueue {
         if self.coarse_samples == 0 || self.full_first.is_none() {
             return;
         }
-        let lr = run.gpu.light_radius();
+        let lr = run.mirror.light_radius();
         let steps = self.steps;
         let mut looked = 0;
         while let Some(Cand {
@@ -113,7 +113,7 @@ impl BakeQueue {
             looked += 1;
             let coord = ChunkCoord(c);
             if self.bakeable(run, coord, lr, view, eye).is_some()
-                && run.gpu.lights_ready_near(coord, lr)
+                && run.mirror.lights_ready_near(coord, lr)
             {
                 self.stats.starved_openings += 1;
                 return;

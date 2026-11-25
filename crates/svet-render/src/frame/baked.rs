@@ -61,6 +61,13 @@ pub(super) struct BakeLink {
     pub(super) dig_boxes: Vec<[[i32; 3]; 2]>,
     /// The live queue ([`Frame::start_bake_queue`]), when the store fills a frame at a time.
     pub(super) queue: Option<crate::bake::BakeQueue>,
+    /// The render half's write lists waiting to apply (ADR-0083); in lockstep with no cap a
+    /// step's lists apply in its own frame and none waits.
+    pub(super) lists: crate::bake::Lists,
+    /// The bake half's shadow of the mirror, and the window and light key of its last notes
+    /// (ADR-0083).
+    pub(super) shadow: crate::bake::Shadow,
+    pub(super) shadow_seen: (Option<svet_world::ChunkExtent>, Option<(u64, u64)>),
     /// The live queue's world group and the buffers it binds ([`Frame::queue_world_bind`]).
     pub(super) world_bind: Option<(Vec<wgpu::Buffer>, wgpu::BindGroup)>,
     /// The live queue's knobs, kept while no queue runs and handed to the next one.
@@ -83,6 +90,9 @@ impl BakeLink {
             pipeline: None,
             dig_boxes: Vec::new(),
             queue: None,
+            lists: crate::bake::Lists::default(),
+            shadow: crate::bake::Shadow::default(),
+            shadow_seen: (None, None),
             world_bind: None,
             knobs: crate::settings::BakeKnobs::default(),
             count_store: false,
@@ -163,10 +173,13 @@ impl Frame {
                 &self.pipes.world_layout,
             ));
         }
+        // A one-shot bake reads no queue books, so no shadow of the mirror.
+        let none = crate::bake::Shadow::default();
         let run = crate::bake::BakeRun {
             device,
             queue,
             gpu,
+            mirror: &none,
             world,
             pipeline: self.baked.pipeline.as_ref().expect("built above"),
             world_bind: &world_bind,
@@ -376,10 +389,16 @@ impl Frame {
                 &self.pipes.world_layout,
             ));
         }
+        // The frame's message to the bake half: the mirror's changes and its state for them.
+        let (last_window, last_key) = &mut self.baked.shadow_seen;
+        let notes = crate::bake::notes(&*gpu, gpu.take_changes(), *last_window, last_key);
+        *last_window = notes.window;
+        self.baked.shadow.take(&notes);
         let run = crate::bake::BakeRun {
             device,
             queue,
             gpu,
+            mirror: &self.baked.shadow,
             world,
             pipeline: self.baked.pipeline.as_ref().expect("built above"),
             world_bind: &world_bind,
@@ -389,6 +408,7 @@ impl Frame {
             key: self.bake_key(),
         };
         let q = self.baked.queue.as_mut()?;
+        q.changes_in = notes.changed;
         q.column_wait = self.state.lighting.column_wait;
         q.key_step = self.state.lighting.key_step;
         q.landing_fade = self.state.lighting.landing_fade;
@@ -403,7 +423,7 @@ impl Frame {
             }
         });
         q.far_normal = self.state.look.far_normal;
-        Some(q.step(&run, &mut self.baked.store, view, t0))
+        Some(q.step(&run, &mut self.baked.store, view, t0, &mut self.baked.lists))
     }
 
     /// The bake's sky-ray bits ([`crate::bake::BakeRun::sky`]): none with no sky set, else on
@@ -494,10 +514,13 @@ impl Frame {
                 &self.pipes.world_layout,
             ));
         }
+        // A one-shot bake reads no queue books, so no shadow of the mirror.
+        let none = crate::bake::Shadow::default();
         let run = crate::bake::BakeRun {
             device,
             queue,
             gpu,
+            mirror: &none,
             world,
             pipeline: self.baked.pipeline.as_ref().expect("built above"),
             world_bind: &world_bind,

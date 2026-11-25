@@ -13,7 +13,7 @@ impl BakeQueue {
         view: &QueueView<'_>,
         cap: u64,
     ) -> Result<(), BakeError> {
-        let gpu = run.gpu;
+        let gpu = run.mirror;
         let eye = view.eye.map(|v| (v / 64.0).floor() as i32);
         let order = self.order;
         self.score_and_census(run, store, view, eye);
@@ -227,7 +227,7 @@ impl BakeQueue {
         view: &QueueView<'_>,
         eye: [i32; 3],
     ) {
-        let gpu = run.gpu;
+        let gpu = run.mirror;
         let order = self.order;
         let near = self.near;
         self.sync_pool(run, store);
@@ -312,7 +312,7 @@ impl BakeQueue {
         in_view.sort_unstable();
         let n = in_view.len();
         let take = n.min(VIEW_REACH_SAMPLE);
-        let lr = run.gpu.light_radius();
+        let lr = run.mirror.light_radius();
         let mut not_ready = 0;
         for i in 0..take {
             let (_, c) = in_view[i * n / take.max(1)];
@@ -357,7 +357,7 @@ impl BakeQueue {
         if passed.is_empty() {
             return;
         }
-        let gpu = run.gpu;
+        let gpu = run.mirror;
         self.sync_pool(run, store);
         let mut seen: Vec<(i64, [i32; 3])> = self
             .pool

@@ -712,6 +712,34 @@ impl GpuWorld {
         self.lights.epoch
     }
 
+    /// A key that changes whenever a light range, a chunk's light membership or a dirty mark
+    /// does: the key [`GpuWorld::lights_ready_near`]'s answers are kept by.
+    pub(crate) fn light_key(&self) -> (u64, u64) {
+        (self.lights.epoch, self.lights.changes)
+    }
+
+    /// Every chunk with lights: whether it holds an exposed emitter (as
+    /// [`GpuWorld::emitters_near`] reads it), and whether its range is placed and clean (as
+    /// [`GpuWorld::lights_ready_near`] reads it). The bake half's shadow notes (ADR-0083).
+    pub(crate) fn light_notes(&self) -> Vec<([i32; 3], crate::bake::LightNote)> {
+        let mut v: Vec<_> = self
+            .lights
+            .chunks
+            .iter()
+            .map(|(c, l)| {
+                (
+                    c.0,
+                    crate::bake::LightNote {
+                        emitter: l.bricks.values().any(|s| !s.is_empty()),
+                        current: l.placed && !self.lights.dirty.contains(c),
+                    },
+                )
+            })
+            .collect();
+        v.sort_unstable_by_key(|e| e.0);
+        v
+    }
+
     /// The light radius in chunks ([`MirrorConfig::light_radius`]).
     pub fn light_radius(&self) -> i32 {
         self.cfg.light_radius

@@ -70,6 +70,7 @@ mod seal;
 mod stages;
 mod store;
 mod summary;
+mod writes;
 
 pub use self::around::*;
 pub use self::budget::*;
@@ -85,6 +86,7 @@ pub(crate) use self::seal::{SharedShells, Shell, Verdict};
 pub use self::stages::*;
 pub use self::store::*;
 pub use self::summary::*;
+pub(crate) use self::writes::*;
 
 /// One face after its bake.
 #[derive(Clone, Debug)]

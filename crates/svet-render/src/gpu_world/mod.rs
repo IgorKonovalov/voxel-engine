@@ -116,7 +116,6 @@ mod window;
 
 pub use self::alloc::*;
 use self::columns::ColumnMap;
-#[cfg(test)]
 pub(crate) use self::columns::column_is_final;
 pub use self::columns::{COLUMN_CELL, COLUMN_CELLS, COLUMN_NONE};
 pub use self::format::*;
@@ -761,6 +760,20 @@ impl GpuWorld {
     /// Whether `coord` waits for an upload: its mirrored record, if any, is not its content.
     pub fn is_pending(&self, coord: ChunkCoord) -> bool {
         self.window.pending_d2.contains_key(&coord)
+    }
+
+    /// Every chunk holding a record or waiting to upload, in no order: the bake half's shadow
+    /// notes read each one's state (ADR-0083).
+    pub(crate) fn noted_chunks(&self) -> Vec<ChunkCoord> {
+        let mut v: Vec<ChunkCoord> = self.recs.mirrored.keys().copied().collect();
+        v.extend(
+            self.window
+                .pending_d2
+                .keys()
+                .filter(|c| !self.recs.mirrored.contains_key(*c))
+                .copied(),
+        );
+        v
     }
 
     /// The chunks holding a full record (not LOD-only), in no order.

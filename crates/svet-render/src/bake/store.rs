@@ -123,6 +123,15 @@ pub struct Store {
     /// them in `wgpu` calls (the parents' writes).
     pub(super) summary_ms: f64,
     pub(super) summary_render_ms: f64,
+    /// The live queue's write lists (ADR-0083): while set, the store's writes go into it, a
+    /// unit at a time, and the render half applies them ([`Lists`]); `None` writes at once (a
+    /// one-shot bake, a bake file's load).
+    pub(crate) out: Option<ListMaker>,
+    /// Nesting of [`Store::begin_unit`]: the writes inside the outermost pair are one unit.
+    pub(super) unit_depth: u32,
+    /// A first block's landing word is marked on the next block write ([`Store::put`] or
+    /// [`Store::show`]) while set.
+    pub(super) mark_landing: bool,
 }
 
 /// The chunks of `held` a move of the store's window from `old` to `window` drops: those outside
@@ -155,12 +164,12 @@ impl Store {
     pub(crate) fn set_missing_light(&mut self, queue: &wgpu::Queue, mode: MissingLight) {
         self.missing = mode;
         let flags = self.flags();
-        write(
+        self.emit(
             queue,
-            &self.pool,
             STORE_FLAGS * 4,
             bytemuck::bytes_of(&flags),
             W_TABLE,
+            None,
         );
     }
 
@@ -184,6 +193,67 @@ impl Store {
         )
     }
 
+    /// Writes `data` at byte `offset` of the pool: at once, or into the write list.
+    fn emit(
+        &mut self,
+        queue: &wgpu::Queue,
+        offset: u64,
+        data: &[u8],
+        kind: usize,
+        landing: Option<([i32; 3], usize)>,
+    ) {
+        match self.out.as_mut() {
+            None => write(queue, &self.pool, offset, data, kind),
+            Some(m) => {
+                m.push(Write {
+                    offset,
+                    data: data.to_vec(),
+                    kind,
+                    landing,
+                });
+                if self.unit_depth == 0 {
+                    Self::seal(m);
+                }
+            }
+        }
+    }
+
+    fn seal(m: &mut ListMaker) {
+        if m.seal().is_err() {
+            // A unit over the frame's cap: the books hold it, so it goes whole, never carried.
+            m.force();
+        }
+    }
+
+    /// Opens a unit: the writes until the matching [`Store::end_unit`] land in one frame.
+    pub(crate) fn begin_unit(&mut self) {
+        self.unit_depth += 1;
+    }
+
+    /// Closes the unit [`Store::begin_unit`] opened.
+    pub(crate) fn end_unit(&mut self) {
+        self.unit_depth = self.unit_depth.saturating_sub(1);
+        if self.unit_depth == 0
+            && let Some(m) = self.out.as_mut()
+        {
+            Self::seal(m);
+        }
+    }
+
+    /// The landing word's mark for a block write: `Some` once, after [`Store::mark_landing`].
+    fn landing_mark(&self, coord: [i32; 3]) -> Option<([i32; 3], usize)> {
+        (self.mark_landing && self.out.is_some()).then_some((coord, LANDED_AT as usize))
+    }
+
+    /// Sets `c`'s landing word in the store's copy to what the render half wrote at apply.
+    pub(crate) fn landed(&mut self, c: [i32; 3], word: u32) {
+        if let Some(w) = self.words.get_mut(&c)
+            && let Some(v) = w.get_mut(LANDED_AT as usize)
+        {
+            *v = word;
+        }
+    }
+
     /// Sets `c`'s summary to `block`'s (`None`: no block) and writes the parent records above
     /// it that changed.
     pub(super) fn set_summary(
@@ -200,13 +270,7 @@ impl Store {
         };
         for (level, p, rec) in writes {
             if let Some(w) = table.word(level, p) {
-                write(
-                    queue,
-                    &self.pool,
-                    w * 4,
-                    bytemuck::cast_slice(&rec),
-                    W_SUMMARY,
-                );
+                self.emit(queue, w * 4, bytemuck::cast_slice(&rec), W_SUMMARY, None);
             }
         }
     }
@@ -274,6 +338,9 @@ impl Store {
             missing: MissingLight::default(),
             summary_ms: 0.0,
             summary_render_ms: 0.0,
+            out: None,
+            unit_depth: 0,
+            mark_landing: false,
         }
     }
 
@@ -334,12 +401,12 @@ impl Store {
     pub(super) fn set_cell(&mut self, queue: &wgpu::Queue, cell: u32) {
         self.cell = cell;
         let flags = self.flags();
-        write(
+        self.emit(
             queue,
-            &self.pool,
             STORE_FLAGS * 4,
             bytemuck::bytes_of(&flags),
             W_TABLE,
+            None,
         );
     }
 
@@ -375,7 +442,7 @@ impl Store {
             header[8 + k] = size[k] as u32;
         }
         header[STORE_FLAGS as usize] = self.flags();
-        write(queue, &self.pool, 0, bytemuck::cast_slice(&header), W_TABLE);
+        self.emit(queue, 0, bytemuck::cast_slice(&header), W_TABLE, None);
         self.blocks.clear();
         self.words.clear();
         self.light.clear();
@@ -402,6 +469,14 @@ impl Store {
     /// freed, the header's origin moves and the chunk table is written again. A window of another
     /// size empties the store (the table's words change), keeping its flags. The chunks dropped.
     pub(crate) fn rewindow(&mut self, queue: &wgpu::Queue, window: ChunkExtent) -> Vec<[i32; 3]> {
+        // The header, the chunk table and the parents move in one frame.
+        self.begin_unit();
+        let dropped = self.rewindow_unit(queue, window);
+        self.end_unit();
+        dropped
+    }
+
+    fn rewindow_unit(&mut self, queue: &wgpu::Queue, window: ChunkExtent) -> Vec<[i32; 3]> {
         if self.window == Some(window) {
             return Vec::new();
         }
@@ -440,13 +515,7 @@ impl Store {
         header.extend(self.light.table_words(&parents));
         self.summary_ms += seconds_since(t) * 1e3;
         // Words 0 to 2 are unused; the frame's counters are a buffer of their own.
-        write(
-            queue,
-            &self.pool,
-            12,
-            bytemuck::cast_slice(&header[3..]),
-            W_TABLE,
-        );
+        self.emit(queue, 12, bytemuck::cast_slice(&header[3..]), W_TABLE, None);
         dropped
     }
 
@@ -484,14 +553,11 @@ impl Store {
         first: u64,
         words: &mut [u32],
     ) {
+        self.begin_unit();
         self.summarise(queue, coord.0, words);
-        write(
-            queue,
-            &self.pool,
-            first * 4,
-            bytemuck::cast_slice(words),
-            W_POOL,
-        );
+        let mark = self.landing_mark(coord.0);
+        self.emit(queue, first * 4, bytemuck::cast_slice(words), W_POOL, mark);
+        self.end_unit();
     }
 
     /// Marks `slots`' records of `coord`'s block [`SKY_STALE`] in the store's copy and the
@@ -516,19 +582,15 @@ impl Store {
             return;
         }
         let mut shown = block.clone();
+        self.begin_unit();
         self.summarise(queue, coord.0, &mut shown);
         mark_summary_stale(&mut shown);
         let at = SUMMARY_AT as usize + VIS_WORD + 1;
         if let Some(block) = self.words.get_mut(&coord.0) {
             block[at] = shown[at];
         }
-        write(
-            queue,
-            &self.pool,
-            first * 4,
-            bytemuck::cast_slice(&shown),
-            W_POOL,
-        );
+        self.emit(queue, first * 4, bytemuck::cast_slice(&shown), W_POOL, None);
+        self.end_unit();
     }
 
     /// The chunk table's word for `coord`.
@@ -548,45 +610,44 @@ impl Store {
         first: u64,
         mut block: Vec<u32>,
     ) {
+        self.begin_unit();
         self.summarise(queue, coord.0, &mut block);
-        write(
+        let mark = self.landing_mark(coord.0);
+        self.emit(queue, first * 4, bytemuck::cast_slice(&block), W_POOL, mark);
+        self.emit(
             queue,
-            &self.pool,
-            first * 4,
-            bytemuck::cast_slice(&block),
-            W_POOL,
-        );
-        write(
-            queue,
-            &self.pool,
             self.table_word(coord) * 4,
             bytemuck::bytes_of(&self.table_value(coord, first)),
             W_TABLE,
+            None,
         );
         self.end_words = self.end_words.max(first + block.len() as u64);
         self.blocks.insert(coord.0, (first, block.len() as u64));
         self.words.insert(coord.0, block);
         self.touch(coord.0);
+        self.end_unit();
     }
 
     /// Drops `coord`'s block, its place freed: the chunk table reads none.
     pub(crate) fn remove(&mut self, queue: &wgpu::Queue, coord: ChunkCoord) {
         if let Some((first, words)) = self.blocks.remove(&coord.0) {
+            self.begin_unit();
             self.touch(coord.0);
             self.free_place(first, words);
             self.words.remove(&coord.0);
             self.coarse.remove(&coord.0);
-            write(
+            self.emit(
                 queue,
-                &self.pool,
                 self.table_word(coord) * 4,
                 bytemuck::bytes_of(&0u32),
                 W_TABLE,
+                None,
             );
             let (t, calls_at) = (stopwatch(), calls().ms);
             self.set_summary(queue, coord.0, None);
             self.summary_ms += seconds_since(t) * 1e3;
             self.summary_render_ms += calls().ms - calls_at;
+            self.end_unit();
         }
     }
 

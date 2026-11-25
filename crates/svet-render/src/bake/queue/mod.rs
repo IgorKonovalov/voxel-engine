@@ -3,18 +3,21 @@
 use super::*;
 
 mod digs;
+mod fade_clock;
 mod keys;
 mod list;
 mod open;
 mod reach;
 mod rule;
 mod sealed;
+mod shadow;
 mod stats;
 mod step;
 mod tiers;
 
 pub use self::open::in_view_census;
 use self::reach::reach_of;
+pub(crate) use self::shadow::{LightNote, Shadow, notes};
 pub use self::stats::{
     Band, Bands, DigTrace, DigTraceJob, InViewWaiting, LANDED_BARE, LANDED_FALLBACK,
     LANDED_REFADED, LANDED_UNFADED, LANDING_DIRECTIONS, LANDING_KEY, LANDING_KEY_FLAG,
@@ -131,14 +134,18 @@ pub(super) struct Pushed {
 }
 
 /// A block fading from what it showed to its target over `frames` ([`FADE`], or [`DIG_FADE`]
-/// for a dig job's).
+/// for a dig job's), paced by the frame number (`fade_clock`): `start` is the frame its block
+/// was placed in, `frame` the frames of it the pool last showed.
 pub(super) struct Fade {
     pub(super) first: u64,
     pub(super) from: Vec<u32>,
+    pub(super) start: u64,
     pub(super) frame: u32,
     pub(super) frames: u32,
     /// The sky visibilities ride this fade ([`BakeQueue::landing_fade`] as it started).
     pub(super) vis: bool,
+    /// A dig job's landing (`refade` of a dug block): ring 2 of its chunk waits it out.
+    pub(super) dig: bool,
 }
 
 /// A chunk's dig bricks (slots), and whether one of them is in ring 1, and those that are
@@ -266,6 +273,9 @@ pub struct BakeQueue {
     pub(super) reach_mode: ReachMode,
     /// Edit boxes since the last step.
     pub(super) boxes: Vec<[[i32; 3]; 2]>,
+    /// The mirror's change list from the frame's message ([`ShadowNotes::changed`]), each
+    /// chunk once; `None` untracked, which reads every chunk again.
+    pub(crate) changes_in: Option<Vec<ChunkCoord>>,
     /// Chunks with dig bricks to re-bake, not yet in a job; and those in a job, with the bricks
     /// the job re-bakes.
     pub(super) digs: BTreeMap<[i32; 3], DigChunk>,
@@ -444,7 +454,7 @@ pub(super) fn reach_ready(
     let held = held_by_streamer(view.eye, view.lod_radius, view.resident);
     let held = held.as_ref().map(|h| h as &dyn Fn(ChunkCoord) -> bool);
     reach_of(run, coord, lr, view.resident, true) == Reach::Ready
-        && reach_columns_final(coord, lr, |x, y| run.gpu.column_final(x, y, held))
+        && reach_columns_final(coord, lr, |x, y| run.mirror.column_final(x, y, held))
 }
 
 /// Whether every chunk column over `coord`'s reach footprint (the columns of the chunks within
@@ -540,6 +550,7 @@ impl BakeQueue {
             order: QueueOrder::default(),
             withdraw: true,
             boxes: Vec::new(),
+            changes_in: None,
             digs: BTreeMap::new(),
             dig_open: Default::default(),
             reach: Default::default(),
@@ -622,7 +633,7 @@ impl BakeQueue {
     pub(super) fn candidacy(
         &self,
         store: &Store,
-        gpu: &GpuWorld,
+        gpu: &Shadow,
         in_job: &std::collections::HashSet<[i32; 3]>,
         c: [i32; 3],
     ) -> Option<(u8, bool)> {
@@ -666,7 +677,7 @@ impl BakeQueue {
     /// the store's changed blocks and the chunks that joined or left a job. A candidate that
     /// joins, changes or leaves moves in the kept order with it.
     pub(super) fn sync_pool(&mut self, run: &BakeRun<'_>, store: &mut Store) {
-        let gpu = run.gpu;
+        let gpu = run.mirror;
         let in_job: std::collections::HashSet<[i32; 3]> = self.lp.chunks().map(|c| c.0).collect();
         match store.take_touched() {
             Some(t) => self.touched.extend(t),
@@ -747,7 +758,7 @@ impl BakeQueue {
         }
         // The wait off: no chunk of the columns may be pending upload. The block is
         // provisional where the bake reads the sky (the column map's tops may still rise).
-        let gpu = run.gpu;
+        let gpu = run.mirror;
         reach_columns_final(coord, lr, |x, y| gpu.column_final(x, y, None))
             .then_some((partial, run.sky != 0))
     }
@@ -767,7 +778,7 @@ impl BakeQueue {
         reach_columns_final(coord, lr, |x, y| {
             *memo
                 .entry([x, y])
-                .or_insert_with(|| run.gpu.column_final(x, y, held))
+                .or_insert_with(|| run.mirror.column_final(x, y, held))
         })
     }
 
@@ -778,7 +789,7 @@ impl BakeQueue {
         if !changed || self.provisional.is_empty() {
             return;
         }
-        let lr = run.gpu.light_radius();
+        let lr = run.mirror.light_radius();
         let flagged: Vec<[i32; 3]> = self
             .provisional
             .iter()

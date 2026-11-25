@@ -102,7 +102,7 @@ pub(crate) fn relisted(
 impl BakeQueue {
     /// Whether the rule answers `coord` ([`buried`] under the step's lowest column tops, and no
     /// exposed emitter within the light radius `lr`, [`GpuWorld::emitters_near`]).
-    pub(super) fn rule_holds(&mut self, gpu: &GpuWorld, coord: ChunkCoord, lr: i32) -> bool {
+    pub(super) fn rule_holds(&mut self, gpu: &Shadow, coord: ChunkCoord, lr: i32) -> bool {
         let memo = &mut self.columns_lowest;
         buried(coord, lr, |x, y| {
             *memo
@@ -122,7 +122,7 @@ impl BakeQueue {
     /// A zeroed chunk whose block is gone is forgotten.
     pub(super) fn relist_zeroed(
         &mut self,
-        gpu: &GpuWorld,
+        gpu: &Shadow,
         store: &Store,
         changes: Option<&[ChunkCoord]>,
     ) {
@@ -165,7 +165,7 @@ impl BakeQueue {
     )]
     pub(super) fn note_rule_missed(
         &mut self,
-        gpu: &GpuWorld,
+        gpu: &Shadow,
         view: &QueueView<'_>,
         eye: [i32; 3],
         c: [i32; 3],

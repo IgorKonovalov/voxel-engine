@@ -72,7 +72,7 @@ impl BakeQueue {
                 // dig: it opens in the digs' order instead of waiting in the pool. A ring chunk
                 // the box does not touch keeps the pool's path.
                 let coord = ChunkCoord(c);
-                if !near.is_empty() && run.gpu.is_mirrored(coord) && !run.gpu.is_lod(coord) {
+                if !near.is_empty() && run.mirror.is_mirrored(coord) && !run.mirror.is_lod(coord) {
                     self.stats.digs_whole += 1;
                     let e = self.digs.entry(c).or_default();
                     e.whole = true;
@@ -142,7 +142,7 @@ impl BakeQueue {
         if !(lit && self.reach_ring) {
             return Ok(());
         }
-        let lr = run.gpu.light_radius();
+        let lr = run.mirror.light_radius();
         for [min, max] in &boxes {
             let lo = min.map(|v| (v - 1).div_euclid(64));
             let hi = max.map(|v| (v + 1).div_euclid(64));
@@ -239,7 +239,7 @@ impl BakeQueue {
         // start a new fade from the shown values, so the records the running one moves would
         // leave their linear ramp of `DIG_FADE` frames for a slower one (ADR-0076 rule 3, one
         // fade a switch). Ring 1 never waits: a new edit's provisional block ends the fade.
-        let fading = |c: &[i32; 3]| self.fades.get(c).is_some_and(|f| f.frames == DIG_FADE);
+        let fading = |c: &[i32; 3]| fade_clock::dig_fading(&self.fades, c);
         let mut order: Vec<(bool, i64, [i32; 3])> = self
             .digs
             .iter()
@@ -495,8 +495,9 @@ impl BakeQueue {
     ) {
         let mut ended = Vec::new();
         let mut shown = std::mem::take(&mut self.fade_scratch);
+        let now = self.steps;
         for (c, f) in &mut self.fades {
-            f.frame += 1;
+            f.advance(now);
             let Some(to) = store.words.get(c) else {
                 ended.push(*c);
                 continue;

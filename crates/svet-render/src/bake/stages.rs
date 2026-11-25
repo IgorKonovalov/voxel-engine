@@ -9,8 +9,9 @@ use super::*;
 /// near a change, the changes marked for the candidate pool); the edit boxes, the withdrawal,
 /// the digs' jobs, then the opening's candidate build, census, sort, reach and light checks and
 /// listing (each 0 on a step that does not open), the job tables, the device poll, the
-/// read-back's copy and the blocks' placement, the submit, the fades and the light summaries.
-pub const STEP_STAGES: [&str; 21] = [
+/// read-back's copy and the blocks' placement, the submit, the fades and the light summaries, and the render half's apply of the step's
+/// write lists (ADR-0083).
+pub const STEP_STAGES: [&str; 22] = [
     "setup",
     "rewindow",
     "gone",
@@ -32,6 +33,7 @@ pub const STEP_STAGES: [&str; 21] = [
     "submit",
     "fades",
     "summaries",
+    "apply",
 ];
 
 pub(super) const S_SETUP: usize = 0;
@@ -75,6 +77,8 @@ pub(super) const S_SUBMIT: usize = 18;
 pub(super) const S_FADES: usize = 19;
 
 pub(super) const S_SUMMARIES: usize = 20;
+
+pub(super) const S_APPLY: usize = 21;
 
 /// The buffers a step's writes are counted by ([`StepStages::bytes`]): the pool's block words
 /// (a block, a fade's shown words, a dig's sky-stale marks), the chunk table's words (a block's
@@ -455,7 +459,7 @@ impl StepTally {
 mod tests {
     use super::*;
 
-    /// A step of known laps: 21 stages of `k + 0.1` ms, each with `k * 0.03` ms in `wgpu`
+    /// A step of known laps: 22 stages of `k + 0.1` ms, each with `k * 0.03` ms in `wgpu`
     /// calls (at most its own), 3 000 bytes over the four kinds. Its line's `render` and
     /// `movable` sums (the means of one step) equal the stages' sum within 0.001 ms, and its
     /// p50s read the step's own split; two steps' means sum to the stages' mean.
@@ -468,10 +472,10 @@ mod tests {
         }
         s.bytes = [2048, 512, 256, 184];
         s.total_ms = s.sum() + 0.5;
-        // 21 stages: the sum of k is 210, so the stages' sum is 210 + 21 x 0.1 = 212.1 and the
-        // render share 210 x 0.03 = 6.3.
-        assert!((s.sum() - 212.1).abs() < 1e-9);
-        assert!((s.render() - 6.3).abs() < 1e-9);
+        // 22 stages: the sum of k is 231, so the stages' sum is 231 + 22 x 0.1 = 233.2 and the
+        // render share 231 x 0.03 = 6.93.
+        assert!((s.sum() - 233.2).abs() < 1e-9);
+        assert!((s.render() - 6.93).abs() < 1e-9);
         assert!((s.render() + s.movable() - s.sum()).abs() < 1e-9);
         let num = |text: &str, key: &str| -> f64 {
             let at = text.find(key).unwrap_or_else(|| panic!("{key} in {text}")) + key.len();
@@ -489,14 +493,14 @@ mod tests {
             s.sum()
         );
         assert!(
-            (num(&line, "render p50/p99 ") - 6.3).abs() <= 0.0005,
+            (num(&line, "render p50/p99 ") - 6.93).abs() <= 0.0005,
             "{line}"
         );
         assert!(
-            (num(&line, "movable p50/p99 ") - 205.8).abs() <= 0.0005,
+            (num(&line, "movable p50/p99 ") - 226.27).abs() <= 0.0005,
             "{line}"
         );
-        assert!((num(&line, ", stages ") - 212.1).abs() <= 0.0005, "{line}");
+        assert!((num(&line, ", stages ") - 233.2).abs() <= 0.0005, "{line}");
         assert!(line.contains("bytes a step p50/p99 3000/3000"), "{line}");
         assert!(
             line.contains("(pool 2048, table 512, summary 256, job 184 mean)"),
@@ -515,7 +519,7 @@ mod tests {
         tally.tag(Some(Regime::KeepingUp));
         let lines = tally.summary();
         assert!(
-            lines[0].contains("; render p50/p99 6.300/6.300 ms,"),
+            lines[0].contains("; render p50/p99 6.930/6.930 ms,"),
             "{}",
             lines[0]
         );

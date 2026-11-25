@@ -15,7 +15,7 @@ pub(super) fn reach_of(
     resident: Option<&dyn Fn(ChunkCoord) -> bool>,
     first: bool,
 ) -> Reach {
-    let gpu = run.gpu;
+    let gpu = run.mirror;
     if resident.is_none() && gpu.pending_chunks() == 0 {
         return Reach::Ready;
     }
@@ -91,7 +91,7 @@ impl BakeQueue {
         resident: Option<&dyn Fn(ChunkCoord) -> bool>,
         first: bool,
     ) -> Reach {
-        if resident.is_none() && run.gpu.pending_chunks() == 0 {
+        if resident.is_none() && run.mirror.pending_chunks() == 0 {
             return Reach::Ready;
         }
         if let Some(&(v, walked_first)) = self.reach_cache.get(&coord.0)
@@ -151,7 +151,7 @@ impl BakeQueue {
     /// whose reach a chunk of `changed` is now held full: a chunk arriving, or a held one
     /// changing. `None` (the changes went untracked) re-queues every flagged chunk. Nothing to
     /// do under [`ReachMode::Full`], which flags none.
-    pub(super) fn requeue_partial(&mut self, gpu: &GpuWorld, changed: Option<&[ChunkCoord]>) {
+    pub(super) fn requeue_partial(&mut self, gpu: &Shadow, changed: Option<&[ChunkCoord]>) {
         if self.partial.is_empty() && self.job_partial.is_empty() {
             return;
         }

@@ -150,7 +150,11 @@ impl FaceState {
 pub(crate) struct BakeRun<'a> {
     pub device: &'a wgpu::Device,
     pub queue: &'a wgpu::Queue,
+    /// The mirror: the render half's reads (the candidate tables' light ranges).
     pub gpu: &'a GpuWorld,
+    /// The bake half's shadow of the mirror (ADR-0083): every mirror read the queue's books
+    /// make.
+    pub mirror: &'a crate::bake::Shadow,
     pub world: &'a World,
     pub pipeline: &'a BakePipeline,
     pub world_bind: &'a wgpu::BindGroup,
