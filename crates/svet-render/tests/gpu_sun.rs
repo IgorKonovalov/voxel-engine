@@ -527,6 +527,22 @@ fn an_absent_chunk_below_the_column_top_is_rock_to_the_sky_ray() {
     assert!(rule.iter().all(|&v| v < bar), "{rule:?} against {bar}");
 }
 
+/// The column map texture's texels for a window `tiles` chunks wide in x and y: the map's
+/// `COLUMN_CELLS` per tile on each axis, then the rows under it that hold the coarse levels, as
+/// many as the last coarse texel `column_coarse_texel` places needs (the tiles' own texels
+/// come after every block's), at the map's width.
+fn column_map_texels(tiles: [i32; 2]) -> usize {
+    let cells = svet_render::COLUMN_CELLS;
+    let per = svet_render::COLUMN_BLOCKS * svet_render::COLUMN_BLOCKS;
+    let slots = tiles[0] * tiles[1];
+    let last = (0..slots)
+        .flat_map(|slot| (0..=per).map(move |j| (slot, j)))
+        .map(|(slot, j)| svet_render::column_coarse_texel(tiles, slot, j)[1])
+        .max()
+        .expect("a tile");
+    (tiles[0] * cells) as usize * (last as usize + 1)
+}
+
 /// Plan 0086 Phase 9 bar 1: the column map is the top of opaque voxels. A 3 x 3 x 3-chunk
 /// stepped terrain (rock below `h(x, y)`, a 4 x 4-voxel shaft of air through every z at
 /// x, y 70..74), chunk (0, 0, 0) mirrored LOD-only from its mips. Each map texel (a 2 x 2
@@ -559,12 +575,17 @@ fn the_column_map_is_the_top_of_solid() {
     let mut gpu = mirror(&device, &queue, &world, Some(extent));
     assert!(gpu.is_lod(lod), "chunk (0, 0, 0) is LOD-only");
     let side = 3 * svet_render::COLUMN_CELLS;
-    let read = |gpu: &GpuWorld| svet_render::debug::read_r32i(&device, &queue, gpu.column_map());
+    let read = |gpu: &GpuWorld| {
+        let map = svet_render::debug::read_r32i(&device, &queue, gpu.column_map());
+        assert_eq!(gpu.column_tiles(), [3, 3], "the window's tiles");
+        assert_eq!(
+            map.len(),
+            column_map_texels(gpu.column_tiles()),
+            "the map's rows, then its coarse levels'"
+        );
+        map
+    };
     let map = read(&gpu);
-    assert!(
-        map.len() >= (side * side) as usize,
-        "the map's rows, then its coarse levels'"
-    );
     let mut checked = [0u32; 3];
     for j in 0..side {
         for i in 0..side {
@@ -658,6 +679,11 @@ fn the_column_coarse_levels_are_the_maps_maximum() {
     let check = |gpu: &GpuWorld, when: &str| -> i32 {
         let map = svet_render::debug::read_r32i(&device, &queue, gpu.column_map());
         let tiles = gpu.column_tiles();
+        assert_eq!(
+            map.len(),
+            column_map_texels(tiles),
+            "{when}: the texture's texels"
+        );
         let (b, e, cells) = (
             svet_render::COLUMN_BLOCKS,
             svet_render::COLUMN_BLOCK,
