@@ -1,6 +1,6 @@
 # 0109: A blocked chunk is checked again when its blocker clears: the start on a streamed world
 
-> **Status:** in-progress (2026-11-26, owner's go): Phase 1 built and read (eight switched runs 5 to 10 steps); its stop (a pinned order in `gpu_queue_reach` moved) is ruled the rule's correct consequence ("Amended 2026-11-26 (architect, Phase 1's stop)"). Phase 1b done (the re-pin and the default removed). Next: Phase 2 as amended there. The owner question gained a third arm; it is answered at Phase 4.
+> **Status:** in-progress (2026-11-26, owner's go): Phase 1 and 1b done. Phase 2 read (15 runs, both sides, both adapters): the switched pre-roll 4 to 6 steps after, 32 and 92 before; the camera chunk's block provisional at frame 0 and not final within 600 frames in 14 of 15 runs on either side, 0 catch-ups landing after frame 0 in any run; to the architect before Phase 3. The owner question gained a third arm; it is answered at Phase 4.
 > **Created:** 2026-11-26
 > **Milestone:** none (a fix in the start-up path; follows Plan 0099, `docs/roadmap.md` M9's bake thread)
 > **Related ADRs:** [ADR-0059](../adrs/0059-loading-runs-as-time-sliced-steps-on-the-apps-frame-loop-behind-an-engine-loading-frame.md) (the pre-roll and its start-up budgets; not changed unless the owner picks the bound, and then by a new ADR, see Phase 5), ADR-0070's amendment (the column rule; not changed), ADR-0046 (the reach rule; not changed)
@@ -211,6 +211,7 @@ struct Blocked { at: u64, by: Blocker }
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1 | dev | done (Rulings 1 to 4): stopped at `f082adb4` on the moved pin of `an_opening_without_a_mirror_event_rebuilds_nothing`; Phase 1b re-pins it to `[2, 3, 1, 4, 0, 5, 6, 7]` and removes `Default` from `Blocker` and `Blocked`; `split_tests/routing.rs` also spells its mark ([log](logs/0109.md)) | `f082adb4`, `b59dc1ef` |
+| 2 | dev | read, nothing changed: 15 runs (lavapipe switch 2 before + 2 after, RTX switch 5, default start 3 a adapter), 17.96 min under the lock, no arm dropped; the camera chunk not final within the 600-frame cap in 14 of 15, no catch-up landing after frame 0 ([log](logs/0109.md)) | the commit adding this row |
 
 ### Notes
 
