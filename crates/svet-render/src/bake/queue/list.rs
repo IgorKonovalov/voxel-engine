@@ -188,7 +188,10 @@ impl BakeQueue {
         if ruled {
             // The rule's zero record: no job; its block is placed at this step's submit. It is
             // what a bake at any count writes, so it holds the near tier and no band's
-            // promotion refines it (`u32::MAX` is never below a band's count).
+            // promotion refines it (`u32::MAX` is never below a band's count). It is final: read
+            // on the reach as it stands, it is flagged neither partial nor provisional (its
+            // placement clears both), so no catch-up or arrival re-queues it; the re-list does
+            // ([`BakeQueue::relist_zeroed`]). Over a held block it lands as a class 1 job's does.
             self.job_partial.remove(&c);
             self.job_provisional.remove(&c);
             self.job_coarse.insert(c, false);

@@ -229,18 +229,14 @@ impl BakeQueue {
             }
             return;
         }
-        if self.zero_rule
-            && class == 0
-            && !partial
-            && !provisional
-            && self.rule_holds(gpu, ChunkCoord(c), lr)
-        {
+        // The rule is read on every ready candidate, on the tops and the emitters as the shadow
+        // holds them, whatever its class, reach or the columns' finality (ADR-0085): its record
+        // is final, neither partial nor provisional ([`BakeQueue::push_listed`]), and only the
+        // re-list undoes it ([`BakeQueue::relist_zeroed`]). So the reading's missed jobs stay 0.
+        if self.zero_rule && self.rule_holds(gpu, ChunkCoord(c), lr) {
             self.ruled_checked.insert(c);
         } else {
             self.ruled_checked.remove(&c);
-            if self.rule_reading && self.zero_rule {
-                self.note_rule_missed(gpu, view, eye, c, class, partial, provisional);
-            }
         }
     }
 

@@ -1,6 +1,6 @@
 # 0101: The record by rule at every opening: an audit on the real scenes first, then the three exclusions lifted
 
-> **Status:** in-progress (lane `plan-0101`, Phase 1 from 2026-11-26); approved (owner, 2026-11-24: lane after Plan 0099 closes; drafted 2026-11-24 with no interview; the guesses
+> **Status:** in-progress (lane `plan-0101`, Phase 1 from 2026-11-26, Phase 2 done 2026-11-26); approved (owner, 2026-11-24: lane after Plan 0099 closes; drafted 2026-11-24 with no interview; the guesses
 > and the open questions are under "Risks & open questions", each with a recommended option).
 > **Order (recommended, question 1):** after Plan 0100's Phase 2 and **after Plan 0099 closes**,
 > not ahead of its Phase 1 as Plan 0096's close ruled; the reasons are under "The order".
@@ -444,8 +444,8 @@ once he says go).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The audit and the re-read, no behaviour change | dev | done: 0 blocks differ in every case on all runs, both forests over the 10 % job line ([readings log](logs/0101.md)) | wip `67062697`; the readings committed with this row |
-| 2: The rule at every opening | dev | not started | |
+| 1: The audit and the re-read, no behaviour change | dev | done: 0 blocks differ in every case on all runs, both forests over the 10 % job line ([readings log](logs/0101.md)) | wip `67062697`; the readings `30e771b9` |
+| 2: The rule at every opening | dev | done: the rule on every ready candidate; CPU tests (1)-(3), two soak-born lavapipe rigs (4) ([readings log](logs/0101.md)) | committed with this row |
 | 3: The readings on both adapters, the audit at the tip, and the documents | dev | not started | |
 
 ### Notes
@@ -476,6 +476,26 @@ each. Empty is fine.)_
   (two lanes at their start); RTX hills audit and RENOIR forest reading are labelled loaded.
 - Main moved to `9b1cd85d` (v0.77.0; Plan 0104 removed `key_at`, `key_horizon`, `key_cover`
   record); not merged into this lane; Phase 1 uses none of them.
+- Phase 2: main `5d488cc0` merged into the lane before the phase (`d0fa22c4`, no conflict).
+- Phase 2: `gpu_outdoor_golden`'s soak test `the_cave_mouth_is_lit_from_outside` fails on the
+  lane with and without the phase's change, the same 99.9531 % of pixels (golden last blessed at
+  `a5e5f99b`); not acted on.
+- Phase 2: the CPU tests sit in `bake/queue/split_tests/rule.rs` (the bake half's rig), not
+  `queue/tests.rs`; `split_tests.rs`'s model mirror and rig widened for them (outside `Files
+  touched`). `catch_up` (`mod.rs`) and `requeue_partial` (`reach.rs`) unchanged: they read maps a
+  ruled record leaves empty. No change in `rule.rs` or `stats.rs`.
+- Phase 2: the CPU rig's column tops are the model mirror's (`Mirror::tops`), not sheets built
+  from voxels; done-when (3)'s LOD case sets the LOD top one voxel over the box and the full top
+  at it.
+- Phase 2: done-when (3)'s "with a job in the step that reads the change" is asserted as the
+  re-list in that step (`zero_relisted` 1, not zeroed, due or in a job) and the job by the
+  settle; in the emitter case the job opened later (class 0 arrivals ahead of it).
+- Phase 2: done-when (4)'s waiting rig also runs the partial reach mode at a full radius of 6
+  (a streamed view's reach crosses the window's floor, so a near chunk's reach is never whole);
+  its column is not final as well. Both streamed rigs never empty (edge chunks wait), so they
+  step 120 steps on instead of a settle. Both are born `#[ignore = "soak"]`.
+- Phase 2: `note_rule_missed` is called only under the audit: off it, the reading's missed jobs
+  are 0 by construction.
 
 ### Close triggers
 

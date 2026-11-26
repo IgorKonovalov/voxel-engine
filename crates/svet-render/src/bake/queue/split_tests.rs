@@ -48,37 +48,55 @@ struct Mirror {
     /// The light radius: 2, or 0 where the rule's footprint (the columns within it) must lie in
     /// the one-chunk-wide window.
     lr: i32,
+    /// The window's chunks along y and z (1 and 1 but where a rule rig widens it).
+    dims: [i32; 2],
+    /// Chunks of the window not mirrored (not yet streamed in, or evicted).
+    absent: ChunkSet,
+    /// Chunks mirrored as their LOD version.
+    lod: ChunkSet,
+    /// Columns whose lowest top is not `lowest`.
+    tops: std::collections::HashMap<[i32; 2], i32>,
+    /// The chunks with lights and their state; `light_gen` moves with every change of them.
+    lights: Vec<([i32; 3], LightNote)>,
+    light_gen: u64,
 }
 
 impl MirrorRead for Mirror {
     fn window(&self) -> ChunkExtent {
-        ChunkExtent::new([0, 0, 0], [self.size, 1, 1])
+        ChunkExtent::new([0, 0, 0], [self.size, self.dims[0], self.dims[1]])
     }
     fn light_radius(&self) -> i32 {
         self.lr
     }
     fn chunk_note(&self, c: ChunkCoord) -> ChunkNote {
+        let mirrored = c.0[0] < self.held && !self.absent.contains(&c.0);
         ChunkNote {
-            mirrored: c.0[0] < self.held,
-            lod: false,
+            mirrored,
+            lod: mirrored && self.lod.contains(&c.0),
             pending: false,
         }
     }
     fn chunks(&self) -> Vec<ChunkCoord> {
         let mut out = Vec::new();
-        for x in 0..self.held {
-            out.push(ChunkCoord([x, 0, 0]));
+        for z in 0..self.dims[1] {
+            for y in 0..self.dims[0] {
+                for x in 0..self.held {
+                    if !self.absent.contains(&[x, y, z]) {
+                        out.push(ChunkCoord([x, y, z]));
+                    }
+                }
+            }
         }
         out
     }
-    fn column_lowest(&self, _: i32, _: i32) -> i32 {
-        self.lowest
+    fn column_lowest(&self, x: i32, y: i32) -> i32 {
+        self.tops.get(&[x, y]).copied().unwrap_or(self.lowest)
     }
     fn light_key(&self) -> (u64, u64) {
-        (0, 0)
+        (self.light_gen, 0)
     }
     fn light_notes(&self) -> Vec<([i32; 3], LightNote)> {
-        Vec::new()
+        self.lights.clone()
     }
 }
 
@@ -185,6 +203,31 @@ struct Rig {
     inbox: Inbox,
     /// The sample cap each message's view sets (`QueueView::samples`); `None` prices it.
     samples: Option<u64>,
+    /// What else each message's view and run carry: the camera, a streamed world's residency
+    /// (the mirror's full chunks) with the streamer's LOD and full radii, and the sky's word.
+    view: RigView,
+}
+
+/// [`Rig::view`]: a bounded world under no sky, the camera at `[32, 32, 32]`, by default.
+struct RigView {
+    eye: [f32; 3],
+    /// The residency read from the mirror's full chunks at each message (a streamed world).
+    streamed: bool,
+    lod_radius: Option<i32>,
+    full_radius: Option<i32>,
+    sky: u32,
+}
+
+impl Default for RigView {
+    fn default() -> Self {
+        Self {
+            eye: [32.0, 32.0, 32.0],
+            streamed: false,
+            lod_radius: None,
+            full_radius: None,
+            sky: 0,
+        }
+    }
 }
 
 impl Rig {
@@ -206,6 +249,12 @@ impl Rig {
             held,
             lowest: SLAB_TOP,
             lr: 2,
+            dims: [1, 1],
+            absent: ChunkSet::default(),
+            lod: ChunkSet::default(),
+            tops: Default::default(),
+            lights: Vec::new(),
+            light_gen: 0,
         };
         store.start_queue(mirror.window(), settings.cell);
         let _ = store.take_direct();
@@ -231,6 +280,7 @@ impl Rig {
             settings: step_settings,
             inbox: Inbox::default(),
             samples: None,
+            view: RigView::default(),
         }
     }
 
@@ -249,17 +299,26 @@ impl Rig {
         let n = notes(&self.mirror, (!first).then_some(changed), *window, key);
         *window = n.window;
         self.half.frame += 1;
+        let resident = self.view.streamed.then(|| {
+            let full: std::collections::HashSet<ChunkCoord> = self
+                .mirror
+                .chunks()
+                .into_iter()
+                .filter(|&c| !self.mirror.chunk_note(c).lod)
+                .collect();
+            Residency::of_chunks(Arc::new(full))
+        });
         let view = QueueView {
-            eye: [32.0, 32.0, 32.0],
+            eye: self.view.eye,
             forward: [1.0, 0.0, 0.0],
-            resident: None,
+            resident,
             samples: self.samples,
             interval_s: 1.0 / 60.0,
             hold: None,
             half_angle: 1.0,
             frustum: None,
-            full_radius: None,
-            lod_radius: None,
+            full_radius: self.view.full_radius,
+            lod_radius: self.view.lod_radius,
             focal_px: None,
         };
         let frame = self.half.frame;
@@ -268,7 +327,7 @@ impl Rig {
             start: StepStart::now(),
             view,
             notes: n,
-            sky: 0,
+            sky: self.view.sky,
             key: None,
             settings: self.settings,
             arrivals: self.inbox.take(frame),
@@ -915,5 +974,6 @@ fn the_audit_counts_a_block_that_differs_from_the_zero_record() {
 
 mod lister;
 mod routing;
+mod rule;
 mod stretch;
 mod thread;
