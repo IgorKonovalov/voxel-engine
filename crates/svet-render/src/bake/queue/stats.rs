@@ -219,6 +219,8 @@ pub struct QueueStats {
     pub pool_guard: u64,
     /// The jobs the rule would have answered, while [`BakeQueue::rule_reading`] is on.
     pub rule_missed: RuleMissed,
+    /// The rule's audit, while [`BakeQueue::rule_audit`] is on.
+    pub rule_audit: RuleAudit,
     /// Blocks whose band changed as the camera's chunk changed (their candidacy read again),
     /// and pending jobs withdrawn above their new band's count, since the queue started.
     pub retiered: u64,
@@ -428,6 +430,116 @@ impl RuleMissed {
             s as f64 / self.opened_before[1].max(1) as f64,
         ]
     }
+}
+
+/// The audit's cases ([`RuleAudit`]): the rule held at the opening with none of the exclusions.
+pub(crate) const AUDIT_FULL: usize = 0;
+/// A column over the reach not final.
+pub(crate) const AUDIT_PROVISIONAL: usize = 1;
+/// The reach crossing the full radius.
+pub(crate) const AUDIT_PARTIAL: usize = 2;
+/// A block already held (class 1).
+pub(crate) const AUDIT_CLASS1: usize = 3;
+
+/// The differing blocks an audit keeps.
+pub(crate) const AUDIT_KEPT: usize = 16;
+
+/// One block an audit found differing from the rule's zero record: its chunk, its case, the
+/// first differing word's index in the block, and the job's word and the rule's there.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AuditDiffer {
+    pub chunk: [i32; 3],
+    pub case: u8,
+    pub word: u32,
+    pub job: u32,
+    pub rule: u32,
+}
+
+/// An audit of the rule (while [`BakeQueue::rule_audit`] is on): every block a job placed, not
+/// stale, for a chunk the rule held for at its opening, compared word for word with the zero
+/// record the rule writes for the same faces, by the case at the opening ([`AUDIT_FULL`],
+/// [`AUDIT_PROVISIONAL`], [`AUDIT_PARTIAL`], [`AUDIT_CLASS1`]; the first that applies, in the
+/// reading's order). The records' tier bits are left out where the job's tier is not the
+/// ruled record's (counted in `tier_masked`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RuleAudit {
+    pub compared: [u64; 4],
+    pub differ: [u64; 4],
+    /// Blocks compared with the tier bits masked: a job at a lesser tier (ADR-0080 rule 2).
+    pub tier_masked: u64,
+    /// The first [`AUDIT_KEPT`] that differ, `kept` of them.
+    pub first: [AuditDiffer; AUDIT_KEPT],
+    pub kept: u8,
+}
+
+impl RuleAudit {
+    /// Compares `job` (a block placed for `chunk`, case `case`) with `rule`, the zero record of
+    /// its faces at the ruled tier, the tier bits of each cell record (`record` words a cell
+    /// from the block's directory) masked where `mask_tier`.
+    pub fn compare(
+        &mut self,
+        chunk: [i32; 3],
+        case: usize,
+        job: &[u32],
+        rule: &[u32],
+        record: usize,
+        mask_tier: bool,
+    ) {
+        self.compared[case] += 1;
+        self.tier_masked += u64::from(mask_tier);
+        let tier_words: std::collections::HashSet<usize> = if mask_tier {
+            tier_words(rule, record)
+        } else {
+            Default::default()
+        };
+        let mask = |i: usize, w: u32| {
+            if tier_words.contains(&i) {
+                w & !(3 << TIER_SHIFT)
+            } else {
+                w
+            }
+        };
+        let n = job.len().max(rule.len());
+        let at = (0..n).find(|&i| {
+            let (a, b) = (job.get(i).copied(), rule.get(i).copied());
+            a.map(|w| mask(i, w)) != b.map(|w| mask(i, w))
+        });
+        let Some(i) = at else {
+            return;
+        };
+        self.differ[case] += 1;
+        if usize::from(self.kept) < AUDIT_KEPT {
+            self.first[usize::from(self.kept)] = AuditDiffer {
+                chunk,
+                case: case as u8,
+                word: i as u32,
+                job: job.get(i).copied().unwrap_or(u32::MAX),
+                rule: rule.get(i).copied().unwrap_or(u32::MAX),
+            };
+            self.kept += 1;
+        }
+    }
+
+    /// The differing blocks kept.
+    pub fn kept(&self) -> &[AuditDiffer] {
+        &self.first[..usize::from(self.kept)]
+    }
+}
+
+/// The indices of the words holding the tier bits ([`TIER_SHIFT`]) in `block`: each cell
+/// record's second visibility word, the records found from the directory.
+fn tier_words(block: &[u32], record: usize) -> std::collections::HashSet<usize> {
+    let mut out = std::collections::HashSet::new();
+    for &dir in block.iter().take(CHUNK_BRICKS) {
+        if dir == 0 {
+            continue;
+        }
+        let run = (dir >> 11) as usize;
+        for cell in (run - record..run).step_by(BRICK_WORDS) {
+            out.insert(cell + VIS_WORD + 1);
+        }
+    }
+    out
 }
 
 /// [`QueueStats::landings`]: a block over its chunk's block of the same layout, faded from

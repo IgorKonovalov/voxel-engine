@@ -66,6 +66,7 @@ fn the_queue_line_reports_in_view_waiting_by_band_and_a_drain_projection() {
         waiting,
         samples_per_s: 2.0e6,
         rule_missed: None,
+        rule_audit: None,
     };
     assert_eq!(drain.drain_s(), Some(3.0));
     let text = drain.text();
@@ -125,4 +126,54 @@ fn the_queue_line_reports_in_view_waiting_by_band_and_a_drain_projection() {
         "{}",
         read.json()
     );
+
+    // The rule audit (Plan 0101 Phase 1): compared and differ by case, full / provisional /
+    // partial / class 1, on the line and in `run.json`, with the first block that differs.
+    let mut a = svet_render::RuleAudit {
+        compared: [12, 7, 30, 2],
+        differ: [0, 0, 1, 0],
+        tier_masked: 4,
+        ..Default::default()
+    };
+    a.first[0] = svet_render::AuditDiffer {
+        chunk: [3, -2, 1],
+        case: 2,
+        word: 77,
+        job: 5,
+        rule: 0,
+    };
+    a.kept = 1;
+    let audited = QueueDrain {
+        rule_audit: Some(a),
+        ..read
+    };
+    let text = audited.text();
+    assert!(
+        text.contains(
+            "rule audit compared/differ full 12/0 provisional 7/0 partial 30/1 class1 2/0, tier masked 4, first differ chunk [3, -2, 1] partial word 77"
+        ),
+        "{text}"
+    );
+    let json = parse(&audited.json()).expect("parses");
+    let audit = json.get("rule_audit").expect("the audit's object");
+    let nums = |k: &str| match audit.get(k) {
+        Some(Value::Arr(v)) => v
+            .iter()
+            .map(|x| match x {
+                Value::Num(n) => *n,
+                other => panic!("{k}: {other:?}"),
+            })
+            .collect::<Vec<f64>>(),
+        other => panic!("{k}: {other:?}"),
+    };
+    assert_eq!(nums("compared"), [12.0, 7.0, 30.0, 2.0]);
+    assert_eq!(nums("differ"), [0.0, 0.0, 1.0, 0.0]);
+    let Some(Value::Arr(first)) = audit.get("first") else {
+        panic!("first: {audit:?}");
+    };
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].get("word"), Some(&Value::Num(77.0)));
+    assert_eq!(first[0].get("case"), Some(&Value::Str("partial".into())));
+    // No audit: no object.
+    assert!(read.json().contains("rule_missed") && !read.json().contains("rule_audit"));
 }

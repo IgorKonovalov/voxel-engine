@@ -103,5 +103,13 @@ pub(super) fn queue_flags() -> Vec<Flag<Parsing>> {
                 p.args.bake.queue_rule_reading = true;
             },
         ),
+        Flag::switch(
+            &["--queue-rule-audit"],
+            "the zero rule writes no record; compare each job it would answer with its record (a reading; implies --queue-rule-reading)",
+            |p: &mut Parsing| {
+                p.args.bake.queue_rule_reading = true;
+                p.args.bake.queue_rule_audit = true;
+            },
+        ),
     ]
 }

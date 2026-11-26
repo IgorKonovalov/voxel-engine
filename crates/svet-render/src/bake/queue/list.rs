@@ -158,6 +158,8 @@ impl BakeQueue {
         let provisional = self.provisional_checked.remove(&c);
         let ruled = self.ruled_checked.remove(&c);
         let missed = self.rule_missed_checked.remove(&c);
+        let audit = self.audit_checked.remove(&c);
+        self.audit_jobs.remove(&c);
         self.zeroed.remove(&c);
         if faces.faces() == 0 {
             self.reach.remove(&c);
@@ -221,6 +223,9 @@ impl BakeQueue {
                 dirs.iter().filter(|d| **d).count() as u64 * u64::from(brick_samples)
             })
             .sum();
+        if let Some(case) = audit {
+            self.audit_jobs.insert(c, (case, faces.clone()));
+        }
         self.lp.push(Job {
             coord,
             faces,

@@ -29,6 +29,8 @@ use self::reach::reach_of;
 pub use self::reads::QueueRead;
 pub(crate) use self::reads::Source as ReadSource;
 pub(crate) use self::shadow::{LightNote, Shadow, notes};
+pub(crate) use self::stats::{AUDIT_CLASS1, AUDIT_FULL, AUDIT_PARTIAL, AUDIT_PROVISIONAL};
+pub use self::stats::{AuditDiffer, RuleAudit};
 pub use self::stats::{
     BakeRoundTrip, Band, Bands, CycleLine, DigTrace, DigTraceJob, InViewWaiting, LANDED_BARE,
     LANDED_FALLBACK, LANDED_REFADED, LANDED_UNFADED, LANDING_DIRECTIONS, LANDING_KEY,
@@ -368,6 +370,16 @@ pub struct BakeQueue {
     /// The opening's checked candidates the reading counts if their job opens: the exclusion
     /// that kept the rule from each, and whether it lies in the view cone or the near shell.
     pub(super) rule_missed_checked: ChunkMap<(usize, bool)>,
+    /// A reading that implies [`BakeQueue::rule_reading`]: the rule writes no record, and every
+    /// candidate it holds for at the opening, whatever the exclusions, takes a job whose placed
+    /// block is compared with the rule's zero record ([`QueueStats::rule_audit`]). Off by
+    /// default.
+    pub rule_audit: bool,
+    /// The opening's checked candidates the audit compares if their job opens: the case.
+    pub(super) audit_checked: ChunkMap<usize>,
+    /// The audited jobs open: each chunk's case and its listed faces, for the zero record its
+    /// placed block is compared with.
+    pub(super) audit_jobs: ChunkMap<(usize, ChunkFaces)>,
     /// Whether a read of the drain's set found it not empty since the queue started (the
     /// in-view landing is the first empty set after it, [`RuleMissed::landed_at`]).
     pub(super) waiting_armed: bool,
@@ -629,6 +641,9 @@ impl BakeQueue {
             census_every_opening: false,
             rule_reading: false,
             rule_missed_checked: Default::default(),
+            rule_audit: false,
+            audit_checked: Default::default(),
+            audit_jobs: Default::default(),
             waiting_armed: false,
             stats: QueueStats {
                 ns_per_sample: 20.0,

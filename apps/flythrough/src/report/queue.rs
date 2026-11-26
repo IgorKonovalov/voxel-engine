@@ -9,13 +9,16 @@ use super::write_ms;
 /// ([`svet_render::InViewWaiting`]), the samples they still need, the last second's samples a
 /// second, and `drain_s`, the need over that rate (`None` while nothing is drawn and something
 /// waits). Under `--queue-rule-reading`, the jobs the rule would have answered
-/// ([`svet_render::RuleMissed`]; `None` while the reading has counted nothing).
+/// ([`svet_render::RuleMissed`]; `None` while the reading has counted nothing). Under
+/// `--queue-rule-audit`, the blocks compared with the rule's zero record and those that differ
+/// by case ([`svet_render::RuleAudit`]; `None` while the audit has compared nothing).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct QueueDrain {
     pub depth: u64,
     pub waiting: svet_render::InViewWaiting,
     pub samples_per_s: f64,
     pub rule_missed: Option<svet_render::RuleMissed>,
+    pub rule_audit: Option<svet_render::RuleAudit>,
 }
 
 impl QueueDrain {
@@ -39,6 +42,9 @@ impl QueueDrain {
         );
         if let Some(r) = &self.rule_missed {
             t.push_str(&rule_missed_text(r));
+        }
+        if let Some(a) = &self.rule_audit {
+            t.push_str(&rule_audit_text(a));
         }
         t
     }
@@ -84,8 +90,61 @@ impl QueueDrain {
                     .map_or_else(|| "null".to_owned(), |s| s.to_string()),
             );
         }
+        if let Some(a) = &self.rule_audit {
+            let list = |v: &[u64; 4]| format!("[{}, {}, {}, {}]", v[0], v[1], v[2], v[3]);
+            let first: Vec<String> = a
+                .kept()
+                .iter()
+                .map(|d| {
+                    format!(
+                        "{{\"chunk\": [{}, {}, {}], \"case\": \"{}\", \"word\": {}, \"job\": {}, \"rule\": {}}}",
+                        d.chunk[0],
+                        d.chunk[1],
+                        d.chunk[2],
+                        AUDIT_CASES[usize::from(d.case)],
+                        d.word,
+                        d.job,
+                        d.rule,
+                    )
+                })
+                .collect();
+            let _ = write!(
+                o,
+                ", \"rule_audit\": {{\"cases\": [\"full\", \"provisional\", \"partial\", \"class1\"], \"compared\": {}, \"differ\": {}, \"tier_masked\": {}, \"first\": [{}]}}",
+                list(&a.compared),
+                list(&a.differ),
+                a.tier_masked,
+                first.join(", "),
+            );
+        }
         o.push('}');
     }
+}
+
+/// The audit's cases by index ([`svet_render::RuleAudit`]).
+pub const AUDIT_CASES: [&str; 4] = ["full", "provisional", "partial", "class1"];
+
+/// The rule audit's text on the `bake queue:` line: the blocks compared with the zero record
+/// and those that differ, by case, the tier-masked count, and the first that differs (chunk,
+/// case, word index, the job's word and the rule's).
+pub fn rule_audit_text(a: &svet_render::RuleAudit) -> String {
+    let mut t = String::from("; rule audit compared/differ");
+    for (k, name) in AUDIT_CASES.iter().enumerate() {
+        let _ = write!(t, " {name} {}/{}", a.compared[k], a.differ[k]);
+    }
+    let _ = write!(t, ", tier masked {}", a.tier_masked);
+    if let Some(d) = a.kept().first() {
+        let _ = write!(
+            t,
+            ", first differ chunk {:?} {} word {} job {:#010x} rule {:#010x}",
+            d.chunk,
+            AUDIT_CASES[usize::from(d.case)],
+            d.word,
+            d.job,
+            d.rule,
+        );
+    }
+    t
 }
 
 /// The rule reading's text on the `bake queue:` line: the jobs (and samples) the rule would

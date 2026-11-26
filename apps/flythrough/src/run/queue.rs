@@ -343,6 +343,8 @@ impl QueueRun {
             samples_per_s: self.line_rate,
             rule_missed: (st.rule_missed != svet_render::RuleMissed::default())
                 .then_some(st.rule_missed),
+            rule_audit: (st.rule_audit != svet_render::RuleAudit::default())
+                .then_some(st.rule_audit),
         }
     }
 }

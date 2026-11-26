@@ -175,6 +175,8 @@ pub(in crate::bake) struct Listing {
     provisional: bool,
     ruled: bool,
     missed: Option<(usize, bool)>,
+    /// The audit's case ([`BakeQueue::audit_checked`]).
+    audit: Option<usize>,
     /// Its faces, once back and not yet pushed (a box waited).
     listed: Option<(ChunkFaces, bool)>,
 }
@@ -301,6 +303,7 @@ impl BakeQueue {
                     provisional: self.provisional_checked.contains(&c),
                     ruled: self.ruled_checked.contains(&c),
                     missed: self.rule_missed_checked.get(&c).copied(),
+                    audit: self.audit_checked.get(&c).copied(),
                     listed: None,
                 },
             );
@@ -382,6 +385,9 @@ impl BakeQueue {
             if let Some(m) = l.missed {
                 self.rule_missed_checked.insert(c, m);
             }
+            if let Some(a) = l.audit {
+                self.audit_checked.insert(c, a);
+            }
             let listed = l.listed.expect("collected above");
             match self.push_listed(store, eye, l.class, ChunkCoord(c), listed) {
                 Ok(samples) => {
@@ -398,6 +404,7 @@ impl BakeQueue {
         self.provisional_checked.clear();
         self.ruled_checked.clear();
         self.rule_missed_checked.clear();
+        self.audit_checked.clear();
         self.stats.fill = self.fill.figures();
         Ok(())
     }

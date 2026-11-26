@@ -181,6 +181,7 @@ impl BakeQueue {
         self.provisional_checked.clear();
         self.ruled_checked.clear();
         self.rule_missed_checked.clear();
+        self.audit_checked.clear();
         Ok(())
     }
 
@@ -206,6 +207,28 @@ impl BakeQueue {
             self.provisional_checked.remove(&c);
         }
         let lr = gpu.light_radius();
+        // The audit: the rule writes no record, and each candidate it holds for on the tops as
+        // they stand takes a job, noted with its case for the compare at its placement.
+        self.audit_checked.remove(&c);
+        if self.rule_audit && self.zero_rule {
+            if self.rule_holds(gpu, ChunkCoord(c), lr) {
+                let case = if provisional {
+                    AUDIT_PROVISIONAL
+                } else if partial {
+                    AUDIT_PARTIAL
+                } else if class != 0 {
+                    AUDIT_CLASS1
+                } else {
+                    AUDIT_FULL
+                };
+                self.audit_checked.insert(c, case);
+            }
+            self.ruled_checked.remove(&c);
+            if self.rule_reading {
+                self.note_rule_missed(gpu, view, eye, c, class, partial, provisional);
+            }
+            return;
+        }
         if self.zero_rule
             && class == 0
             && !partial

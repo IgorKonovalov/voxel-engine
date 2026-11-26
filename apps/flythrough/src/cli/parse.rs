@@ -152,6 +152,7 @@ impl Args {
                 queue_withdraw: true,
                 queue_census: false,
                 queue_rule_reading: false,
+                queue_rule_audit: false,
                 edit_ms: svet_render::DEFAULT_BAKE_EDIT_MS,
                 dig_reach: true,
                 ring1_stretch: svet_render::DEFAULT_RING1_STRETCH,

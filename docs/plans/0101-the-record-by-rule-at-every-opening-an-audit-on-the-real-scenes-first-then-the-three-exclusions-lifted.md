@@ -1,6 +1,6 @@
 # 0101: The record by rule at every opening: an audit on the real scenes first, then the three exclusions lifted
 
-> **Status:** approved (owner, 2026-11-24: lane after Plan 0099 closes; drafted 2026-11-24 with no interview; the guesses
+> **Status:** in-progress (lane `plan-0101`, Phase 1 from 2026-11-26); approved (owner, 2026-11-24: lane after Plan 0099 closes; drafted 2026-11-24 with no interview; the guesses
 > and the open questions are under "Risks & open questions", each with a recommended option).
 > **Order (recommended, question 1):** after Plan 0100's Phase 2 and **after Plan 0099 closes**,
 > not ahead of its Phase 1 as Plan 0096's close ruled; the reasons are under "The order".
@@ -444,7 +444,7 @@ once he says go).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The audit and the re-read, no behaviour change | dev | not started | |
+| 1: The audit and the re-read, no behaviour change | dev | in progress, checkpointed ([readings log](logs/0101.md)) | wip committed with this row |
 | 2: The rule at every opening | dev | not started | |
 | 3: The readings on both adapters, the audit at the tip, and the documents | dev | not started | |
 
