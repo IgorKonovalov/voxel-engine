@@ -7,6 +7,19 @@
 > one word and one setter for both. The baked light under an element is read in the temporal
 > pass for the face voxel, not the element's position. Plan 0081's amendment of that date
 > carries them; the body stands.
+> **Revised 2026-11-26 (architect, Plan 0081's second re-read; still proposed):** three points
+> of the Decision read otherwise, after ADR-0082 (no screen history in the light passes) and
+> Plan 0086 as built. (1) **A detail hit takes its face's light**: the sky visibility, the key
+> light's visibility and the emissive record are read for the face under the element, from the
+> sources that face would take; the element's normal enters the cosine and the root term only.
+> "The sun's shadow ray starts at the element" is withdrawn as the default and kept as a
+> setting's arm (a ray from the rest position); a list light's ray starts at the rest position.
+> Rejected as the default because a per-frame ray from a thin, swaying element needs the
+> history ADR-0082 removed, or shows its noise. (2) The style index is bits 2 to 7 of the
+> style word, which is an `f32` lane exact to 24 bits, so at most 63 styles. (3) The fade's
+> candidates are `[6, 12]` and the far normal's band `[4, 8]` pixels a voxel (ADR-0042's band
+> as ADR-0082 set it), so no element is drawn where the shading normal is the far one; the
+> owner confirms both at Plan 0081's questions 1 and 2.
 > **Date:** 2026-11-16
 > **Related plan(s):** [Plan 0081](../plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md)
 > (builds it); [Plan 0032](../plans/done/0032-sun-and-sky-hillaire-atmosphere-time-of-day-and-an-outdoor-testbed.md)
