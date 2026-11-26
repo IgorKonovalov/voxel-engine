@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Re-renders the images under docs/images/ that docs/images/shots.json describes, headless,
-// one render per hold of the GPU lock, and encodes each with ffmpeg: a still as lossy WebP
-// (libwebp), a loop as animated WebP (libwebp_anim), both scaled to the entry's width with
-// lanczos.
+// in batches inside holds of the GPU lock, and encodes each with ffmpeg after its hold: a
+// still as lossy WebP (libwebp), a loop as animated WebP (libwebp_anim), both scaled to the
+// entry's width with lanczos.
 //
 //   node scripts/shoot-images.mjs [--only ID,..] [--print ID] [--check] [--no-build]
 //
@@ -12,9 +12,16 @@
 // `--out-dir`). The frames land under target/shots/<id>/. Every command is derived from the
 // entry by `commandsOf`, so `--print` and the shoot cannot disagree. `--check` renders and
 // encodes into target/shots/check/ instead, decodes the new and the committed file to raw RGB
-// with ffmpeg and prints the fraction of pixels whose largest channel difference is over
-// `LEVEL`, against the entry's `tolerance`; it exits 1 when one is over. The `frozen` map names
-// images that are kept and never re-rendered.
+// with ffmpeg, cuts every frame into CELL x CELL cells and prints the share of cells whose
+// largest channel mean differs by more than CELL_LEVEL, against the entry's `tolerance`; it
+// exits 1 when one is over. Encoder noise and a one-pixel move average out inside a cell; a
+// changed scene, pass or hour moves whole cells. The `frozen` map names images that are kept
+// and never re-rendered.
+//
+// The lock: the script takes it once per batch (it runs itself under `flock` with the hidden
+// `--batch ID,..`), renders entry after entry inside the hold and starts no render once the
+// hold is HOLD_S old; a render's timeout is TIMEOUT_S, so no hold passes HOLD_S + TIMEOUT_S.
+// The live-runner check runs before every hold.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -28,10 +35,18 @@ export const MANIFEST = "docs/images/shots.json";
 export const IMAGES = "docs/images";
 export const SHOTS = "target/shots";
 export const BINARIES = { flythrough: "target/release/flythrough", clip: "target/release/examples/clip" };
-/** A pixel differs when one of its channels differs by more than this many levels of 255. */
+/** A pixel differs when one of its channels differs by more than this many levels of 255
+ * (`diffFraction`, the PNG reading; `--check` reads cells). */
 export const LEVEL = 2;
+/** `--check`'s cell side in pixels of the decoded file. */
+export const CELL = 8;
+/** `--check`'s cell difference: a cell differs when one channel's mean moves by more than this. */
+export const CELL_LEVEL = 4;
+/** No render starts once a hold of the lock is this old (seconds). */
+export const HOLD_S = 600;
+/** One render's timeout (seconds). */
+export const TIMEOUT_S = 300;
 const MEMORY = "6G";
-const TIMEOUT_S = 900;
 
 /** The fields every entry carries, and the ones its kind or source adds. */
 export const REQUIRED = ["kind", "file", "source", "flags", "width", "quality", "tolerance", "cap_bytes", "note"];
@@ -72,6 +87,7 @@ export function validate(manifest) {
       if (e.kind === "still" && !Number.isInteger(e.still_at)) errors.push(`${id}: a still's still_at is one frame`);
       if (e.kind === "loop" && !/^\d+\.\.\d+$/.test(String(e.still_at))) errors.push(`${id}: a loop's still_at is A..B`);
       if (!e.flags?.includes("--headless")) errors.push(`${id}: a flythrough entry runs --headless`);
+      if (!e.flags?.includes("--settled-start")) errors.push(`${id}: a flythrough entry runs --settled-start`);
     }
     if (e.source === "clip" && e.kind !== "loop") errors.push(`${id}: a clip entry is a loop`);
   }
@@ -86,10 +102,11 @@ export function framesOf(entry) {
   return Array.from({ length: b - a + 1 }, (_, i) => a + i);
 }
 
-/** The memory-capped scope, inside the GPU lock, with a timeout. */
+/** The memory-capped scope with a timeout, inside the GPU lock unless `lock` is null (a batch
+ * already holds it). */
 export function wrap(argv, { lock = LOCK, memory = MEMORY, timeout = TIMEOUT_S } = {}) {
   return [
-    "flock", lock, "timeout", String(timeout),
+    ...(lock ? ["flock", lock] : []), "timeout", String(timeout),
     "systemd-run", "--user", "--scope", "--quiet", "-p", `MemoryMax=${memory}`, "-p", "MemorySwapMax=2G", "--",
     ...argv,
   ];
@@ -143,6 +160,69 @@ export function decodeRgb(file) {
   return r.stdout;
 }
 
+/** A decoded file's frame size, by ffprobe. */
+export function probeSize(file) {
+  const r = spawnSync(
+    "ffprobe",
+    ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", file],
+    { encoding: "utf8" },
+  );
+  const [w, h] = (r.stdout ?? "").trim().split(",").map(Number);
+  if (r.status !== 0 || !(w > 0 && h > 0)) throw new Error(`ffprobe could not size ${file}: ${r.stderr}`);
+  return { width: w, height: h };
+}
+
+/**
+ * The share of cells of two RGB buffers (frames of `width` x `height`, every frame in order)
+ * whose largest channel mean differs by more than `level`. Cells are `cell` x `cell` from the
+ * top left; the right and bottom ones are smaller, and each counts once. `max` is the largest
+ * cell difference.
+ */
+export function cellShare(a, b, width, height, { cell = CELL, level = CELL_LEVEL } = {}) {
+  const fb = width * height * 3;
+  if (a.length !== b.length) return { share: 1, max: 255, note: `sizes differ: ${a.length} and ${b.length} bytes` };
+  if (fb === 0 || a.length % fb !== 0) return { share: 1, max: 255, note: `${a.length} bytes are not frames of ${width} x ${height}` };
+  let cells = 0;
+  let over = 0;
+  let max = 0;
+  for (let f = 0; f < a.length / fb; f++) {
+    for (let y0 = 0; y0 < height; y0 += cell) {
+      for (let x0 = 0; x0 < width; x0 += cell) {
+        const y1 = Math.min(y0 + cell, height);
+        const x1 = Math.min(x0 + cell, width);
+        const d = [0, 0, 0];
+        for (let y = y0; y < y1; y++) {
+          for (let x = x0, i = f * fb + (y * width + x0) * 3; x < x1; x++, i += 3) {
+            d[0] += a[i] - b[i];
+            d[1] += a[i + 1] - b[i + 1];
+            d[2] += a[i + 2] - b[i + 2];
+          }
+        }
+        const diff = Math.max(...d.map(Math.abs)) / ((y1 - y0) * (x1 - x0));
+        cells++;
+        if (diff > level) over++;
+        if (diff > max) max = diff;
+      }
+    }
+  }
+  return { share: over / cells, max };
+}
+
+/**
+ * One hold's renders: `render` each unit in order, starting none once `now()` (seconds) is
+ * `limit` past the hold's start. Returns what the renders returned; the units after them wait
+ * for the next hold.
+ */
+export function batchOf(units, render, now, limit = HOLD_S) {
+  const start = now();
+  const done = [];
+  for (const u of units) {
+    if (now() - start >= limit) break;
+    done.push(render(u));
+  }
+  return done;
+}
+
 /** The share of pixels of two RGB buffers whose largest channel difference is over `level`. */
 export function diffFraction(a, b, level = LEVEL) {
   if (a.length !== b.length) return { fraction: 1, note: `sizes differ: ${a.length} and ${b.length} bytes` };
@@ -161,13 +241,14 @@ export function readManifest(file) {
 const USAGE = `usage: node scripts/shoot-images.mjs [--only ID,..] [--print ID] [--check] [--no-build] [--manifest FILE]
   --only ID,..   shoot only these entries
   --print ID     print the entry's commands (copy-pasteable from the repository root) and exit
-  --check        render and encode into ${SHOTS}/check/, print each entry's difference fraction
-                 against the committed file and its tolerance; exit 1 when one is over
+  --check        render and encode into ${SHOTS}/check/, print each entry's cell share (cells of
+                 ${CELL} x ${CELL}, a channel mean more than ${CELL_LEVEL} apart) against the
+                 committed file and its tolerance; exit 1 when one is over
   --no-build     use the release binaries as already built
   --manifest F   read F instead of ${MANIFEST}`;
 
 export function parseCli(argv) {
-  const o = { only: null, print: null, check: false, build: true, manifest: MANIFEST, help: false };
+  const o = { only: null, print: null, check: false, build: true, manifest: MANIFEST, help: false, batch: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const val = () => {
@@ -179,6 +260,7 @@ export function parseCli(argv) {
     else if (a === "--check") o.check = true;
     else if (a === "--no-build") o.build = false;
     else if (a === "--manifest") o.manifest = val();
+    else if (a === "--batch") o.batch = val().split(",").filter(Boolean);
     else if (a === "-h" || a === "--help") o.help = true;
     else throw new Error(`unknown option ${a}`);
   }
@@ -189,27 +271,40 @@ function run(argv, opts = {}) {
   return spawnSync(argv[0], argv.slice(1), { cwd: ROOT, encoding: "utf8", maxBuffer: 1 << 28, ...opts });
 }
 
-function shootOne(id, entry, check) {
+const BATCH_TAG = "shoot-batch ";
+
+/** Inside a hold (`--batch`): render the entries in order until the hold is HOLD_S old, and
+ * print one line for the parent: the hold's start and end, its load and each render. */
+function renderBatch(o, manifest) {
+  const clock = () => Date.now() / 1000;
+  const start = clock();
+  const load = os.loadavg()[0];
+  const results = batchOf(o.batch, (id) => {
+    const c = commandsOf(id, manifest.shots[id], { check: o.check, lock: null });
+    run(c.clear);
+    fs.mkdirSync(path.join(ROOT, c.dir), { recursive: true });
+    const t0 = clock();
+    const r = run(c.render);
+    fs.writeFileSync(path.join(ROOT, `${c.dir}.log`), `$ ${shell(c.render)}\n${r.stdout ?? ""}${r.stderr ?? ""}`);
+    return { id, status: r.status ?? String(r.signal), secs: clock() - t0 };
+  }, clock);
+  console.log(BATCH_TAG + JSON.stringify({ start, end: clock(), load, results }));
+  return 0;
+}
+
+/** After the hold: check the frames a render wrote and encode them. */
+function encodeOne(id, entry, check) {
   const c = commandsOf(id, entry, { check });
-  run(c.clear);
-  fs.mkdirSync(path.join(ROOT, c.dir), { recursive: true });
-  fs.mkdirSync(path.dirname(path.join(ROOT, c.out)), { recursive: true });
-  const t0 = Date.now();
-  const load = os.loadavg()[0].toFixed(2);
-  const r = run(c.render);
-  const secs = ((Date.now() - t0) / 1000).toFixed(1);
-  const log = path.join(ROOT, `${c.dir}.log`);
-  fs.writeFileSync(log, `$ ${shell(c.render)}\n${r.stdout ?? ""}${r.stderr ?? ""}`);
-  if (r.status !== 0) return { id, failure: `render exit ${r.status ?? r.signal}, see ${path.relative(ROOT, log)}` };
-  const pngs = fs.readdirSync(path.join(ROOT, c.dir)).filter((f) => f.endsWith(".png"));
+  const log = path.relative(ROOT, path.join(ROOT, `${c.dir}.log`));
+  const pngs = fs.existsSync(path.join(ROOT, c.dir)) ? fs.readdirSync(path.join(ROOT, c.dir)).filter((f) => f.endsWith(".png")) : [];
   const want = entry.source === "flythrough" ? framesOf(entry).length : null;
   if (pngs.length === 0 || (want !== null && pngs.length !== want)) {
-    return { id, failure: `${pngs.length} frames written, ${want ?? "some"} expected` };
+    return { failure: `${pngs.length} frames written, ${want ?? "some"} expected, see ${log}` };
   }
+  fs.mkdirSync(path.dirname(path.join(ROOT, c.out)), { recursive: true });
   const e = run(c.encode);
-  if (e.status !== 0) return { id, failure: `encode exit ${e.status}: ${e.stderr}` };
-  const bytes = fs.statSync(path.join(ROOT, c.out)).size;
-  return { id, out: c.out, frames: pngs.length, bytes, secs, load };
+  if (e.status !== 0) return { failure: `encode exit ${e.status}: ${e.stderr}` };
+  return { out: c.out, frames: pngs.length, bytes: fs.statSync(path.join(ROOT, c.out)).size };
 }
 
 function main() {
@@ -236,7 +331,7 @@ function main() {
     for (const l of errors) console.error(`${o.manifest}: ${l}`);
     return 2;
   }
-  const ids = o.only ?? Object.keys(manifest.shots);
+  const ids = o.batch ?? o.only ?? Object.keys(manifest.shots);
   for (const id of [...ids, ...(o.print ? [o.print] : [])]) {
     if (!manifest.shots[id]) {
       console.error(`no entry ${id} in ${o.manifest}`);
@@ -247,11 +342,7 @@ function main() {
     console.log(printLines(o.print, manifest.shots[o.print]).join("\n"));
     return 0;
   }
-  const up = liveRunner();
-  if (up) {
-    console.error(`a live-session runner is up (${up}); the shoot takes no GPU work while it runs`);
-    return 2;
-  }
+  if (o.batch) return renderBatch(o, manifest);
   const t0 = Date.now();
   if (o.build) {
     const b = run(
@@ -266,31 +357,73 @@ function main() {
     console.log(`built in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
   }
   let failed = 0;
-  for (const id of ids) {
-    const entry = manifest.shots[id];
-    const r = shootOne(id, entry, o.check);
-    if (r.failure) {
-      console.error(`${id}: ${r.failure}`);
-      failed++;
-      continue;
+  let waited = 0;
+  let held = 0;
+  let todo = [...ids];
+  for (let hold = 1; todo.length > 0; hold++) {
+    const up = liveRunner();
+    if (up) {
+      console.error(`a live-session runner is up (${up}); no hold is taken while it runs; not shot: ${todo.join(",")}`);
+      return 1;
     }
-    const cap = r.bytes > entry.cap_bytes ? ` OVER its cap of ${entry.cap_bytes}` : "";
-    let line = `${id}: ${r.out} ${r.bytes} bytes${cap}, ${r.frames} frame(s), ${r.secs} s with the lock wait, load ${r.load}`;
-    if (o.check) {
-      const committed = path.join(ROOT, IMAGES, entry.file);
-      if (!fs.existsSync(committed)) {
-        line += `; no committed ${IMAGES}/${entry.file}`;
+    const asked = Date.now() / 1000;
+    const loadAsked = os.loadavg()[0];
+    const b = run(["flock", LOCK, process.execPath, fileURLToPath(import.meta.url), "--batch", todo.join(","),
+      "--manifest", o.manifest, ...(o.check ? ["--check"] : [])]);
+    const line = (b.stdout ?? "").split("\n").find((l) => l.startsWith(BATCH_TAG));
+    if (b.status !== 0 || !line) {
+      console.error(`hold ${hold}: the batch exited ${b.status ?? b.signal}: ${b.stderr}`);
+      return 1;
+    }
+    const h = JSON.parse(line.slice(BATCH_TAG.length));
+    if (h.results.length === 0) {
+      console.error(`hold ${hold}: the batch rendered nothing`);
+      return 1;
+    }
+    waited += h.start - asked;
+    held += h.end - h.start;
+    console.log(
+      `hold ${hold}: one flock, waited ${(h.start - asked).toFixed(0)} s (load1 ${loadAsked.toFixed(2)} asked, ` +
+        `${h.load.toFixed(2)} at the hold), held ${(h.end - h.start).toFixed(0)} s, ` +
+        h.results.map((r) => `${r.id} ${r.secs.toFixed(1)} s`).join(", "),
+    );
+    for (const r of h.results) {
+      const entry = manifest.shots[r.id];
+      if (r.status !== 0) {
+        console.error(`${r.id}: render exit ${r.status}, see ${commandsOf(r.id, entry, { check: o.check }).dir}.log`);
         failed++;
-      } else {
-        const d = diffFraction(decodeRgb(committed), decodeRgb(path.join(ROOT, r.out)));
-        const over = d.fraction > entry.tolerance;
-        if (over) failed++;
-        line += `; fraction ${d.fraction.toFixed(6)} tolerance ${entry.tolerance} ${over ? "OVER" : "ok"}${d.note ? ` (${d.note})` : ""}`;
+        continue;
       }
+      const e = encodeOne(r.id, entry, o.check);
+      if (e.failure) {
+        console.error(`${r.id}: ${e.failure}`);
+        failed++;
+        continue;
+      }
+      const cap = e.bytes > entry.cap_bytes ? ` OVER its cap of ${entry.cap_bytes}` : "";
+      let out = `${r.id}: ${e.out} ${e.bytes} bytes${cap}, ${e.frames} frame(s), render ${r.secs.toFixed(1)} s`;
+      if (o.check) {
+        const committed = path.join(ROOT, IMAGES, entry.file);
+        if (!fs.existsSync(committed)) {
+          out += `; no committed ${IMAGES}/${entry.file}`;
+          failed++;
+        } else {
+          const { width, height } = probeSize(committed);
+          const d = cellShare(decodeRgb(committed), decodeRgb(path.join(ROOT, e.out)), width, height);
+          const over = d.share > entry.tolerance;
+          if (over) failed++;
+          out += `; cell share ${d.share.toFixed(6)} (C ${CELL}, L ${CELL_LEVEL}, largest ${d.max.toFixed(2)}) ` +
+            `tolerance ${entry.tolerance} ${over ? "OVER" : "ok"}${d.note ? ` (${d.note})` : ""}`;
+        }
+      }
+      console.log(out);
     }
-    console.log(line);
+    todo = todo.slice(h.results.length);
   }
-  console.log(`${ids.length - failed} of ${ids.length} ${o.check ? "within tolerance" : "shot"}, ${((Date.now() - t0) / 1000).toFixed(0)} s in all`);
+  console.log(
+    `${ids.length - failed} of ${ids.length} ${o.check ? "within tolerance" : "shot"}, ` +
+      `${((Date.now() - t0) / 1000).toFixed(0)} s in all: ${waited.toFixed(0)} s waiting for the lock, ${held.toFixed(0)} s held`,
+  );
   return failed ? 1 : 0;
 }
 

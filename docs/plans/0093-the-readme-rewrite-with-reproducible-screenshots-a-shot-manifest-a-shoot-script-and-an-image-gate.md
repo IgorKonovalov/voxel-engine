@@ -890,9 +890,9 @@ The Implementation log gains rows for Phases 2b, 2c and 2d; Phase 2's row stays 
 |---|---|---|---|
 | 1: the still flags and the idempotence reading | dev | done; readings in [the log](logs/0093.md) | `420bcf16` |
 | 2: the manifest and the shoot script | dev | stopped: `--check` after the shoot over tolerance on `hero` (log) | `5bc46942` (wip) |
-| 2b: the settled start | dev | done; readings in [the log](logs/0093.md) | committed with this row |
-| 2c: the check's quantity, read | dev | done: C 8, L 4; the hero 0.004; readings in [the log](logs/0093.md) | committed with this row |
-| 2d: the check, the batches, the shoot | dev | not started | |
+| 2b: the settled start | dev | done; readings in [the log](logs/0093.md) | `66f3bd66` |
+| 2c: the check's quantity, read | dev | done: C 8, L 4; the hero 0.004; readings in [the log](logs/0093.md) | `f5f3632c` |
+| 2d: the check, the batches, the shoot | dev | stopped: `--check` after the shoot over tolerance on `spider-walk` (log) | committed with this row (wip) |
 | 3: the image gate, fragments, CI | dev | not started | |
 | 4: candidates and contact sheets | dev | not started | |
 | 5: the owner picks | human | not started | |
@@ -940,6 +940,14 @@ each. Empty is fine.)_
 - Phase 2b: the `gpu_still` test reads 148 s on lavapipe (release; 120 s of it the pre-roll's
   cap, which bakes none of its 125 near chunks at a full radius of 2) and is born `#[ignore =
   "soak"]`; at that radius the settle ends after 3 queue steps with no chunk baked (log).
+- Phase 2d: the lock per batch is the script running itself under `flock` with a hidden
+  `--batch ID,..`; it prints one result line the parent reads. `--print` keeps a `flock` on
+  its render line (a by-hand run takes the lock itself).
+- Phase 2d: walker-walk's tolerance is read from Phase 2's pair on disk, not a new pair; the
+  spider-walk's 0 is 2c's reading of Phase 2's pair.
+- Phase 2d: `--check` right after the shoot exits 1: spider-walk 0.002066 against 0, hero
+  0.002478 against 0.004, walker-walk 0 (log). Not met; stopped for the architect. The second
+  `--check` and the `--print hero` run were not run; the WebP files are not committed.
 
 ### Close triggers
 

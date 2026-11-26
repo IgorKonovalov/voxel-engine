@@ -636,11 +636,14 @@ and, for a loop, `fps`, and the `tolerance` that `--check` holds it to, with the
 behind it in `note`.
 
 `node scripts/shoot-images.mjs` builds the fly-through and the `clip` example in release (in a
-6G memory-capped scope), renders each row headless under the GPU lock (one render per hold)
-into `target/shots/<id>/`, and encodes the frames with ffmpeg into the row's file: a still as
-WebP, a loop as animated WebP, scaled to `width` with lanczos. It prints each file's bytes,
-and its cap when over it. After a look change, refreshing the images is this command and a
-commit.
+6G memory-capped scope), renders the rows headless into `target/shots/<id>/`, and after each
+hold encodes the frames with ffmpeg into the row's file: a still as WebP, a loop as animated
+WebP, scaled to `width` with lanczos. It takes the GPU lock once per batch of rows, starts no
+render once a hold is 600 s old and gives a render 300 s, so no hold passes 15 minutes; it
+prints each hold's wait and length, each file's bytes, and its cap when over it. A
+`flythrough` row runs `--headless --settled-start`, so its frames count from a world that has
+finished loading and baking (the manifest is refused without both). After a look change,
+refreshing the images is this command and a commit.
 
 ```sh
 node scripts/shoot-images.mjs                     # every row
@@ -653,9 +656,12 @@ node scripts/shoot-images.mjs --check             # re-render and compare with t
 |--------|------|
 | `--only ID,..` | Shoot these rows only |
 | `--print ID` | Print the row's three commands (clear its frames, render, encode) and exit |
-| `--check` | Render and encode into `target/shots/check/`, decode the new and the committed file, and print the share of pixels with a channel more than 2 of 255 apart against the row's `tolerance`; exit 1 when one is over |
+| `--check` | Render and encode into `target/shots/check/`, decode the new and the committed file, cut each frame into 8 x 8 cells, and print the share of cells whose mean in one channel is more than 4 of 255 apart (and the largest cell difference) against the row's `tolerance`; exit 1 when one is over |
 | `--no-build` | Use the release binaries as already built |
 | `--manifest FILE` | Read `FILE` instead of `docs/images/shots.json` |
 
 A frame is not bit-identical from run to run on every scene (the outdoor hills differ in a few
-pixels in a thousand), so a row's tolerance is read from pairs of runs, not assumed.
+pixels in a thousand), and the lossy encoder spreads a small change over its blocks, so
+`--check` compares cell means: noise averages out inside a cell, while a changed scene, a
+missing pass or another hour moves whole cells. A row's tolerance is read from pairs of runs
+in that quantity, not assumed, and `note` names the reading.

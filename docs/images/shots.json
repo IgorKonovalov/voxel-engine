@@ -7,12 +7,12 @@
       "quality": 82,
       "source": "flythrough",
       "seed": 1,
-      "flags": ["--headless", "--source", "outdoor", "--trees", "forest", "--spawn", "forest",
+      "flags": ["--headless", "--settled-start", "--source", "outdoor", "--trees", "forest", "--spawn", "forest",
                 "--time", "18:10", "--render", "1920x1080", "--frames", "96"],
       "still_at": 95,
-      "tolerance": 0.007,
+      "tolerance": 0.004,
       "cap_bytes": 300000,
-      "note": "tolerance: the largest of six pairs of four hills stills at 15:00 (0.006305), 2026-11-26, RTX 3080 Laptop"
+      "note": "tolerance: cell share at C 8, L 4; the largest of six pairs of four settled renders of this entry (0.003186), 2026-11-26, RTX 3080 Laptop"
     },
     "spider-walk": {
       "kind": "loop",
@@ -26,7 +26,7 @@
       "tolerance": 0,
       "cap_bytes": 700000,
       "fallback": "gif",
-      "note": "tolerance: a pair read no pixel apart, 2026-11-26, RTX 3080 Laptop"
+      "note": "tolerance: cell share at C 8, L 4; one pair of this entry's renders read 0 (40 frames), 2026-11-26, RTX 3080 Laptop"
     },
     "walker-walk": {
       "kind": "loop",
@@ -41,7 +41,7 @@
       "tolerance": 0,
       "cap_bytes": 700000,
       "fallback": "gif",
-      "note": "tolerance: a pair read no pixel apart, 2026-11-26, RTX 3080 Laptop"
+      "note": "tolerance: cell share at C 8, L 4; one pair of this entry's renders read 0 (25 frames), 2026-11-26, RTX 3080 Laptop"
     }
   },
   "frozen": {
