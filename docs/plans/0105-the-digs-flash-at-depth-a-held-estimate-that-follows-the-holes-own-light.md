@@ -1,6 +1,6 @@
 # 0105: The dig's flash at depth: a held estimate that follows the hole's own light
 
-> **Status:** in-progress (Phase 7a3 read 2026-11-27: of the ring's dark pixels at D5+0, 2695 (31 %) are outcome A (the whole chunk's untouched bricks, sky source to `own summary`, its summary `VIS_BAKED`, not stale, sky 0) and 6133 (69 %) outcome E (dug chunks with a block, bricks dig 5 does not touch, the sky ray cast at every pixel, `record stale` in both frames); the tables go back to the architect before 7a4; Phase 7a2's stop ruled 2026-11-27 under "Amended 2026-11-27 (architect, Phase 7a2's stop ...)": the first ruling's cause is not what the reading shows; one more reading, Phase 7a3, then the fix 7a4 and the re-reads 7a5, before 7b; Phase 7a2 stopped for the architect 2026-11-27 at step 2: B's dig 5 is a whole dig, but none of the ring's dark pixels at D5+0 and D5+1 lies in a touched brick of a chunk with no block (66 to 70 % in touched bricks of chunks with a block); the CPU test is in, red on clauses 1 and 3; no fix built; Phase 7a's stop ruled 2026-11-26 under "Amended 2026-11-26 (architect, Phase 7a's stop ...)": a fault in `depth`'s hold of a chunk with no block, which writes over faces the dig did not make; Phase 7a2 fixes it before 7b, the ring bar stands, 7c is cut into 7c and 7d; Phase 7a read 2026-11-26 and stopped for the architect: under the default `depth`, `gpu_outdoor`'s soak test `a_fresh_hole_holds_its_value_until_its_light_lands` misses its ring bar in sequence B, 4.42 % of the ring darker by over 4 levels against 2 %, at the fifth dig's D+0 and D+1, and passes under `surface`; `gpu_sun`'s rule 3 holds; Phase 6 done by the owner 2026-11-26: `depth` is the default; Phase 5 done 2026-11-26: the 5 m dig into a chunk with no block is held on a record under `depth`, both modes, no casting frame; B2's under clause at `down` 1 m stays the window's case; Phase 4c read 2026-11-26 and stopped for the architect: B2's restated second clause missed at `down` 1 m, lockstep, -4.53 mean under `S` at D+0, the first of six holds; the five others read after the stop (Reading 17): `wide` meets it, the `down` bake thread misses the same way; Phase 4b done 2026-11-26: `side` lockstep `depth`, B1 met at 2, 3, 5 and 7 m against `S`, no part from 2 m over its landed byte; 4c not started; Phase 4 read 2026-11-26 and stopped for the architect: B1 missed at `side` 2 m, +9.9 mean, and B2's second clause at `down` 1 m, 8.0 levels under `surface` at D+0; Phase 3 done 2026-11-26; Phase 1 done 2026-11-26; the phases after it are rewritten under "Amended 2026-11-26 (architect)": the held floor is the flash; Phase 2 read 2026-11-26 and stopped for the architect: the exposure at D-1 is not within 1 % of D+60's at 6 of 20 read digs); approved (owner, 2026-11-26: go; his four answers are under "Amended 2026-11-26 (owner)" and bind Phase 1's sites and the remedy's bars; drafted from the owner's report after Plan 0099's window, with
+> **Status:** in-progress (Phase 7a3's result ruled 2026-11-27 under "Amended 2026-11-27 (architect, Phase 7a3's result ...)": next Phase 7a4a (F2), then 7a4b (F1), 7a4c (F3) only if the ring is still over 2 %, 7a5, 7b; Phase 7a3 read 2026-11-27: of the ring's dark pixels at D5+0, 2695 (31 %) are outcome A (the whole chunk's untouched bricks, sky source to `own summary`, its summary `VIS_BAKED`, not stale, sky 0) and 6133 (69 %) outcome E (dug chunks with a block, bricks dig 5 does not touch, the sky ray cast at every pixel, `record stale` in both frames); the tables go back to the architect before 7a4; Phase 7a2's stop ruled 2026-11-27 under "Amended 2026-11-27 (architect, Phase 7a2's stop ...)": the first ruling's cause is not what the reading shows; one more reading, Phase 7a3, then the fix 7a4 and the re-reads 7a5, before 7b; Phase 7a2 stopped for the architect 2026-11-27 at step 2: B's dig 5 is a whole dig, but none of the ring's dark pixels at D5+0 and D5+1 lies in a touched brick of a chunk with no block (66 to 70 % in touched bricks of chunks with a block); the CPU test is in, red on clauses 1 and 3; no fix built; Phase 7a's stop ruled 2026-11-26 under "Amended 2026-11-26 (architect, Phase 7a's stop ...)": a fault in `depth`'s hold of a chunk with no block, which writes over faces the dig did not make; Phase 7a2 fixes it before 7b, the ring bar stands, 7c is cut into 7c and 7d; Phase 7a read 2026-11-26 and stopped for the architect: under the default `depth`, `gpu_outdoor`'s soak test `a_fresh_hole_holds_its_value_until_its_light_lands` misses its ring bar in sequence B, 4.42 % of the ring darker by over 4 levels against 2 %, at the fifth dig's D+0 and D+1, and passes under `surface`; `gpu_sun`'s rule 3 holds; Phase 6 done by the owner 2026-11-26: `depth` is the default; Phase 5 done 2026-11-26: the 5 m dig into a chunk with no block is held on a record under `depth`, both modes, no casting frame; B2's under clause at `down` 1 m stays the window's case; Phase 4c read 2026-11-26 and stopped for the architect: B2's restated second clause missed at `down` 1 m, lockstep, -4.53 mean under `S` at D+0, the first of six holds; the five others read after the stop (Reading 17): `wide` meets it, the `down` bake thread misses the same way; Phase 4b done 2026-11-26: `side` lockstep `depth`, B1 met at 2, 3, 5 and 7 m against `S`, no part from 2 m over its landed byte; 4c not started; Phase 4 read 2026-11-26 and stopped for the architect: B1 missed at `side` 2 m, +9.9 mean, and B2's second clause at `down` 1 m, 8.0 levels under `surface` at D+0; Phase 3 done 2026-11-26; Phase 1 done 2026-11-26; the phases after it are rewritten under "Amended 2026-11-26 (architect)": the held floor is the flash; Phase 2 read 2026-11-26 and stopped for the architect: the exposure at D-1 is not within 1 % of D+60's at 6 of 20 read digs); approved (owner, 2026-11-26: go; his four answers are under "Amended 2026-11-26 (owner)" and bind Phase 1's sites and the remedy's bars; drafted from the owner's report after Plan 0099's window, with
 > his three answers and no further interview; the questions left are under "Risks & open
 > questions", each with a recommended option). Starts on a main that holds Plan 0099.
 > **Created:** 2026-11-26
@@ -1413,6 +1413,11 @@ A group is read by what moved between the before frame and the frame:
   sixteenth or less is outcome C or E, not A: the sky's fade cannot give it.
 
 ### Phase 7a4: A whole dig moves only the dig's faces (the fix)
+
+> **Changed 2026-11-27** (see "Amended 2026-11-27 (architect, Phase 7a3's result ...)"): cut
+> into Phases 7a4a (F2), 7a4b (F1) and 7a4c (F3, only if needed). The texts of F1 and F2 below
+> stand; the steps, done-when and stops are those of the three phases.
+
 - **Owner skill:** dev
 - **What:** Under `depth`, after an edit a face the dig did not make reads what it read the
   frame before, in a touched brick and in every other brick of a chunk the dig holds whole.
@@ -1501,6 +1506,222 @@ its binary is built at Phase 7a5's commit.
 - **ADR-0082's Outcome addition at the close** gains a second clause beside the first
   ruling's: a chunk held whole answers no sky from its summary until its job lands.
 - **Phase 7b** follows 7a5; 7c and 7d as they are.
+
+## Amended 2026-11-27 (architect, Phase 7a3's result: the held cells answer their neighbours' taps)
+
+**The ruling: both groups are faults of the `depth` arm and both are removed. Phase 7a4 is cut
+in three, one fix a phase, each followed by Phase 7a3's reading test (99 s): 7a4a is F2, 7a4b
+is F1, 7a4c is a new part F3 and is built only if the ring is still over 2 % after the first
+two. The ring bar stands as written, the test stays under `depth`, no scene or rig is changed,
+and nothing goes to the owner as a question.** A reading from the code at `d5062533` and from
+`live/p7a3/whole.txt`; nothing was built or run.
+
+### Group 1 (2695 px, the whole chunk's untouched bricks): outcome A, as read
+
+Nothing to add: the source goes to `own summary`, the summary is `VIS_BAKED`, not stale, six
+sky bytes 0, no ray is cast, the shown visibility falls 0.5604 to 0.0000. F2 as Phase 7a4
+wrote it is the fix. **Proven by T1 and T3.**
+
+### Group 2 (6133 px, untouched bricks of the three dug chunks that held a block)
+
+**Proven, by the code and the tables:**
+
+1. **The ray is cast and thrown away; the pixel shows its record's estimate.** A face whose
+   own cell holds a stale record casts the sky ray, but under the dig hold with no light
+   history its pair is set to the record's estimate at the cap (`temporal.wgsl`, the
+   `dig_ring_held` branch; `pair.wgsl`'s `dig_ring_held`). So `cast 100 %` and `record stale`
+   in both frames are the expected state of a ring-2 brick, not a sign: a split chunk's ring-1
+   job re-bakes its ring-1 bricks alone and "keeps every other record (ring 2's stale ones
+   too, which the ring's hold shows)" (`digs.rs`, `open_digs`), so these bricks were stale
+   since digs 1 to 4, whose ring 2 had not landed.
+2. **The stored stage's fall is the same fall, not a second one.** At such a pixel the stored
+   part carries the sky term in the baked term's form with the pair's value as the visibility
+   (`temporal.wgsl`, `t_baked`, the moments' kind 2). The two ratios agree: 0.0802 / 0.0965 =
+   0.831 against 9.1711 / 10.9946 = 0.834 at D5+0, 0.846 against 0.850 at D5+1. The chain and
+   the stored light are 0.0000 here (T1). **Outcome C's sign is a false sign at a stale face:
+   there is no stored-part fault in this group, and no F3 of the kind the outcome table
+   named.**
+3. **The estimate is the 2 x 2 bilinear over cell records, and the pixel's own record did not
+   change.** The estimate is `store_sky_visibility`: the face's own cell and the three other
+   cells about the voxel's centre in the face's plane (`hitrec.wgsl`, `store_tap`), over those
+   that hold the direction with `VIS_BAKED`, stale or not. It reads no summary and no chain.
+   The own cell's bytes are the frame before's: `provisional_block` copies a kept brick's
+   record, and `mark_sky_stale` sets a flag. So the fall of 0.0163 came through the other
+   three cells, which reach half a cell (4 voxels) into the brick beside.
+4. **The only cell records an edit rewrites are the held cells** (`apply_held`), and it writes
+   them with `VIS_BAKED`, no `SKY_STALE`, **every direction in the mask**: a direction with no
+   face takes the mean of the held ones (`held_visibilities`' fill), and a cell with no base
+   takes 0 in all six. So a held cell answers a neighbour's tap in directions it did not hold
+   the frame before, and with the hole's dark value in those it did.
+5. **F2 does not reach group 2.** The summary is not a cell record, and no face with a record
+   reads it. After F2 alone the ring at D5+0 is expected at about 3.1 % (6133 of 199926) and
+   the bar is still missed.
+6. **F1 reaches group 2 only through the whole chunk's two held cells** (their ground
+   directions lose the bit under (iii)). In the three chunks with a block T2 reads no part
+   with outside faces counted as the dig's, and no cell with no base, so (i) to (iv) change
+   nothing there.
+
+**Inferred, not read:** which held cells and directions carry the fall.
+
+- The parts with kept faces are excluded: T2 reads them written at most 4 bytes under their
+  old value, and a tap's weight is under one half, so under 2 bytes at the pixel.
+- The whole chunk's two all-0 cells can be tapped from a brick dig 5 does not touch in a
+  chunk with a block only across the corner (a quarter of a brick each side, weight at most
+  0.19): a few tens of faces. Too few for 6133 pixels unless a face covers over a hundred;
+  the reading has no pixel scale, so this is not excluded.
+- What is left is a held cell of the three chunks answering in a direction it did not hold
+  before, or holds now by the dig's faces alone or by the fill. A fall of 0.0163 on 0.0965 at
+  a mean weight near a quarter needs a tapped value near 0.03 to 0.04 joining faces near 0.10,
+  which is what T2's held values are. Under `surface` the same cells hold the removed
+  surface's value, near their neighbours', which fits its 0.14 %.
+- Not excluded by a table, and unlikely: a fade still running in one of the three chunks
+  that dig 5's put ended (`take_boxes` removes the chunk's fade). It moves fresh cells toward
+  their landed values in both arms.
+
+**A fault, plainly.** These are faces the dig did not make, in bricks it did not touch. A
+real hole opens sky to the ground beside it, and the settled value says so (0.1050 after,
+0.0965 before): a dip for two frames before a rise is the wrong direction. It is the held
+estimate, which errs dark by design inside the hole, leaking half a cell into the ground
+through the bilinear taps. The owner accepted the dark start in the hole; nobody accepted
+it beside the hole, and the ring's bar is what says so.
+
+### F3: a held cell answers another cell's tap as its record did the frame before
+
+Built only if Phase 7a4b's reading still reads the ring over 2 %. Under `depth` only: the
+held flag is set by that arm alone, so **`surface`'s blocks stay byte for byte today's** and
+the shader's new branch is never taken there.
+
+- **The rule.** A held cell holds two answers until its landing's fade ends: for a face of
+  its own cell, the held values as today; for a tap from a face of another cell, the six
+  values and the mask its record held before the edit (no answer in a direction it did not
+  hold, and none at all where the chunk held no block or the brick no record).
+- **Through the landing.** While the dig's fade runs the cell stays held to its neighbours:
+  the tap value moves from the old value to the landed one by the fade's share in the
+  directions both hold; the last frame writes the landed record. A direction only the old
+  record held answers its old value until the last frame; one only the landed record holds
+  joins at the last frame. Those two are steps the 2 x 2 weights cannot fade; the ring's bar
+  reads them, as every frame of B.
+- **A cell held again before its landing** (B's sixth dig) keeps the tap answer it had.
+- **Suggested encoding, `dev`'s to confirm:** a held cell's key words are free (`apply_held`
+  clears them and `KEY_BAKED` stays clear, so no key reader takes them): the old six sky bytes
+  go there, the old mask and old `VIS_BAKED` in spare bits of the second key word, and one
+  free flag of the second sky word marks the cell held (bits 16 to 19 are taken: `VIS_BAKED`,
+  `SKY_STALE`, the tier). In `temporal.wgsl` `store_sky_visibility`'s tap loop reads the old
+  answer where the tapped cell is held and is not the face's own cell; `store_sky_cell` for
+  the own cell, `sky_cell_mean`, `shade.wgsl`'s `sky_baked` and the key readers are not
+  changed. `fade_mix` carries the flag and moves the tap bytes; `fill_directions`,
+  `block_summary` and `record_visibility` read the sky words as today. No record, block or
+  buffer changes size.
+- **Rejected:** (a) a tap skips a held cell: one flag and no old bytes, but the neighbour
+  loses the old cell's weight and moves the other way where the old cell differed from the
+  ground about it (B's dig 5 taps dig 1's cells, 0.035 to 0.049 against 0.0965: a white ring
+  in place of a black one); (b) no fill and no all-0 cell, the dig's directions left as they
+  are: no shader change, but a direction the dig's faces hold still leaks, bounded by nothing
+  but this rig's T2; (c) call it the estimate's look: it is not in the hole, and it dips
+  before a rise.
+- **ADR:** no new ADR. ADR-0082 owns the held record; its Outcome addition at the close gains
+  a third clause (below) that names rejected (a) and (b).
+
+### Phase 7a4a: A chunk held whole answers no sky from its summary (F2)
+- **Owner skill:** dev
+- **What:** F2 as Phase 7a4 states it: the summary of a chunk that took its first block as a
+  whole dig's provisional block is `SKY_STALE` from the edit's put until its job's block
+  lands, through every site that rewrites it (`Store::put`, `show`, `mark_sky_stale`,
+  `summarise`; `dev` names each in the log). `surface` is not touched.
+- **Files touched:** `crates/svet-render/src/bake/store.rs` or `summary.rs` and
+  `bake/queue/digs.rs` (the mark, where `dev` puts it, named in the log),
+  `crates/svet-render/src/bake/queue/split_tests/whole.rs`, `docs/plans/logs/0105.md`.
+- **Steps:** (1) the CPU test, red first, under 1 s:
+  `a_whole_digs_block_answers_no_sky_outside_its_bricks` on clause 1's ground rig: after the
+  edit the chunk's summary reads no fresh sky (`SKY_STALE`, or no `VIS_BAKED`); it still does
+  after a second box in the same chunk and after a `show` of the block; a brick the box does
+  not touch reads `record_visibility` `None` in six directions; after the job lands the
+  summary is fresh. The failing line in the log, the mark broken by hand once. (2) Phase
+  7a3's reading test once (`whole_dig_ring`, lavapipe, one hold, about 100 s), T1 and T3 in
+  the log.
+- **Done when:** the CPU test passes; T1 reads the whole chunk's summary `SKY_STALE`; in T3
+  at D5+0 and D5+1 the whole chunk's group holds under 1000 dark pixels and no pixel of it
+  reads `own summary`; the ring's share at both frames is in the log beside group 2's count
+  (expected about 3.1 % and 6133: a reading, not a bar). The quick tier over the changed
+  crates, clippy, fmt.
+- **Stops:** the whole chunk's group still over 1000 (its sources printed; nothing more is
+  built); the hold projected past 8 minutes. Group 2 under half of 6133 is not a stop: it is
+  reported (point 5 above is then wrong) and 7a4b follows.
+- Binaries: `gpu_outdoor` (the reading by name). The soak test is not run in this phase.
+
+### Phase 7a4b: A held record moves only the dig's faces (F1)
+- **Owner skill:** dev
+- **What:** F1 as Phase 7a4 states it (Phase 7a2's (i) to (iv), and the case of a record
+  that held a direction's stored value and no sky byte). `surface` is not touched.
+- **Files touched:** `crates/svet-render/src/bake/held.rs`, `bake/queue/digs.rs` only if
+  the encoding needs it, `bake/queue/split_tests/whole.rs`, `docs/plans/logs/0105.md`.
+- **Steps:** (1) `a_whole_dig_moves_no_face_it_did_not_make` loses its `should_panic` mark
+  and passes its three clauses, each broken by hand once. (2) The reading test once, T2 and
+  T3 in the log. (3) **Only if T3 reads the ring at or under 2 % at D5+0 and D5+1:** the soak
+  test by name under the default, as written (lavapipe, about 6 minutes).
+- **Done when:** step 1; step 2's tables in the log with, per group, the count against
+  7a4a's; and either step 3 with every bar held and the row for B reading the ring at or
+  under 2 % in every frame (then **Phase 7a4c is not built**, and F3 goes to the close
+  triggers as a fault read in the code and carried by no pixel of the bar), or the ring over
+  2 % in step 2 (then Phase 7a4c follows on the orchestrator's go, with no further ruling).
+  The hole's shares at dig 5 over 8, 16 and 32 levels beside it. The quick tier, clippy, fmt.
+- **Stops:** a kept face that cannot be made to read as the frame before through the
+  record's mask (its source word at D+0 against D-1 printed); step 3 missing a bar other
+  than the ring's (the figures; nothing is changed to meet it); a hold projected past 20
+  minutes.
+- Binaries: `gpu_outdoor` (the reading, and the soak test by name in step 3).
+
+### Phase 7a4c: A held cell answers its neighbours as before (F3; only if 7a4b leaves the ring over 2 %)
+- **Owner skill:** dev
+- **What:** F3 as stated above.
+- **Files touched:** `crates/svet-render/src/bake/held.rs`, `bake/record.rs` (the flag and
+  the tap answer's accessor), `bake/summary.rs` (`fade_mix`, `fill_directions` if needed),
+  `crates/svet-render/src/shaders/temporal.wgsl`,
+  `crates/svet-render/src/bake/queue/split_tests/whole.rs`, `docs/plans/logs/0105.md`.
+- **Steps:** (1) the CPU test, red first, under 1 s:
+  `a_held_cell_answers_its_neighbours_as_before`, through a CPU accessor that reads a record
+  as another cell's tap does. In a settled chunk with a block, after a box: a touched cell's
+  tap answer is its old record's in each direction (`None` where the old record held none,
+  the fill's directions among them) while `record_visibility` reads the held value; in a
+  chunk that held no block the tap answer is `None` in six directions; at the fade's half
+  the tap answer of a direction both hold is midway between the old and the landed byte
+  (within one); after the last fade frame the record is the landed one with no held flag. A
+  second box on a held cell leaves its tap answer. Each clause broken by hand once. (2) The
+  reading test once, T3 in the log. (3) The soak test by name under the default, as written.
+- **Done when:** steps 1 to 3; the row for B reads the ring's dark share at or under 2 % in
+  every frame and every other bar of the test holds; the hole's shares at dig 5 over 8, 16
+  and 32 levels before and after beside it (a reading); the quick tier, clippy, fmt.
+- **Stops:** the ring bar missed after it. Then one more print in the reading test and
+  nothing more is built: for group 2's pixels at D5+0, the estimate made on the CPU from the
+  pool's copy before the edit's step and after the D+0 frame (their means against T3's
+  0.0965 and 0.0802), and the difference summed by the tapped cell that changed (a held cell
+  of a chunk with a block, of the whole chunk, any other) and by its direction's kind (kept
+  faces, the dig's alone, the fill, no base). Also: a hold projected past 20 minutes; the
+  temporal pass's time on lavapipe up by over 5 % in the reading's print (reported; 7a5 reads
+  it on the RTX).
+- Binaries: `gpu_outdoor`.
+
+### Phase 7a5, as changed
+- On the last of 7a4a to 7a4c built. Its list stands. **If 7a4c was built, one thing more:**
+  the temporal pass's time at Reading 18's `down` hold on the RTX before and after F3 (the
+  binary at 7a4b's commit against 7a4c's), in the log; over 0.05 ms more is a stop.
+
+### What this changes elsewhere in the plan
+
+- **Phase 7a4** as one phase is withdrawn; its F1 and F2 texts stand and are cited by 7a4a
+  and 7a4b. Its "what is left" stands, and gains: with F3 not built, a held cell's value in a
+  direction its neighbours' faces share reaches half a cell into the ground beside the hole
+  until the landing.
+- **The outcome table** is spent. Its outcome C does not hold at a stale face: the stored
+  stage there carries the sky term.
+- **The Implementation log** takes a row each for 7a4a, 7a4b and, if built, 7a4c.
+- **ADR-0082's Outcome addition at the close** gains, if 7a4c is built, a third clause: a held
+  cell answers its own faces with the held value and another cell's tap with what its record
+  held before the edit, through the landing's fade; rejected, a tap that skips a held cell
+  and a held record with no filled direction.
+- **Budgets:** with F3 the temporal pass tests one flag a tap (a guess: under 0.01 ms on the
+  RTX 3080 Laptop); Phase 7a5 reads it. No VRAM.
+- **Phase 7b** follows 7a5, its binary built there. No owner step is added.
 
 ## Data shapes
 
