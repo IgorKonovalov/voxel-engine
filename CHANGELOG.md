@@ -6,6 +6,11 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+Plan 0093 (docs and testbed tooling; no engine crate's public API changed). **The README is rewritten around images the engine renders.**
+
+- **Changed (docs):** `README.md` opens with a tagline, the hero still, three short paragraphs with one measured figure and a status line, then Quickstart (the release archive first, three `cargo run` lines and eight keys), Use it as a library (a `svet-world` example and the minimal window), Features in nine groups each closed by an image and a command to try it, a Gallery, a Wishlist and the licence. The layout table, building, the examples, the checks and how the project is run move to the new `docs/development.md`. `docs/entities.md` shows the two rig loops as WebP and points at the manifest for them.
+- **Added (docs):** twelve images under `docs/images/`, each a row of `docs/images/shots.json` and rendered by `node scripts/shoot-images.mjs`.
+
 ## [0.79.0] - 2026-11-26
 
 Plan 0106 (a minor bump: new public items on `svet-render`, none removed; no ADR). **No gate test passes by a clock.** CI's push run of the Plan 0099 merge failed a test that counted frames paced by a sleep beside the bake thread. A sweep of the gate tier and then of the soak tier classed every test that sleeps, polls, counts beside a second thread or bounds a duration; each now waits for its worker, counts what the code counts, or compares a clock only with itself, with its assertions as written. A script in CI keeps the class out.

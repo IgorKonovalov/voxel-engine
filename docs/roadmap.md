@@ -339,7 +339,8 @@ seeded, integer-only 72 x 58 x 24 m hall with pillars, cones, ledges, a chasm an
 lit with the lamp off by four emissive ores. By the owner's Phase 6 call no ore lies on the
 roof, about half the floor is dark and the crystal clusters are the main light. `hero`
 defaults to the showcase's `hall` shot at 1920x1080 with indirect light at spacing 32 and our
-upscaler at 1.5, and `docs/images/hero.png` is re-shot from it. It shows M2's lighting and
+upscaler at 1.5, and the README's hero still was re-shot from it (the README's images are now
+the rows of `docs/images/shots.json`). It shows M2's lighting and
 changes no engine crate.
 
 Plan 0040, eye adaptation, closed 2026-10-28 (v0.34.0, ADR-0033 accepted with an Outcome):
