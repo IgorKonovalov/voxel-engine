@@ -26,6 +26,15 @@ mod dig_depth {
         const SETTLE_CAP: usize = 900;
         /// Frames stepped past the queue's settle before a read dig (the temporal passes).
         const SETTLE_TAIL: usize = 24;
+        /// The most frames the eye is held at a read dig's place for the auto exposure to still.
+        const EXPOSURE_CAP: usize = 600;
+        /// The exposure is still when, over the last `STILL_FRAMES` frames (`STILL_FRAMES + 1`
+        /// readings of the exposure each frame used), its largest and smallest differ by under
+        /// [`STILL_SHARE`] of the largest. The queue is settled before the hold (`settle`); the
+        /// hold counts the frames whose queue held a dig or a fade, and does not restart on them.
+        const STILL_FRAMES: usize = 24;
+        /// The share of the exposure it may move over [`STILL_FRAMES`] and count as still.
+        const STILL_SHARE: f32 = 0.01;
 
         /// One read dig: its label, depth (voxels), box, the digs counted whole at its edit, the
         /// frames D-1, D+0 .. D+[`AFTER`] and D+[`SETTLED`], each frame's write (the pool's
@@ -36,9 +45,23 @@ mod dig_depth {
             lo: [i64; 3],
             hi: [i64; 3],
             whole: u64,
+            /// The eye's hold for the exposure ([`Hold`]).
+            hold: Hold,
             frames: Vec<HoleFrame>,
             writes: Vec<String>,
             parts: Vec<(HeldPart, [Option<[f32; 2]>; 2])>,
+        }
+
+        /// The eye's hold at a read dig's place: the frames stepped, whether the exposure stilled,
+        /// the last window's span over its largest, the frames whose queue held a dig or a fade,
+        /// and the last frame's queue digs and fades.
+        #[derive(Clone, Copy)]
+        struct Hold {
+            frames: usize,
+            still: bool,
+            span: f32,
+            busy: usize,
+            last: [u64; 2],
         }
 
         /// The run of one site: the rig, its stepper, the queue's mode and the reads.
@@ -173,6 +196,43 @@ mod dig_depth {
                 n + tail
             }
 
+            /// The exposure the last frame's passes used (the state buffer's `previous`).
+            fn exposure(&self) -> f32 {
+                use svet_render::debug::read_buffer;
+                let b = read_buffer(&self.rig.device, &self.rig.queue, self.s.frame.exposure_state(), 0, 32);
+                svet_render::ExposureState::from_bytes(&b).previous
+            }
+
+            /// Steps at `cam` until the auto exposure is still ([`STILL_FRAMES`],
+            /// [`STILL_SHARE`]), at most [`EXPOSURE_CAP`] frames ([`Hold`]).
+            fn hold_exposure(&mut self, cam: &Camera) -> Hold {
+                let mut w: std::collections::VecDeque<f32> = std::collections::VecDeque::new();
+                let mut h = Hold { frames: 0, still: false, span: f32::NAN, busy: 0, last: [0; 2] };
+                while h.frames < EXPOSURE_CAP {
+                    let q = queue_step(&mut self.rig, &mut self.s.frame, cam);
+                    self.s.run(&self.rig, cam);
+                    h.frames += 1;
+                    h.last = [q.digs, q.fading];
+                    if q.digs != 0 || q.fading != 0 {
+                        h.busy += 1;
+                    }
+                    w.push_back(self.exposure());
+                    if w.len() > STILL_FRAMES + 1 {
+                        w.pop_front();
+                    }
+                    if w.len() == STILL_FRAMES + 1 {
+                        let hi = w.iter().copied().fold(f32::MIN, f32::max);
+                        let lo = w.iter().copied().fold(f32::MAX, f32::min);
+                        h.span = (hi - lo) / hi.max(1e-12);
+                        if h.span < STILL_SHARE {
+                            h.still = true;
+                            break;
+                        }
+                    }
+                }
+                h
+            }
+
             /// An unread dig along `dig_cam`, then the settle at `cam`; the capsule's end.
             fn dig_unread(&mut self, cam: &Camera, dig_cam: &Camera) -> Option<[f32; 3]> {
                 let d = dig(&mut self.rig, &mut self.s.frame, dig_cam, self.radius);
@@ -189,6 +249,7 @@ mod dig_depth {
             /// depth for the table; the capsule's end.
             fn dig_read(&mut self, cam: &Camera, dig_cam: &Camera, label: &str, depth: i64) -> Option<[f32; 3]> {
                 self.settle(cam, SETTLE_TAIL);
+                let hold = self.hold_exposure(cam);
                 let q = queue_step(&mut self.rig, &mut self.s.frame, cam);
                 let mut frames = vec![hole_frame(&self.rig, &mut self.s, cam, q, "D-1".into(), self.out, true, None)];
                 if !self.thread {
@@ -239,7 +300,7 @@ mod dig_depth {
                         r[1] = record_of(&self.s.frame, p);
                     }
                 }
-                self.reads.push(DigRead { label: label.into(), depth, lo, hi, whole, frames, writes, parts });
+                self.reads.push(DigRead { label: label.into(), depth, lo, hi, whole, hold, frames, writes, parts });
                 Some(end)
             }
         }
@@ -357,7 +418,7 @@ mod dig_depth {
             let p95_peak = f[1..f.len() - 1].iter().map(|x| x.excess95).fold(f64::MIN, f64::max);
             let over4 = f[1..f.len() - 1].iter().filter(|x| x.excess > 4.0).count();
             let line = format!(
-                "{site} {mode} {} depth {:.1} m: peak mean over settled {:+.1} levels (ratio {:.2}) at {} ({}), p95 peak {:+.0}, frames over 4 levels {over4}; settled luma {:.1}; at the peak sky {:.3} (settled {:.3}) key {:.3} ({:.3}) stored {:.3} ({:.3}) direct {:.3} ({:.3}); digs whole {}",
+                "{site} {mode} {} depth {:.1} m: peak mean over settled {:+.1} levels (ratio {:.2}) at {} ({}), p95 peak {:+.0}, frames over 4 levels {over4}; settled luma {:.1}; at the peak sky {:.3} (settled {:.3}) key {:.3} ({:.3}) stored {:.3} ({:.3}) direct {:.3} ({:.3}); digs whole {}; exposure D-1 {:.3e} D+0 {:.3e} D+60 {:.3e} (D-1 against D+60 {:+.2} %), held {} frames, {} (last window's span {:.3} %, frames with a dig or fade in the queue {}, the last frame's digs {} fades {})",
                 r.label,
                 r.depth as f64 / 10.0,
                 px.excess,
@@ -374,7 +435,17 @@ mod dig_depth {
                 s.stored,
                 px.direct,
                 s.direct,
-                r.whole
+                r.whole,
+                r.frames[0].exposure,
+                r.frames[1].exposure,
+                settled.exposure,
+                100.0 * (f64::from(r.frames[0].exposure) / f64::from(settled.exposure).max(1e-12) - 1.0),
+                r.hold.frames,
+                if r.hold.still { "still" } else { "NOT STILL" },
+                100.0 * r.hold.span,
+                r.hold.busy,
+                r.hold.last[0],
+                r.hold.last[1]
             );
             let _ = writeln!(t, "{line}");
             let mut summary = line;
@@ -627,7 +698,8 @@ mod dig_depth {
         /// shaft one dig wide, dug looking down), `side` (the shaft's wall dug from its axis),
         /// `wide` (a pit of five digs a round), `slope` (30 degrees down) or `tunnel` (`--spawn
         /// inside`); `lock` or `thread`; the dig's radius in voxels (5, the fly-through's). Per
-        /// read dig the frames D-1 to D+24 and D+60 over the pixels whose hit lies in the dig's
+        /// read dig the queue settled and the eye held until the auto exposure is still, then
+        /// the frames D-1 to D+24 and D+60 over the pixels whose hit lies in the dig's
         /// box: luma and its excess over D+60, the sky source shares, the sky and key terms, the
         /// stored and direct parts, the write the pool showed; in lockstep the held values'
         /// parts beside the landed records. The text under

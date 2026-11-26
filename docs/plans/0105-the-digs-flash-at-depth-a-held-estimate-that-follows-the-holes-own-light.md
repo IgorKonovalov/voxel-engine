@@ -1,6 +1,6 @@
 # 0105: The dig's flash at depth: a held estimate that follows the hole's own light
 
-> **Status:** in-progress (Phase 1 done 2026-11-26; the phases after it are rewritten under "Amended 2026-11-26 (architect)": the held floor is the flash, Phase 2 is next); approved (owner, 2026-11-26: go; his four answers are under "Amended 2026-11-26 (owner)" and bind Phase 1's sites and the remedy's bars; drafted from the owner's report after Plan 0099's window, with
+> **Status:** in-progress (Phase 1 done 2026-11-26; the phases after it are rewritten under "Amended 2026-11-26 (architect)": the held floor is the flash; Phase 2 read 2026-11-26 and stopped for the architect: the exposure at D-1 is not within 1 % of D+60's at 6 of 20 read digs); approved (owner, 2026-11-26: go; his four answers are under "Amended 2026-11-26 (owner)" and bind Phase 1's sites and the remedy's bars; drafted from the owner's report after Plan 0099's window, with
 > his three answers and no further interview; the questions left are under "Risks & open
 > questions", each with a recommended option). Starts on a main that holds Plan 0099.
 > **Created:** 2026-11-26
@@ -647,12 +647,13 @@ No record, block or buffer changes shape: the held record is the store's record 
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the blink reproduced headless at depth | dev | done; stopped for the architect (the one-dig shaft flashes at `down` and `side`, both modes; the held record's sky term, M1's floor; M2 at `down` 5 m only; no M3). `wide`, `slope`, `tunnel` and lavapipe not read. Readings in [the log](logs/0105.md) | committed with this row |
-| 2: the base from the hole's own light | dev | not started | |
-| 3: an openness that reaches the sky (only if 2's bar is missed) | dev | not started | |
-| 4: a chunk with no block holds the dig too (only if 1 shows M2) | dev | not started | |
-| 5: the owner's window | human | not started | |
-| 6: the pick as the default, with its tests | dev | not started | |
+| 1: the blink reproduced headless at depth | dev | done; stopped for the architect (the one-dig shaft flashes at `down` and `side`, both modes; the held record's sky term, M1's floor; M2 at `down` 5 m only; no M3). `wide`, `slope`, `tunnel` and lavapipe not read. Readings in [the log](logs/0105.md) | 56e34b50 |
+| 2: the before arm on a settled exposure, and the wide pit | dev | read; stopped for the architect (the exposure at D-1 against D+60 over 1 % at `side` 1 and 2 m both modes, `side` 3 m and `wide` 1 m thread; the holds were still by the stated rule). `side` before arm with the exposure held: +62 to +102 mean levels, the same in both modes; `wide` +3 to +20 from 1 m, key, direct and direction values 0. Readings in [the log](logs/0105.md) | committed with this row |
+| 3: no floor under the held value | dev | not started | |
+| 4: a ray is open where it reaches its base's height | dev | not started | |
+| 5: a chunk with no block holds the dig too | dev | not started | |
+| 6: the owner's window | human | not started | |
+| 7: the pick as the default, with its tests | dev | not started | |
 
 ### Notes
 
@@ -668,6 +669,10 @@ each. Empty is fine.)_
 - Phase 1 adds a reading-only source to the held trace (`HeldPart::radiance_from`,
   `old_radiance`, `RadianceFrom`): where the provisional block's direction value comes from;
   nothing the dig writes changes.
+- Phase 2's stillness rule (in the log) does not restart on a queue that holds a fade; a
+  first build that restarted ran 600 frames at `side` 3 m with the exposure unchanged, and
+  was dropped before the four runs. Phase 2's runs are on the RTX 3080 Laptop only; `down`
+  was not re-read under the hold.
 
 ### Close triggers
 
