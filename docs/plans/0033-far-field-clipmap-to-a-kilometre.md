@@ -3,7 +3,7 @@
 > **Status:** approved (2026-10-22), amended 2026-11-10 (review pass); **amended 2026-11-17
 > (architect re-read against main 3b3986d0 after Plan 0032's close: absent is sky, Phase 6 and
 > ADR-0028 rewritten; the section "Amended 2026-11-17 (re-read)" below is the phases' errata and
-> carries two owner questions that await answers before the go).**
+> carries two owner questions that await answers before the go).** **Re-read 2026-11-26 (architect, against main 69d5ce97: the section "Re-read 2026-11-26 (architect)" is the errata of both, rewrites Phase 6, cuts the phases into one brief each and carries four owner questions).**
 > **Paths (architect, 2026-11-13, at Plan 0045's close):** Plan 0045 split files this plan names
 > by their old paths (`gpu_world.rs`, `marcher.rs`, `bake.rs`, `fsr2.rs`, `march.wgsl`,
 > `tests/gpu_mirror.rs`, `tests/gpu_strip.rs`'s reading, the fly-through's `main.rs` and
@@ -230,6 +230,149 @@ Answered 2026-11-17 (owner): the recommended option on both (no far sky ray, `fa
    built for the general source and the hills. Alternative: the rules as written, under which
    far canopies vanish beyond about 243 m at fill 64 and the forest is trunks alone; or the
    far field at its own fill of 128 (a seam in density at the first switch).
+
+## Re-read 2026-11-26 (architect)
+
+Read at main 69d5ce97 (v0.77.0) after Plans 0086, 0087, 0095 to 0100, 0102 and 0104 closed,
+against the open lanes (0101, 0105, 0093, 0106) and Plans 0107 and 0108, which land before
+the batch (owner, 2026-11-26). This section is the errata of the phases **and of the
+2026-11-17 section**; where they disagree, this one wins. One phase is rewritten here (Phase
+6, pending question 1); no other phase text was edited. Four owner questions at the end,
+three touch image stability.
+
+### Drift (what the plan or the 2026-11-17 section says, then the tree)
+
+| It says | The tree has |
+|---|---|
+| the far-field uniform at group 0's binding 19 | 19 is the column map (`gpu_world/columns.rs`); the next free is 20, or 21 once Plan 0081 has taken its own |
+| `key_sample`, `sky_ray_sample` (`sky_light.wgsl`) | `key_visibility`, `key_cover_near`, `sky_visibility_sample`; the column horizon is `key_horizon.wgsl` (`column_key_visibility`, `key_horizon_at`), the per-pixel sources' pair `pair.wgsl` |
+| "the directional shadow ray walks the far field" (TL;DR, Decision, Phase 6, ADR-0028) | **under the defaults no key ray is cast at a far face** (ADR-0082, Plan 0098: no screen history in the light passes). Where a voxel is under 6 pixels (`DEFAULT_FAR_NORMAL` `[4, 8]`, `KeyFarMix::Step`) the key light's visibility is the column map's horizon toward the sun: 12 steps to 512 voxels over the **near window's** footprint, lit beyond it. Every clip cell is under 1.6 px, so a clip hit is always far. As written, Phase 6 would add a per-frame ray on every far pixel that the defaults have no history to average. See "Phase 6, rewritten" and question 1 |
+| the far normal's `[2, 6]` or `[1, 2]`, "Plan 0061 sets the default" | `[4, 8]`; the near side of the first seam is still at full far weight (a voxel is 0.6 px at `s_1`) |
+| the baked store "a clip hit does not read" | stands. The store now also holds the sky's and the key light's visibility per face (ADR-0070, ADR-0079); a clip hit reads none of it, and its sky term is `E_sky(n)` unoccluded (answered 2026-11-17, stands) |
+| the bake "compiles `march` with the job's chunk" | the live queue runs on the bake thread (Plan 0099, ADR-0083) over `Shadow`, its own copy of the mirror, fed by ordered write lists; headless runs and tests step it in lockstep. **The clip levels never enter `Shadow`**: no level table, no clip record, no clip slot crosses to the bake half, and the far-field uniform in the shared layout is a constant "no levels" buffer there. Brief 1b asserts it (below) |
+| nothing on buried chunks | ADR-0080's rule 1 as Plan 0101 widens it (ADR-0085) answers a chunk buried under the column map with a zero record and no job. It reads the **near** map's tiles only, whatever this plan adds to the map; a clip chunk never takes a job or a record |
+| the mirror packs a chunk's bricks at `sync` | Plan 0107 moves the pack to the stream workers (`SlotImage`, `StreamEvents::prepared`). A `Cells` clip chunk has a chunk's layout, so it takes the same image on the worker that generated it (brief 4a); if 0107's Phase 1 stops that plan, the pack stays inline and brief 8b reads its cost |
+| "the band is dithered when the upscaler is on, a hard switch otherwise" | FSR 2 is the only upscaler (Plan 0102); the rule reads "when the frame is jittered" (every profile's default), and the hard switch is the native-scale goldens' |
+| `--settle-far`: "unsettled after 120 s" | a wall-clock constant; headless runs are lockstep, so the label is by state: the streamer idle with a level short of its ball. No test waits by a clock (Plan 0106): the tests use `wait_idle` |
+| "the first frame does not wait for clip chunks" (time to first frame) | every start runs the light pre-roll (5.7 to 7 s) before the first world frame, and Plan 0108 may shorten it. Clip generation starts with the streamer, under the pre-roll; the delta is read with the pre-roll at the default of the day |
+| `walk.wgsl` takes the level rule | `walk.wgsl` is at 1053 of 1200 lines and `temporal.wgsl` at 1171: the level rule, the band and the bounds go in a new `far_walk.wgsl` composed after it. `hud/modes.rs` has room again (1048); `toggles.rs` (1171), `cli/flags.rs` (1179) and `cli/tests.rs` (1181) are at their caps, so entries and parse tests go in `toggles/` and `cli/tests/outdoor.rs` |
+| Budgets: lighting 6.0 ms | **4.0 ms** at Floor (rebalanced at Plan 0069); Portable is one 33.3 ms line at 720p and `lod.r_full` 12 there, so its `s_1` is 640 voxels (64 m) |
+| the backlog's "distant trees" | folded into this plan by the owner (2026-11-22): question 3 |
+
+"Absent is sky", the kind-dependent hit bits, `ClipFill`, the `--far-*` flags, the menu
+entries, `LEAF_FILL` 64 and the finite forest stand as the 2026-11-17 section has them.
+
+### Phase 6, rewritten: the key light over the far field is the column map's horizon
+
+The far occluder enters where a far face already takes its key light, with no ray and no
+history. **No lighting ray takes the far field**: in the Decision's table the directional
+shadow ray and the sky ray read "no", and the hit pass alone sets the walk's far-field
+variables.
+
+- **What.** Each clip level keeps column tiles as the near map does: per `Cells` clip chunk
+  a sheet of 32 x 32 tops (a map cell is two level cells: 4, 8 and 16 voxels), written at
+  upload and drop into an `r32sint` texture per level addressed like the level's table
+  (47 x 32 = 1504 texels an edge, 9 048 064 B a level, 27 144 192 B for three, by
+  arithmetic). `column_key_visibility` continues past the near map's footprint into the
+  finest level resident at each step, with **7 more steps** of the same series (ratio
+  `128^(1/11)` = 1.554; `1.554^7` = 21.9 covers 512 to 10 240 voxels), and ends lit at the
+  far limit or in an absent level. A clip hit reads it from its own position, lifted by the
+  level's map cell. A near face's source (the ray under `key_cover ray`, the record) is
+  multiplied by the levels' horizon beyond the near window, so a ridge 400 m away still
+  shadows the ground at the camera. The rule-by-record and the bake read the near tiles only.
+- **Files touched:** `gpu_world/columns.rs` (the level tiles), the level
+  windows' upload path, `shaders/key_horizon.wgsl`, `shaders/shade.wgsl`, `frame/far_field.rs`,
+  `apps/flythrough/tests/gpu_far_field.rs`, `crates/svet-render/tests/gpu_mirror_tiers.rs`.
+- **Done when:** bars 1 to 4 as written, read on the key light's visibility: the far wall
+  shadows `x` in `[0, 500)` at 10 degrees and not at 30 (the wall is 200 voxels thick, under
+  the last steps' spacing, so the bar fails if the march steps over it: the refinement or a
+  max over the step's span must hold it); a level-2 top face is lit (bar 2); the probes'
+  texels are byte-equal (bar 3); `missing == 0` (bar 4). Added: two consecutive frames'
+  key visibility at a still camera are bit-equal (about 8 s, `gpu_far_field`), and the
+  bake queue's job count and `Shadow`'s bytes are the same with the far field on and off
+  (lockstep, stepped by count).
+
+### Briefs (one phase per dev brief), in run order
+
+The phases' text and bars stand; they run as these briefs, each one commit and one log row.
+
+| brief | from | takes | runs |
+|---|---|---|---|
+| 1a | Phase 1, world half: `ClipFill`, `ClipCoord`, `ClipChunk`, `MipRule`, `build_with`, `coarse_chunk`, the `World` calls, `generate_clip`, the test source | bars 4 and 5 | quick; **may start beside Plan 0081** |
+| 2a | Phase 2: the outdoor and forest coarse path, the canopy rule of question 2 | bars 1 to 3 | quick; beside 0081 |
+| 2b | Phase 2 bars 4 and 5: the census runs, the plan's guesses confirmed or amended | readings; the architect reads them before brief 3 | CPU runs; beside 0081 |
+| 3 | Phase 3: clip residency on the streamer | as written | quick; **after Plan 0107 merges** (`stream/workers.rs`) |
+| 5 | Phase 5: edits fold in | as written | quick |
+| 1b | Phase 1, render half: the level-1 table, `far_walk.wgsl`, the uniform, the hit bits, the store rule, the bake's guards | bars 1, 2, 3 and 6, plus the `Shadow` and job-count bar above | `gpu_far_field`, `gpu_bake`; **after Plan 0081 merges** |
+| 4a | Phase 4, mirror: three windows, scrolling, clip records, the sync order, slot images from the workers, `clip_switch` live | bars 2 and 6 | `gpu_mirror_tiers` |
+| 4b | Phase 4, walk: the band, the bounds, the far limit, the clip normals, the `levels` view | bars 1, 3, 4 and 5 | `gpu_far_field` |
+| 6 | Phase 6 as rewritten above | its bars | `gpu_far_field`, `gpu_mirror_tiers` |
+| 7 | Phase 7: the stillness reading, with the two canopy arms of question 2 as regions | as written | `gpu_far_field`, the strip example |
+| 8a | Phase 8: the switches, the banner, the HUD rows, the flags, `--settle-far`, the exit line | bars 1 and 2 | quick |
+| 8b | Phase 8 bars 3 and 4: the autopilot and the horizon readings | readings | runs under the lock |
+| 8c | Phase 8 bars 5 and 6: the forest under a low sun | readings | runs under the lock |
+| 9, 10 | as written | | |
+
+Brief 8c as written is 40 runs, each behind a pre-roll, a first fill and a landing: over
+the 20-minute rule on any projection. It runs the open reference three times and every
+other configuration once, projects the whole from its first arm, and stops for the
+architect if the projection is still over. Readings are taken after the in-view landing and
+say so; the RTX reads at Floor 1920 x 1080 and the RENOIR at Portable 1280 x 720 with two
+levels, as `docs/nfr.md` reads that adapter. Phase 9 holds no camera and passes no
+`--pre-roll-drain`; its still views are the owner standing still.
+
+### Budgets and bars, checked against `docs/nfr.md` today
+
+The bars stand: primary rays at most 3.0 ms on the RTX with the far field on, the 0.5 GB
+live line, the near latency p95 under 500 ms, the ring latencies. Changed: the lighting line
+is 4.0 ms and Phase 6 no longer grows a ray, so its row reads "the horizon's 7 more steps a
+far pixel; no projection". The streaming line (1.0 ms) is still a recorded miss and Plan
+0107 moves it: brief 8b reads `update + poll + sync` against a base taken after 0107. The
+RTX forest's frame is 8.3 ms wall while the view bakes and the RENOIR's 24 ms of its 33.3 at
+Portable, so the ledger's 2.0 to 6.5 ms for the slow adapter fits only at the low end:
+Portable's two levels are the lever, as the Risks say. Section 3 gains 27 MB of level
+column maps. **Retaken at the lane's base, before brief 1b:** the outdoor frame and its
+march and light passes with the far field off (both adapters, after the landing), the
+streaming timers, `Frame::frame_bytes`. **Retaken in brief 2b:** the generation rate per
+worker (section 5's 6.95e7 voxels a second is from before the bake thread and before the
+workers packed slot images) and the workers' busy share with `build.workers` at its default.
+
+### ADR-0028
+
+Revised 2026-11-26 in place (still proposed): no lighting ray takes the far field, and the
+key light's far occluder is the column map's horizon over the levels. If the owner picks
+the ray at question 1, the revision is withdrawn and Phase 6 stands as the 2026-11-17
+section left it, with a history the defaults do not have.
+
+### When this plan can start
+
+Briefs 1a, 2a and 2b write `svet-world`, the fly-through's `outdoor.rs` and `trees.rs` and
+the `world_budget` example: no file of Plan 0081, of the open lanes or of Plans 0107 and
+0108, and no GPU lock. They can start **now**, beside any of them (question 4). Brief 3
+waits for Plan 0107's merge, briefs 1b on for Plan 0081's (shared shader files, the hit
+bits, the binding, the GPU lock). So 0081 before 0033 stands for the render half only.
+
+### Owner questions (each with a recommendation)
+
+1. **The key light over the far field** (image stability). Recommended: **the column
+   horizon over the levels, no ray**: it is the source every far face already takes, it does
+   not change frame to frame, and the plan loses a ray per far pixel. Given up: a far
+   overhang or a canopy seen from below shadows as a column (a far tree's shadow is its
+   envelope's). Alternative: Phase 6 as written, exact, per-frame, wanting `light history`
+   on in the far field.
+2. **Far canopies at level 1** (image stability). Answered 2026-11-17 for levels 2 and 3
+   (the envelope as solid `leaf`). At level 1 (83 to 243 m) the half rule keeps 11.4 % of a
+   fill-64 canopy's cells, sparse cells 1.2 to 0.4 px wide: the sparkle the parked "distant
+   trees" entry is about. Recommended: **the envelope at level 1 too, the half rule there
+   kept as the arm**; brief 7 reads both and Phase 9 judges the look.
+3. **The backlog's stand-in arm** (image stability). Recommended: **no raster or cached
+   stand-in in this plan** (ADR-0001 has no raster pass; ADR-0028 rejects impostors). The
+   arm this plan gives the 15 to 60 m band is a flight at `r_full` 10 in Phase 9: level 1
+   then starts at 45 to 51 m with solid canopies, and the owner sees whether trees stop
+   wobbling where they turn coarse. The backlog entry is updated at the close.
+4. **Start the world-side briefs before the batch** (order). Recommended: **yes**: 1a, 2a
+   and 2b when a lane slot is free; the census's numbers (the bytes, the generation rate,
+   the far forest's cost) then exist before the render half is briefed.
 
 ## TL;DR
 
@@ -1073,14 +1216,19 @@ The owner was away; each of these took the recommended option and is his to over
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: Walking skeleton: one level, bounded, a box at 150 m | dev | not started | |
-| 2: The outdoor source's coarse path and the census | dev | not started | |
+| 1a: the world half of the skeleton | dev | not started | |
+| 2a: the outdoor source's coarse path | dev | not started | |
+| 2b: the census | dev | not started | |
 | 3: Clip residency on the streamer | dev | not started | |
-| 4: Three levels in the mirror, scrolling, the band and the clip normals | dev | not started | |
 | 5: Edits fold into the far field | dev | not started | |
-| 6: Light at a clip hit: the directional shadow ray walks the far field | dev | not started | |
-| 7: Is the far field still? A reading before the owner flies it | dev | not started | |
-| 8: The fly-through's switches, HUD rows and readings on both adapters | dev | not started | |
+| 1b: the render half of the skeleton: a box at 150 m | dev | not started | |
+| 4a: three levels in the mirror, scrolling | dev | not started | |
+| 4b: the band, the bounds and the clip normals | dev | not started | |
+| 6: the key light over the far field (rewritten 2026-11-26) | dev | not started | |
+| 7: Is the far field still? A reading | dev | not started | |
+| 8a: the fly-through's switches and HUD rows | dev | not started | |
+| 8b: the autopilot and horizon readings | dev | not started | |
+| 8c: the forest under a low sun | dev | not started | |
 | 9: The owner's windowed outdoor flight | human | not started | |
 | 10: The picks as tests | dev | not started | |
 
