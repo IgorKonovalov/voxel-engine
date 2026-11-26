@@ -44,7 +44,7 @@ wobble it was written for still there; its follow-on is Plan 0104 (approved 2026
 | [0099](0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) | The bake step off the main thread: a bake thread, write lists, the in-view drain | approved 11-22 | ADR-0083 (proposed). After 0087; 0098 closed. Re-read owed (the dig). |
 | [0101](0101-the-record-by-rule-at-every-opening-an-audit-on-the-real-scenes-first-then-the-three-exclusions-lifted.md) | The record by rule at every opening: an audit first, then the exclusions lifted | approved 11-24 | ADR-0085 (proposed). After 0100 P2 and 0099's close. |
 | [0103](0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md) | A pipeline cache for the renderer: the driver's cache through wgpu in an engine envelope, bytes the consumer keeps | draft, parked 11-24 | ADR-0087 (proposed). Parked: the driver's cache already warms a second start (logs/0103.md). |
-| [0104](0104-the-wobble-anchored-to-the-owners-eye-clips-he-ranks-a-measure-that-ranks-them-then-the-remedy.md) | The wobble anchored to the owner's eye: clips he ranks, a measure, then the remedy | approved 11-25 | Follows 0100. P0-2, 4 beside 0099; P3 and remedy after it. |
+| [0104](0104-the-wobble-anchored-to-the-owners-eye-clips-he-ranks-a-measure-that-ranks-them-then-the-remedy.md) | The wobble anchored to the owner's eye: clips he ranks, a measure, then the remedy | closing 11-26 | Follows 0100. Owner: close, no remedy. P6a-c, then the review. |
 <!-- roster:end -->
 
 ## Sequence
@@ -264,8 +264,10 @@ reads shadow, the bake's key ray at its cap; exploration to one owner window): *
 2026-11-24** (owner, with his five answers); its lane starts when Plan 0098 (closed 2026-11-24)
 has merged and runs beside Plan 0099's (owner, 2026-11-23).
 
-**Plan 0104** (the wobble anchored to the owner's eye, Plan 0100's follow-on; no ADR until a
-remedy has a rejected alternative): **drafted 2026-11-25, awaits the owner's go.** It builds no
+**Plan 0104** (the wobble anchored to the owner's eye, Plan 0100's follow-on; no ADR):
+**closing: the owner answered "close" on 2026-11-26, with no remedy; its Phase 6 removes Plan
+0100's unpicked settings (`key cover ray` stays, off) and gates the tip, and the two things
+left under the defaults are in the backlog.** As drafted 2026-11-25: it builds no
 remedy until a clip is anchored: the wobble rigs' settle audited (Phase 0), the owner's move as
 five lossless clips at his window's size (Phase 1), his answers and blind rankings (Phase 2),
 his own flight recorded and rendered again for a subject not shown (Phase 3), two candidate

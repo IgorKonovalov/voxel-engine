@@ -1,7 +1,8 @@
 # 0104: The wobble anchored to the owner's eye: clips he ranks, a measure that ranks them, then the remedy
 
-> **Status:** in progress: **the owner's question 4 is next** ("Amended 2026-11-26 (architect,
-> after Phase 4)", recommended: close; the page `live/p4/index.md`). Phase 5 landed
+> **Status:** in progress: **closing. The owner answered question 4 (a), close (2026-11-26):
+> no remedy; Phase 6 (6a, 6b, 6c) is next, then the fresh-session close review** ("Amended
+> 2026-11-26 (owner)"). Before it: Phase 5 landed
 > (2026-11-26): 5a holds by its refutation rule (`T b`'s clip total 0.01515 -> 0.01123 held, line
 > (b) at T in his order; the under-0.002 figure missed on each hold's first window), 5b reads the
 > upscaler (outlines 0.007 levels with it off). Before it: Phases 0, 1, 2, 0b and 4 landed (2026-11-25); stopped for the
@@ -871,6 +872,221 @@ owner (added)", whose choice (a) he is now at).**
   sit under `reading::` (in no tier), and the tip holds the store's tally that closed
   lever 2. Picking Phase 0b's commit out would write it twice into the history.
 
+## Amended 2026-11-26 (owner)
+
+The owner's answer to question 4 as restated above, and the plan's last dev phase. No run
+stands behind this section; every time in it that is not quoted from the log is a guess.
+Nothing above is rewritten; where this section differs, this section rules.
+
+### The answer
+
+**Question 4: (a), close** (owner, 2026-11-26, morning, after `live/p4/index.md`). The plan
+closes with no remedy. The two things left under the defaults are parked in
+[`docs/backlog.md`](../backlog.md), each with his clips as its anchor:
+
+- **Sunlit tree crowns sparkle while he moves** (`C a`, `C b`): "Sunlit tree crowns sparkle
+  in motion under the defaults".
+- **The picture settles for about a second after a turn** (`S`): "A second of settling after
+  a turn: FSR 2's history". Phase 5b read it as the upscaler's: the outlines at frames 398
+  against 440 change 22.05 levels with FSR 2 and the exposure pinned, 0.007 with no upscaler.
+
+**The sub-question ("with (a), one thing more") was not answered.** It is not a stability
+question, so it takes the recommended option (his standing rule of 2026-11-03):
+`lighting.key_cover ray` stays a setting, off on every profile, as the parked crowns' one
+control (his rule of 2026-11-12: a mode that costs nothing when off stays). His answer 3 (a)
+holds for the rest: `key_cover record`, `key_at face` and `face-smooth`, and `key_horizon
+walk` are removed at the close. A setting left with one value is no setting, so
+`lighting.key_at` and `lighting.key_horizon` go whole; the horizon is read at the hit by the
+march, as every profile reads it today.
+
+### What the answer closes
+
+- **No remedy phase is written.** The six candidates of "After Phase 4" stay a list in a
+  closed plan; candidate 7 was dropped at Phase 4. The stop's amendment is this section.
+- **No further blind round** (choice (b), the forest under `key cover ray`) and **no remedy
+  for the second after a turn** (choice (c)).
+- **Phase 3 stays not run**; `--track-out` and `--track` are not built.
+- **No measure.** Candidate 2 with held units is this plan's **reading** for the stepping
+  edge, provisional: line (a) at a place fixed in the picture (`T a`) and line (b) on one
+  pair (`T a` 0.01507 against `T b` 0.01123). It is called a measure when it ranks a second
+  pair he ranked blind. Candidate 1 orders nothing. Plan 0100 Phase 8b's stage rows are not
+  read under either.
+- **No ADR.** No remedy has a rejected alternative. The removal of the three settings is
+  ADR-0084's own clause ("a setting the follow-on plan does not pick is removed there");
+  that `key_cover ray` stays is recorded against it by the close review, as an addition to
+  its Outcome.
+- **No default, no golden and no image bar changes.** The "last dev phase" that "After
+  Phase 4" names (picks as defaults with their goldens) has no pick to write. Phase 6 below
+  takes its place.
+- **Also parked, in the backlog's "The sun's term at small faces":**
+  the near shadow's hole with the contact ray as its arm, and sun under cover as a default.
+  Neither was taken up here.
+
+### What stays and what goes (the plan decides; the dev does not re-decide it)
+
+| thing | ruling |
+|---|---|
+| `lighting.key_cover` | stays, `off` and `ray`, `off` on every profile; its row, `--key-cover off\|ray`, its menu entry and HUD word stay as spelled; `inert.rs`'s clause on it stays |
+| `key_cover record` | removed: the enum's value, `LIGHTING2_KEY_COVER_RECORD`, the shader paths only it reaches (the face's own cell's key read in `temporal.wgsl`, the record clause of `key_cover_far` in `pair.wgsl`), the settings walk's special case |
+| `lighting.key_at` | removed whole: `KeyAt`, the field, the row, `--key-at`, the menu entry, the HUD word, the two `lighting2` bits; `key_horizon_at` reads at the hit |
+| `lighting.key_horizon` | removed whole: `KeyHorizon`, the field, the row, `--key-horizon`, the menu entry, the HUD word, `LIGHTING2_KEY_WALK`, `key_walk.wgsl` and `KEY_WALK_WGSL`, the column map's coarse rows with their upload, `column_coarse_texel`, `GpuWorld::column_coarse_bytes` and their tests |
+| `Params::lighting2`'s freed bits | left free and named free in the comment that names bit 3; no bit is renumbered |
+| `key far baked`, `key far column`, the bake's key ray at its cap | untouched: they are ADR-0079's and ADR-0084's standing clauses, not this plan's controls |
+| `support/baked.rs` (the shared settle, the census, the store's tally) | stays as it is, lever 2 included |
+| the two soak tests of `gpu_wobble` | stay `#[ignore = "soak"]` as Phase 0b left them, the far +30 constants as confirmed |
+| `gpu_wobble/clips.rs` (the clip rig) | stays, a `mod reading`; it is how an anchor is rendered again |
+| `gpu_wobble/keys.rs`, `measure.rs` | stay as readings, cut to what a future plan reads: candidate 2 and candidate 1 with the dots, hold windows scored with held units only, the sunlit-leaf row, the picture's own change, the shared-scale maps, `control`. Candidate 7 goes whole (its maps, ratio, change rows and top-tenth share, and the key slot's source and value in the `.keys` record if nothing else reads them) |
+| `gpu_wobble/walked.rs`, `cover_arms.rs`, `cover.rs`, the rig's tokens | what reads only a removed value goes (the `walk` rows, the `record` arm, `keyat=`, `keyhorizon=`); `keycover=off\|ray` stays; the W1 comparison stays, restricted to the horizon's source as ruled |
+| `gpu_wobble/owner_move.rs` and the binary's other readings | stay |
+| `live/p4/*.keys` (about 15 GB, untracked) | deleted; `keys.rs` renders them again from a clip's track in minutes |
+| `live/anchor/` and the pictures of `live/p4/` (untracked) | kept: they are the backlog's anchors. The orchestrator copies them to the main checkout's `live/anchor-0104/` before the worktree is removed |
+
+### Phase 6: The close's code, readings and gate (three parts, one dev brief each)
+
+Not exploration: rule 2 of the lane rules holds as written. The parts run in this order,
+each its own commit. The owner's rules stand in every part: no run projected past 20 minutes
+under the perf lock, the gate tier is the most any step runs, no scene is simplified,
+nothing is windowed.
+
+**Phase 6a: Plan 0100's unpicked settings removed**
+- **Owner skill:** dev
+- **What:** The table above, rows one to six, in the engine, the fly-through and every test
+  that names a removed value. A test that asserts only a removed value goes with it. A test
+  that asserts a kept claim through a removed value is pointed at the kept path, its claim
+  and bar as written; one that cannot be is reported, not dropped. No default changes, so
+  no golden is blessed. `docs/flythrough.md` follows `flythrough --help` and `--keys`: the
+  page names `key cover` as `off, ray` and no longer names `key at` or `key horizon`.
+  `docs/nfr/03-memory.md`'s entry "The column map's coarse levels" is closed with the bytes
+  the removal returns (arithmetic, the window sides it names). `CHANGELOG.md`, the version,
+  `docs/roadmap.md` and ADR-0084 are the close ceremony's, not this part's.
+- **Files touched (at least):** `crates/svet-render/src/frame/settings.rs`,
+  `frame/settings/sky_light.rs`, `frame/compose.rs`, `frame/pipelines.rs`, `frame/mod.rs`,
+  `settings.rs`, `lib.rs`, `gpu_world/columns.rs`, `gpu_world/mod.rs`, `layout_tests.rs`,
+  `shaders/key_horizon.wgsl`, `key_walk.wgsl` (deleted), `pair.wgsl`, `temporal.wgsl`,
+  `sky_light.wgsl`, `common.wgsl`, their unit tests, `crates/svet-render/tests/gpu_sun*`;
+  `apps/flythrough/src/cli/`, `toggles.rs`, `hud/modes.rs`, their tests,
+  `apps/flythrough/tests/gpu_wobble.rs` and `gpu_wobble/{walked,cover,cover_arms}.rs`;
+  `docs/flythrough.md`, `docs/nfr/03-memory.md`, `docs/plans/logs/0104.md`.
+- **Done when:**
+  - `grep` finds `key_at`, `key_horizon` (the setting, not the shader file
+    `key_horizon.wgsl` and its `column_key_horizon`), `KeyAt`, `KeyHorizon`, `key_walk` and
+    `KeyCover::Record` nowhere under `crates/` and `apps/`; `--key-cover record`,
+    `--key-at face` and `--key-horizon walk` each fail to parse with the flag's own error,
+    asserted by a CLI test;
+  - a settings file that names a removed row: what the reader does with it (an error by
+    name, or the row ignored) is read from the code and written in the log, not changed;
+  - the frame's and the mirror's byte assertions that move, move by the coarse rows alone,
+    old beside new in the log;
+  - the quick tier, the phase's clippy, fmt, every `scripts/check-*.mjs`; then one hold of
+    the perf lock, `--profile gpu --binaries gpu_sun gpu_settings gpu_golden
+    gpu_outdoor_golden` plus the binaries the script adds for the touched files, projected
+    from its first binaries and split in two holds if past 20 minutes: 0 failures, **no
+    golden differs**. `gpu_wobble` builds; its soak tests are not run here (6c).
+- **Stops, reported:** a golden or an image bar that moves under the defaults (then a
+  removed path was reached by a default, and the architect rules); a kept test whose claim
+  cannot be made without a removed value; a consumer-facing type outside this list that
+  must change.
+
+**Phase 6b: The rig cut to what stays, the anchors named, the pins**
+- **Owner skill:** dev
+- **What:** No production code.
+  1. **The rig**, rows seven to thirteen of the table: `measure.rs` and `keys.rs` cut as
+     ruled, the module comments rewritten to say what the file is for now (no plan-relative
+     history), the binary's doc comment naming each reading's spec. The check that the cut
+     changed no figure is CPU only: `SVET_MEASURE=T-a,T-b` scored before the `.keys` are
+     deleted, on the cut code, reads `T a` 0.01507 and `T b` 0.01123 (candidate 2, held)
+     and the sunlit-leaf row is repeated on `C-a,C-b` (0.02480 against 0.02476). If the
+     `.keys` record's layout changes with the cut, the check runs before that change and
+     the log says so.
+  2. **`live/p4/*.keys` deleted**, after the check; the bytes freed in the log.
+  3. **The anchors named.** In the log, one table: each of the five clips of `live/anchor/`
+     and each picture the backlog entries name, with its `sha256sum`, its size and the
+     `SVET_CLIP` or `SVET_MEASURE` spec that renders it again. Nothing is copied or moved:
+     the orchestrator does that at the merge.
+  4. **The pins.** `docs/nfr/07-startup-and-build.md`'s soak table: the forest soak test's
+     time as Phase 0b read it (the RTX and lavapipe, quiet, with the frame sizes) and the
+     binary's other soak test on the shared settle, each with machine, adapter, load and
+     commit, quoted from the log, not read again. `docs/nfr.md` section 7 only if its text
+     names either test. No frame, memory or edit line of `docs/nfr.md` moves but 6a's.
+  5. **The log's ends tied:** a "Phase 6" section; any resume notes deleted.
+- **Files touched:** `apps/flythrough/tests/gpu_wobble.rs`, `gpu_wobble/measure.rs`,
+  `keys.rs`, `docs/nfr/07-startup-and-build.md`, `docs/plans/logs/0104.md`.
+- **Done when:** the two figures of item 1 repeat to the last digit printed, or the
+  difference is reported and the cut that caused it withdrawn; `ls live/p4/*.keys` finds
+  nothing; the anchors' table is in the log; the quick tier, the phase's clippy (it builds
+  `gpu_wobble`), fmt, every `scripts/check-*.mjs`. No GPU, no lock.
+
+**Phase 6c: Main merged in, and the tip's gate in parts**
+- **Owner skill:** dev
+- **The order to expect.** Plan 0099 closes and merges into main first (his question 1 (a)
+  put this plan's last phases on a main that holds it; its lane has already merged main and
+  gated). **6c starts on the orchestrator's word that main holds Plan 0099.** If the
+  orchestrator says this plan goes first instead, main is still this lane's base
+  (`c87bf7a6`), `git merge --no-ff main` reports nothing to merge, no merge commit is made,
+  the log says so, and the gate below runs on the lane's tip; Plan 0099 then merges main
+  again in its own lane. **Whichever plan merges second takes the next version**: the
+  number is the close ceremony's, and the dev writes none.
+- **What:** `git merge --no-ff main` into `plan-0104`, conflicts resolved with both sides'
+  behaviour kept (Plan 0099's flag and rows beside this plan's removed ones in
+  `apps/flythrough/src/cli/`, `toggles.rs` and `hud/modes.rs` are the likely place),
+  committed as lane rule 1 words it. Then the gate on the merged tree, in parts:
+  - outside the lock: the build; `cargo clippy --workspace --all-targets -- -D warnings`;
+    fmt; `cargo deny check`; the doctests; the gate tier's CPU part
+    (`--profile gate -E 'not binary(/^gpu_/)'`); every `scripts/check-*.mjs`; the test
+    archive for the holds below;
+  - under the lock, from the archive: the gate tier's `gpu_*` binaries in holds of at most
+    20 minutes each, the binaries listed first and dealt into holds by their times in the
+    last gate log, a hold projected past the line from its first binaries stopped and
+    split. Plan 0099's Phase 6c rig is the model (`live/p6c-gpu.sh` in the plan-0099
+    worktree, read there, written anew under this lane's `live/`; nothing is run in
+    another worktree);
+  - under the lock, each its own hold: `node scripts/test-changed.mjs --profile gate --sole
+    --since main`; the two soak tests of `gpu_wobble` by name on lavapipe (about 250 s and
+    100 s by Phase 0b's readings), since this lane changed both.
+  Then the Implementation log's row for Phase 6 and the Close triggers, as the template
+  asks.
+- **Done when:** every part's count, wall and load in the log, the parts' walls summed
+  against `docs/nfr.md` section 7; no golden moved, or the one that did is reported with
+  the frame it differs in, not re-blessed; both soak tests pass inside Phase 0b's time
+  bars (600 s the forest's on lavapipe), their times in the log.
+- **Stops, reported:** a conflict whose two sides cannot both be kept; a test that fails on
+  the merged tree and passes on each parent; the `gpu_*` binaries cannot be dealt into
+  holds under the line; a soak test over its bar.
+
+### What the close review checks
+
+A fresh session, after 6c. The gate tier is not run again without cause (owner,
+2026-11-19); the review reads the log's parts and opens the assertions.
+
+1. **The answer is carried out as recorded:** `key_cover` is `off|ray` and `off` on every
+   profile; the three removed settings are gone from code, flags, menu, HUD and
+   `docs/flythrough.md`; no default, golden or image bar moved (6a's golden holds, 6c's
+   gate).
+2. **The removal reached no default path:** the kept tests that were re-pointed still
+   assert their claim (the reviewer opens each); the byte assertions moved by the coarse
+   rows alone.
+3. **The soak tests assert on a baked store** (Phase 0b's contract: one store, a whole
+   census or a failure, the far +30 constants of the ruling) and pass on lavapipe inside
+   their bars.
+4. **The readings are what the plan says they are:** 6b's two figures repeated; no
+   asserting test was added for a candidate; `mod reading` holds every rig entry.
+5. **The anchors exist and are named:** the five clips and the pictures with their
+   checksums, the backlog's three entries pointing at them, and the orchestrator's copy to
+   `live/anchor-0104/` made before the worktree goes.
+6. **Disclosed, not repaired:** candidate 2 is a reading on one pair; the under-0.002
+   figure of Phase 5a was missed on each hold's first window; the lit crowns' cause is not
+   shown; `C`'s order was never given as a ranking.
+7. **The ceremony's own:** the version (the second of this plan and Plan 0099 to merge
+   renumbers), `CHANGELOG.md` with the removed public items (`KeyAt`, `KeyHorizon`,
+   `KeyCover::Record`, `Lighting::key_at` and `key_horizon`, `KEY_WALK_WGSL`,
+   `GpuWorld::column_coarse_bytes`, the two flags), the addition to ADR-0084's Outcome,
+   `docs/roadmap.md`'s M10 lines that name the removed settings, the index row, the move to
+   `done/`.
+
+### Owner questions
+
+None open. A push stays his word.
+
 ## After Phase 4: the stop, and the candidate remedies
 
 **The plan stops for the architect after Phase 4** (or earlier, where Phase 2 anchors
@@ -952,6 +1168,9 @@ Plan 0099. Question 2 **(a)**: the clips cover the RTX at Floor only. Question 3
 Plan 0100 setting this plan does not pick is removed at its close (the owner chose this over
 his 2026-11-12 rule that cheap unpicked modes stay settings, for these settings).
 
+**Answered 2026-11-26 (owner):** question 4 **(a)**, close; its sub-question unanswered and
+taken as recommended ("Amended 2026-11-26 (owner)").
+
 - **The clip does not show it either** (likely for at least one subject: the rig is not the
   window). That is Phase 3's reason to exist, and a "not shown headless" there is a result:
   it puts the fault between the headless frame and the window's present, or between the
@@ -1027,7 +1246,10 @@ his 2026-11-12 rule that cheap unpicked modes stay settings, for these settings)
 | 3: the owner's own flight, recorded and rendered again (only for a subject not shown) | dev | does not run: every subject anchored ("Amended 2026-11-25"; row marked by the architect) | |
 | 4: a measure that ranks what the owner ranked | dev | done: the store's tally (equal with and without lever 2), the W1 split by source (exit (a), (b)), `S`'s change named; step 3: the tracks rendered again with world units (`keys.rs`), both candidates scored on his files (`measure.rs`): candidate 2 holds (a) at `T a` and `S` but fails (b) at T (0.01507 against 0.01515), candidate 1 fails (a) at `C a` and (b) at C (0.04399 against 0.04858); candidate 7: no source 0 sample in any clip, its drop rule fires; `S`'s control: outlines change under the pinned exposure (light, read as a reading); maps and `index.md` under `live/p4/`; readings in [`logs/0104.md`](logs/0104.md) | 13605f9e (wip), 780ec1ec |
 | 5: two readings that separate the causes ("Amended 2026-11-26") | dev | done: 5a, held units in the holds: `T b`'s holds 0.00035 to 0.00317 (were 0.00719 to 0.01141), clip totals `T a` 0.01507 against `T b` 0.01123, **holds** by the refutation rule, the under-0.002 figure missed on each hold's first window and both extras; sunlit-leaf row `C a` 0.02480 against `C b` 0.02476; 5b, `S` with no upscaler pinned at 397: outlines 398 / 440 0.007 levels, **the upscaler**; `live/p4/index.md` rewritten; readings in [`logs/0104.md`](logs/0104.md) | committed with this row |
-| the stop: the architect's amendment (the remedy phases) | - | not written | |
+| the stop: the architect's amendment | - | written, with no remedy phase: the owner closed the plan ("Amended 2026-11-26 (owner)"; row marked by the architect) | |
+| 6a: Plan 0100's unpicked settings removed | dev | not started | |
+| 6b: the rig cut to what stays, the anchors named, the pins | dev | not started | |
+| 6c: main merged in, and the tip's gate in parts | dev | not started | |
 
 ### Notes
 
