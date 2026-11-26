@@ -182,7 +182,7 @@ impl Frame {
 |---|---|---|---|
 | 1: the red test steps by count | dev | done; readings in [the log](logs/0106.md#phase-1-the-red-test-steps-by-count); the wall-paced reading's `ms` is taken after each frame's pad, not after the last pool read | 4c90a671, then committed with this row |
 | 2: class A, the rest | dev | done but one row; readings in [the log](logs/0106.md#phase-2-class-a-the-rest). `a_sliced_pre_roll_bakes_what_an_unsliced_one_bakes` left unchanged, a question for the architect (Notes); the source switch reads 66.5 s alone, over the 10 s line (60.6 s at its base form); `take` and `take_until` also clear `at_cap` | 8d9fe04d, then committed with this row |
-| 3: class B | dev | not started | |
+| 3: class B | dev | in progress: every row but `RUN_BOUND` and the three stage sums; readings in [the log](logs/0106.md#phase-3-class-b). `RUN_BOUND`'s ten loaded runs a row not taken (7 of 30); the three stage sums left unchanged, a question for the architect (Notes); `split_tests/thread/fade.rs` changed (outside the phase's files: called by a table row) | b2a1c70d, 446453ad, a06b3d2a, then committed with this row |
 | 4: the gate script | dev | not started | |
 | 5: the soak tier, the reading | dev | not started | |
 | 6: the soak tier, the fixes | dev | not started | |
@@ -191,6 +191,8 @@ impl Frame {
 
 - Phase 2: `a_sliced_pre_roll_bakes_what_an_unsliced_one_bakes` can move (the pre-roll's 5 s box and 120 s cap on summed wall step time; the off arm steps with no device wait while the on arm's loading frames wait, so lockstep's `collect` reads read-backs at different steps) and its test file cannot change that; left as written, for the architect.
 - Phase 2: `a_source_switch_shows_the_loading_frames_before_the_new_world` takes `--load-slice 0.05`; it reads 66.5 s alone at the tip, 60.6 s at its base form, both over the 10 s line.
+- Phase 3: `the_step_s_stages_sum_to_its_time`, `the_stages_split_by_opening` (`gpu_queue_reach.rs`) and `the_sync_stages_sum_to_its_wall` (`gpu_mirror_budget.rs`) left as written. The step's own span is not readable within a tick: `StepStages::total_ms` ends at a clock read after the last lap (`bake/queue/step.rs` 83 and 637), and `SyncStats` carries each stage's truncated us and no span (`gpu_world/window.rs` `StageClock::stop`). Both need code outside the phase's files: `total_ms` read from the last lap's instant, and a span field on `SyncStats`.
+- Phase 3: `split_tests/thread/fade.rs` changed (its `within`s and the held step's wait): it is the tail of `the_edits_frame_waits_for_its_list_and_no_other_frame_does`.
 - Phase 2: the soak test `a_reset_pixel_starts_from_its_record` (on `dig_run_with`, which now waits on the device each frame) fails at `with_record > 0`, at the tip and at the base form alike (one run each).
 
 ### Close triggers
