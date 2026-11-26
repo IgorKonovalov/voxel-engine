@@ -90,6 +90,10 @@ const INERT: &[(&str, Why)] = &[
     ),
     ("lighting.key_step", Why::Queue),
     (
+        "lighting.key_cover",
+        Why::Absent("a cube face inside the far normal's near: none spans 6 pixels at 128 wide"),
+    ),
+    (
         "look.tuning.face_mix",
         Why::Absent("the field look, whose mirror holds the field's band slots (a rebuild)"),
     ),
@@ -165,6 +169,20 @@ const INERT: &[(&str, Why)] = &[
     ),
     ("mark_colours", Why::Absent("a marked entity")),
 ];
+
+/// Settings set on the defaults before a row's flip.
+type Arrange = fn(&mut RenderSettings);
+
+/// Rows `INERT` lists as `Why::Absent` whose flip the walk proves live under an arrangement
+/// of settings that holds what the defaults' frame lacks; each changes at least
+/// `MIN_PIXELS` pixels there. Not `INERT_WHEN`: the condition is the frame's size and the
+/// camera's place, not a setting the window could mark.
+const LIVE_UNDER: &[(&str, Arrange)] = &[(
+    // The far normal off: the cover ray is read at every cube face, the sheltered floor's
+    // among them, which the ray toward the sun leaves under the roof's edge.
+    "lighting.key_cover",
+    |s| s.look.far_normal = [0.0, 0.0],
+)];
 
 /// The walk's world and its view.
 struct Fixture {
@@ -355,7 +373,10 @@ fn differing(a: &[u8], b: &[u8]) -> usize {
 /// `MIN_PIXELS` pixels there, where its condition does not hold, so the window's mark and
 /// the walk cannot disagree. The defaults' image repeats to the byte from a reset, before and
 /// after the walk, and each `live_under` image after its row's (key far ray, the light
-/// history), so a difference is the row's and not the order of the walk's.
+/// history), so a difference is the row's and not the order of the walk's. Each `LIVE_UNDER`
+/// row, listed in `INERT` as `Why::Absent`, is walked the same way: from the defaults with its
+/// arrangement set, its flip changes at least `MIN_PIXELS` pixels and the reference repeats to
+/// the byte after, so a row absent from this frame is still shown to act.
 ///
 /// About 16 s on lavapipe (16.0 s at a load of 2.5), over the 10 s soak line and the gate's only test of the rule, so
 /// it runs whenever the crate changes rather than in the gate. A new row fails it until it
@@ -432,6 +453,28 @@ fn every_settings_row_changes_the_image_or_is_listed_inert() {
         );
         if d < MIN_PIXELS {
             unproven.push((r.row, d));
+        }
+    }
+    for &(row, live) in LIVE_UNDER {
+        assert!(
+            INERT
+                .iter()
+                .any(|&(n, w)| n == row && matches!(w, Why::Absent(_))),
+            "{row} is in LIVE_UNDER but not in INERT as Why::Absent"
+        );
+        let mut on = base.clone();
+        live(&mut on);
+        let s = on.with_test_value(row).expect("a test value");
+        let reference = render(&fx, &mut f, &on);
+        let d = differing(&reference, &render(&fx, &mut f, &s));
+        println!("reading: {row:32} {d:6} under LIVE_UNDER");
+        assert_eq!(
+            differing(&reference, &render(&fx, &mut f, &on)),
+            0,
+            "{row}: the image under LIVE_UNDER repeats after the row's"
+        );
+        if d < MIN_PIXELS {
+            unproven.push((row, d));
         }
     }
     println!("reading: walk {:.1} s", t.elapsed().as_secs_f64());
