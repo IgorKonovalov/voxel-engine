@@ -19,11 +19,11 @@ Rules:
 
 ### The pre-roll's end on a streamed world rides a 30-step recheck (2026-11-26)
 
-From [Plan 0106](plans/0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md), "Ruling 4" (readings in `docs/plans/logs/0106.md`, Phase 10). An engine finding in the start-up path, owed a small fix plan of its own once that plan's Phase 11 has read the cause.
+From [Plan 0106](plans/0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md), Rulings 4 and 5 (readings in `docs/plans/logs/0106.md`, Phases 10 and 11). **Drafted 2026-11-26 as [Plan 0109](plans/0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md); awaits the owner's go.** This entry leaves when the owner answers.
 
-- **The reading:** after a source switch to the outdoor world on lavapipe the pre-roll ends at 32 steps and 9 chunks, or at 95 to 129 steps and 256 to 789 chunks (26 to 45 s more), run to run on one tree; before the Plan 0099 merge every run on record is short. Derived from the code, not yet read step by step: a camera chunk whose reach is not ready at an opening is skipped for `QUEUE_RECHECK` (30) steps, the queue bakes every other ready chunk meanwhile, and whether the next check finds the reach ready races the stream workers and the mirror's upload.
-- **Open:** which chunk blocks and why, why the odds moved at the merge, whether the RTX host or a window shows it. The owner's question (wait for the camera's chunk, or end on a bound and let its light land in view) is in the plan.
-- **Beside it:** [Plan 0108](plans/0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md)'s start-up readings on a streamed source log the pre-roll's steps and chunks per start, or its seconds mix the two lengths.
+- **The reading, corrected after Phase 11:** a chunk the queue finds not ready is skipped for `QUEUE_RECHECK` (30) steps whatever happens to what blocked it. At a streamed start the camera's chunk is blocked at step 1 (its reach is not resident) and bakeable from about step 5, and is opened at step 31 in every run on every tree read; where the check at 31 or 61 lands on a chunk waiting to upload in a column over the reach footprint (not on the reach, as first written) it waits 30 more: 62 or 95 steps, 26 to 45 s on lavapipe, 31 s on the RTX host in one run of five.
+- **Open:** the owner's question (the first frame waits for the camera's chunk, or start-up ends on a bound and its light lands in view), carried by the plan as its two arms. Why a streamed start's lockstep step costs about three times as much since the Plan 0099 merge (which is what made the check at 31 land in an upload backlog) is unread: the plan's Phase 3.
+- **Beside it:** [Plan 0108](plans/0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md)'s start-up readings on a streamed source log the pre-roll's steps per start and say whether their tree holds Plan 0109 Phase 1.
 
 ### The record by rule at every opening, and the bake's key ray at its cap (2026-11-23)
 
