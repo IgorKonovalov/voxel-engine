@@ -624,3 +624,37 @@ picks the monitor (the first `gpu-screen-recorder --list-capture-options` names 
 `--dry-run` prints the schedule and the commands and records nothing, and `--format`,
 `--width`, `--fps`, `--crop` (in screen pixels, `W:H:X:Y`), `--colors` and `--crf` go to the
 encode.
+
+## Shooting the README's images
+
+Every image under `docs/images/` is a row of [`docs/images/shots.json`](images/shots.json),
+or named in its `frozen` map (kept, never re-rendered). A row says how the image is made: the
+`source` (`flythrough`, or `clip` for the example above), its `flags`, the frame (`still_at`,
+or a range `A..B` for a loop from the fly-through), the seed, the encoded `width`, `quality`
+and, for a loop, `fps`, and the `tolerance` that `--check` holds it to, with the reading
+behind it in `note`.
+
+`node scripts/shoot-images.mjs` builds the fly-through and the `clip` example in release (in a
+6G memory-capped scope), renders each row headless under the GPU lock (one render per hold)
+into `target/shots/<id>/`, and encodes the frames with ffmpeg into the row's file: a still as
+WebP, a loop as animated WebP, scaled to `width` with lanczos. It prints each file's bytes,
+and its cap when over it. After a look change, refreshing the images is this command and a
+commit.
+
+```sh
+node scripts/shoot-images.mjs                     # every row
+node scripts/shoot-images.mjs --only hero         # one row
+node scripts/shoot-images.mjs --print hero        # the row's commands, copy-pasteable
+node scripts/shoot-images.mjs --check             # re-render and compare with the committed files
+```
+
+| Option | Does |
+|--------|------|
+| `--only ID,..` | Shoot these rows only |
+| `--print ID` | Print the row's three commands (clear its frames, render, encode) and exit |
+| `--check` | Render and encode into `target/shots/check/`, decode the new and the committed file, and print the share of pixels with a channel more than 2 of 255 apart against the row's `tolerance`; exit 1 when one is over |
+| `--no-build` | Use the release binaries as already built |
+| `--manifest FILE` | Read `FILE` instead of `docs/images/shots.json` |
+
+A frame is not bit-identical from run to run on every scene (the outdoor hills differ in a few
+pixels in a thousand), so a row's tolerance is read from pairs of runs, not assumed.

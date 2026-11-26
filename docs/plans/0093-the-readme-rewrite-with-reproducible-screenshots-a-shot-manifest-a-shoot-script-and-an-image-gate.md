@@ -718,8 +718,8 @@ in that order. The Implementation log gains a row for Phase 6b.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the still flags and the idempotence reading | dev | done; readings in [the log](logs/0093.md) | committed with this row |
-| 2: the manifest and the shoot script | dev | not started | |
+| 1: the still flags and the idempotence reading | dev | done; readings in [the log](logs/0093.md) | `420bcf16` |
+| 2: the manifest and the shoot script | dev | stopped: `--check` after the shoot over tolerance on `hero` (log) | wip, committed with this row |
 | 3: the image gate, fragments, CI | dev | not started | |
 | 4: candidates and contact sheets | dev | not started | |
 | 5: the owner picks | human | not started | |
@@ -745,6 +745,14 @@ each. Empty is fine.)_
 - Phase 1: without `--profile` or `--render` the done-when's command writes 1280 x 720 (the
   tree's default surface); with `--profile floor` it writes 1920 x 1080 (log).
 - Phase 1: `--vox` on `--source outdoor` parses and is ignored: no castle is placed (log).
+- Phase 2: the manifest's map is `shots`, not `stills`; `hero.png`, `spider-walk.gif` and
+  `walker-walk.gif` are in `frozen` until the rewrite replaces them.
+- Phase 2: a `clip` entry runs the example and encodes WebP itself, not through
+  `record-clip.sh --input` (which writes GIF and MP4 only).
+- Phase 2: the hero's tolerance is the largest of six pairs of four hills stills (Phase 1's
+  two runs and two more), 0.006305 to 0.007; the clips' 0 is from pairs read in Phase 2.
+- Phase 2: `--check` right after the shoot exits 1: hero 0.117263 against 0.007, the clips 0
+  (log). Not met; stopped for the architect.
 
 ### Close triggers
 

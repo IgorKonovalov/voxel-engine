@@ -1,0 +1,55 @@
+{
+  "shots": {
+    "hero": {
+      "kind": "still",
+      "file": "hero.webp",
+      "width": 1600,
+      "quality": 82,
+      "source": "flythrough",
+      "seed": 1,
+      "flags": ["--headless", "--source", "outdoor", "--trees", "forest", "--spawn", "forest",
+                "--time", "18:10", "--render", "1920x1080", "--frames", "96"],
+      "still_at": 95,
+      "tolerance": 0.007,
+      "cap_bytes": 300000,
+      "note": "tolerance: the largest of six pairs of four hills stills at 15:00 (0.006305), 2026-11-26, RTX 3080 Laptop"
+    },
+    "spider-walk": {
+      "kind": "loop",
+      "file": "spider-walk.webp",
+      "width": 800,
+      "fps": 25,
+      "quality": 70,
+      "source": "clip",
+      "seed": 1,
+      "flags": ["--clip", "walk"],
+      "tolerance": 0,
+      "cap_bytes": 700000,
+      "fallback": "gif",
+      "note": "tolerance: a pair read no pixel apart, 2026-11-26, RTX 3080 Laptop"
+    },
+    "walker-walk": {
+      "kind": "loop",
+      "file": "walker-walk.webp",
+      "width": 480,
+      "fps": 25,
+      "quality": 70,
+      "source": "clip",
+      "seed": 1,
+      "flags": ["--rig", "apps/flythrough/assets/entities/walker/walker.rig", "--clip", "walk",
+                "--ahead", "70", "--orbit", "24,3,-10", "--aim", "9"],
+      "tolerance": 0,
+      "cap_bytes": 700000,
+      "fallback": "gif",
+      "note": "tolerance: a pair read no pixel apart, 2026-11-26, RTX 3080 Laptop"
+    }
+  },
+  "frozen": {
+    "light/hall-settled-8192-frames.png": "a closed light write-up's figure; the mechanism it shows is gone",
+    "light/hall-diff-64-vs-8192-x8.png": "a closed light write-up's figure; the mechanism it shows is gone",
+    "light/hall-diff-2048-vs-8192-x8.png": "a closed light write-up's figure; the mechanism it shows is gone",
+    "hero.png": "today's hero, made by the hero example; hero.webp replaces it when the README is rewritten",
+    "spider-walk.gif": "today's README loop; spider-walk.webp replaces it when the README is rewritten",
+    "walker-walk.gif": "the entities page's loop; walker-walk.webp replaces it when the README is rewritten"
+  }
+}
