@@ -912,7 +912,7 @@ impl Run {
             );
             self.queue.line_class = (st.class_samples, st.class_ms);
             println!(
-                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample (price {:.2} ms a dispatch + {:.1} ns), fading {}, coarse {} chunks, {}, eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms, provisional {} (opened {}, catch-ups {}), key {} (landed {}), zero by rule {} (re-listed {}), sealed by the workers {} ({} shells, {} B), {}, {}",
+                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample (price {:.2} ms a dispatch + {:.1} ns), fading {}, coarse {} chunks, {}, eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms, provisional {} (opened {}, catch-ups {}), key {} (landed {}), zero by rule {} (re-listed {}) border re-listed {}, sealed by the workers {} ({} shells, {} B), {}, {}",
                 t / 1e3,
                 self.frame,
                 st.depth,
@@ -945,6 +945,7 @@ impl Run {
                 st.keys_baked,
                 st.zeroed,
                 st.zero_relisted,
+                st.zero_border_relisted,
                 st.sealed,
                 shells,
                 shell_bytes,
