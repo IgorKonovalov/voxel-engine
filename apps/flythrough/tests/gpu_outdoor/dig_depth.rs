@@ -476,6 +476,39 @@ mod dig_depth {
         /// The read's table: a row a frame, then the peak over settled (D+0 to D+[`AFTER`]),
         /// its frame, write, and each term at the peak against the settled frame's; and, in
         /// lockstep, the held parts' summary by face kind and base source.
+        /// The held value under four forms against the landed record, a part each, in bytes of
+        /// the record (Plan 0105 Phase 4's rule): today's `max(base sqrt(open), floor)`, Phase
+        /// 3's `base sqrt(open)`, and over the share that reaches the base's height its root and
+        /// the share itself; a part's value is the mean of its kept faces at the cell's old
+        /// record and its dig faces at the form. Per form: parts over at all, over by more than
+        /// one byte, the largest excess.
+        fn forms_row(r: &DigRead) -> String {
+            let mut forms = [(0usize, 0usize, 0i32); 4];
+            let mut n_landed = 0usize;
+            for (p, rec) in &r.parts {
+                let Some(l) = rec[1] else {
+                    continue;
+                };
+                n_landed += 1;
+                let base = p.own.map_or(p.up, |o| o.min(p.up));
+                let ests = [(base * p.open.sqrt()).max(0.02), base * p.open.sqrt(), base * p.reach.sqrt(), base * p.reach];
+                let (nn, no) = (f32::from(p.new_faces), f32::from(p.old_faces));
+                for (k, est) in ests.into_iter().enumerate() {
+                    let v = (no * p.own.unwrap_or(0.0) + nn * est) / (nn + no).max(1.0);
+                    let over = (v * 255.0).round() as i32 - (l[0] * 255.0).round() as i32;
+                    let e = &mut forms[k];
+                    e.0 += usize::from(over > 0);
+                    e.1 += usize::from(over > 1);
+                    e.2 = e.2.max(over);
+                }
+            }
+            let mut row = format!("    forms over landed (parts {n_landed}; over at all / over by more than one byte / largest, bytes):");
+            for (name, e) in ["today", "phase3", "root", "share"].iter().zip(forms) {
+                row += &format!(" {name} {} / {} / {:+}", e.0, e.1, e.2);
+            }
+            row
+        }
+
         fn read_text(r: &DigRead, out: [u32; 2], site: &str, mode: &str) -> (String, String) {
             let mut t = String::new();
             let settled = r.frames.last().expect("the settled frame");
@@ -585,6 +618,9 @@ mod dig_depth {
                     let _ = writeln!(t, "{row}");
                     summary += &format!("\n{row}");
                 }
+                let row = forms_row(r);
+                let _ = writeln!(t, "{row}");
+                summary += &format!("\n{row}");
                 // By the stored radiance's source in the provisional block: the dig directions
                 // (parts), their cells, the old record's luminance, the record's at D+0 and
                 // landed.
@@ -613,8 +649,8 @@ mod dig_depth {
                 for (p, rec) in &r.parts {
                     let _ = writeln!(
                         t,
-                        "      part {:?} slot {} sub {} face {} value {:.3} estimate {:.3} up {:.3} from {:?} own {:?} open {:.3} faces new {} old {} radiance from {:?} old {:?} record at D+0 (vis, radiance) {:?} landed {:?}",
-                        p.chunk, p.slot, p.sub, p.face, p.value, p.estimate, p.up, p.from, p.own, p.open, p.new_faces, p.old_faces, p.radiance_from, p.old_radiance, rec[0], rec[1]
+                        "      part {:?} slot {} sub {} face {} value {:.3} estimate {:.3} up {:.3} from {:?} own {:?} open {:.3} reach {:.3} faces new {} old {} radiance from {:?} old {:?} record at D+0 (vis, radiance) {:?} landed {:?}",
+                        p.chunk, p.slot, p.sub, p.face, p.value, p.estimate, p.up, p.from, p.own, p.open, p.reach, p.new_faces, p.old_faces, p.radiance_from, p.old_radiance, rec[0], rec[1]
                     );
                 }
             }
