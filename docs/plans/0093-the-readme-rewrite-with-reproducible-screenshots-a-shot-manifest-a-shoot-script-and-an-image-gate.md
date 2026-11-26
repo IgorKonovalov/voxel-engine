@@ -1,6 +1,6 @@
 # 0093: The README rewrite with reproducible screenshots: a shot manifest, a shoot script that re-renders every image in one command, an image gate, and the owner's pick from contact sheets
 
-> **Status:** approved 2026-11-19 (drafted from the Bonsai second pass, section 2, and the
+> **Status:** in-progress (lane started 2026-11-26; Phase 1 landed). Approved 2026-11-19 (drafted from the Bonsai second pass, section 2, and the
 > owner's "more screenshots through the doc"; the owner: "all recommended", every owner question
 > on its recommendation: after 0087, beside 0089, before 0091; canopy shot now; one caption line;
 > the frame-time figure; the hero from the sheet). **Refreshed 2026-11-26** against main
@@ -718,7 +718,7 @@ in that order. The Implementation log gains a row for Phase 6b.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the still flags and the idempotence reading | dev | not started | |
+| 1: the still flags and the idempotence reading | dev | done; readings in [the log](logs/0093.md) | committed with this row |
 | 2: the manifest and the shoot script | dev | not started | |
 | 3: the image gate, fragments, CI | dev | not started | |
 | 4: candidates and contact sheets | dev | not started | |
@@ -732,6 +732,19 @@ in that order. The Implementation log gains a row for Phase 6b.
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1: `tests/gpu_still.rs` existed (the `--still` test); the new test is added to it.
+- Phase 1: the CLI tests are in `src/cli/tests/still.rs` (new), since `src/cli/tests.rs` is at
+  1181 of the 1200-line cap.
+- Phase 1: files touched beyond the list: `apps/flythrough/Cargo.toml` (`png` from
+  dev-dependencies to dependencies, the same pin), `src/setup.rs` (`--eye` on every source's
+  camera and streamed centre), `src/run/switch.rs` (a source switch drops `--eye` and counts
+  `--still-at` on), `src/cli/tests/outdoor.rs` (the field's new place, `Args::eye`).
+- Phase 1: the still is written after `draw` returns (`run/frame.rs`, `frame`); the overlay
+  case draws the presenter and the overlay again in a submit of their own (`run/still.rs`).
+- Phase 1: without `--profile` or `--render` the done-when's command writes 1280 x 720 (the
+  tree's default surface); with `--profile floor` it writes 1920 x 1080 (log).
+- Phase 1: `--vox` on `--source outdoor` parses and is ignored: no castle is placed (log).
 
 ### Close triggers
 

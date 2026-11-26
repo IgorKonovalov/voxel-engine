@@ -238,7 +238,12 @@ impl Run {
         if self.frame == 0 {
             self.write_start_text();
         }
-        self.draw(gpu, surface, t0, dt)
+        let drawn = self.frame;
+        let flow = self.draw(gpu, surface, t0, dt);
+        if self.frame > drawn {
+            self.write_still_at(gpu, drawn);
+        }
+        flow
     }
 
     /// The frame's input step, before anything else reads the input: under `--tester` the

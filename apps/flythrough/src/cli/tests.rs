@@ -15,6 +15,7 @@ use svet_app::Pacing;
 use svet_render::UpscalerKind;
 mod exposure;
 mod outdoor;
+mod still;
 
 use svet_render::{
     AutoExposure, Exposure, HistoryKill, LightingResolution, NormalMode, RenderScale, ShadowWalk,
