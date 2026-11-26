@@ -1355,7 +1355,7 @@ taken as recommended ("Amended 2026-11-26 (owner)").
 | the stop: the architect's amendment | - | written, with no remedy phase: the owner closed the plan ("Amended 2026-11-26 (owner)"; row marked by the architect) | |
 | 6a: Plan 0100's unpicked settings removed | dev | done: the removal, quick tier, clippy, fmt and checks green; the gpu binaries 57 passed, no golden differs; the rows walk ruled ("Amended 2026-11-26 (architect, after Phase 6a's stop)"): `lighting.key_cover` 0 pixels under the defaults, 12 071 under the far normal off (`LIVE_UNDER`), the walk passes, 14.0 s; readings in [`logs/0104.md`](logs/0104.md) | e8325704 (wip), committed with this row |
 | 6b: the rig cut to what stays, the anchors named, the pins | dev | done: candidate 7 and the read-a-frame scoring of holds cut, the `.keys` record 5 bytes a sample; on the cut code `T a` 0.01507 against `T b` 0.01123 and the sunlit-leaf row 0.02480 against 0.02476 repeat; `live/p4/*.keys` deleted, 14 626 939 470 B; the anchors' table and the soak pins (`docs/nfr/07-startup-and-build.md`); readings in [`logs/0104.md`](logs/0104.md) | committed with this row |
-| 6c: main merged in, and the tip's gate in parts | dev | not started | |
+| 6c: main merged in, and the tip's gate in parts | dev | done: main `1bfa3e5b` merged, one roster conflict, one merge fix-up (`support/baked.rs` to main's `QueueRead`); clippy, fmt, deny, doctests, checks green; gate CPU part 1103 passed, `gpu_*` in three holds 108 + 100 + 128 passed (508, 326, 448 s, loaded); sole 1 passed; gate parts 1314 s wall against section 7's 1140 s, loaded; no golden moved; soak tests 391.0 s (bar 600) and 91.7 s on lavapipe; readings in [`logs/0104.md`](logs/0104.md) | 7cd1f816, committed with this row |
 
 ### Notes
 
@@ -1402,11 +1402,23 @@ each. Empty is fine.)_
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** Phase 0's shared settle (`apps/flythrough/tests/support/baked.rs`) and
+  Phase 0b's one-store forest soak test; Plan 0100's unpicked settings removed (6a): `key at`,
+  `key horizon`, `key cover record`, `key cover walk`, the column map's coarse rows; `key cover
+  ray` stays, off; the `gpu_wobble` rig cut (6b); clips, maps and the anchors under the
+  untracked `live/anchor/` and `live/p4/`; main `1bfa3e5b` merged at `7cd1f816`.
+- **Public API changed:** `svet-render` drops `KeyAt`, `KeyHorizon`, `Lighting::key_at`,
+  `Lighting::key_horizon`, `KeyCover::Record` and `KeyCover::Walk`, `KEY_WALK_WGSL`,
+  `COLUMN_BLOCK`, `COLUMN_BLOCKS`, `column_coarse_texel` and `column_coarse_bytes`; the
+  fly-through's matching flags, keys and settings rows (`docs/flythrough.md`).
+- **Budget readings:** gate tier on the merged tree 1314 s wall (1173.2 s nextest) against
+  `docs/nfr.md` section 7's 19 min (1140 s), loaded (load 10 to 12 in hold A); the forest soak
+  test 391.0 s on lavapipe against its 600 s bar, the other 91.7 s; Phase 0b's pins in
+  `docs/nfr/07-startup-and-build.md`.
+- **Gate at the tip:** `7cd1f816` plus this row: clippy 0, fmt 0, deny ok, doctests 10 passed,
+  gate CPU part 1103 passed, `gpu_*` 336 passed in three holds, sole 1 passed, both `gpu_wobble`
+  soak tests passed, every `scripts/check-*.mjs` 0; no golden moved.
+- **Outstanding `human` phases:** none.
 
 ## Followups
 
