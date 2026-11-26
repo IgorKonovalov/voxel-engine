@@ -877,6 +877,137 @@ minutes for 45 s of rendering; the final set and Phase 4's sweep would wait for 
 
 The Implementation log gains rows for Phases 2b, 2c and 2d; Phase 2's row stays as it reads.
 
+## Amended 2026-11-26 (architect, a loop's tolerance)
+
+Phase 2d stopped on "`--check` right after the shoot exits 0": `spider-walk` read 0.002066
+against a tolerance of 0. Three rulings: a tolerance is fixed from a noise set of at least
+six renders, never from one pair; a loop is judged by its cell share over every frame, the
+worst frame printed beside it and not judged; the clip example's run-to-run difference is
+noise this check carries and a finding for [the backlog](../backlog.md), not for this plan.
+Phase 2d's remainder is Phases 2e and 2f below; 2d's row stays as it reads.
+
+### C1. What Phase 2d read (RTX 3080 Laptop, [the log](logs/0093.md), Phase 2d)
+
+- The cell share, the batches and the settled start work: a shoot of 317 s with one hold of
+  56 s; the hero 0.002478 against 0.004; `walker-walk` 0 against 0.
+- `spider-walk`'s PNG frames are the same for frames 0 to 11 and differ from frame 12 on in
+  about a hundred pixels of 921600, scattered over the whole frame and not at the model
+  (frame 12: 112 pixels, largest channel difference 4; frame 27: 204, largest 14). Phase 2's
+  pair of the same command was bit-identical. As PNG this is 0.000011 of the pixels at its
+  worst; the settled hero's noise is 0.0004 to 0.0008.
+- The animated encoder turns it into spikes: frame 13 reads 0.017 of its cells, frame 28
+  0.0095, frame 33 0.025, and the moved cells stay moved in the frames after (the encoder
+  builds a frame on the one before). One frame's noise, 0.025, is as large as the hero's
+  smallest wrong picture (0.022832); over the 40 frames it is 0.002066.
+
+### C2. Ruling 1: a tolerance stands on a noise set of six renders or more, and a loop is judged over the loop
+
+- **The set.** An entry's tolerance is fixed from at least six renders of the entry as it
+  stands (15 pairs), by the binaries that shoot it, every pair read as `--check` reads it
+  (encoded as the entry encodes, decoded, the cell share at C 8, L 4, over every frame). The
+  tolerance is the largest pair, rounded up to one significant figure; 0 stays 0 when all
+  15 pairs read 0. The entry's `note` names the renders, the pairs and the largest pair.
+- **The wrong pictures beside it.** The tolerance must be at most a third of the smallest
+  wrong share read for that entry (2c's rule, kept). The hero's wrong pictures are 2c's, so
+  its ceiling is 0.0076. A loop's are read in Phase 2e.
+- **The loops' 0 is void, both of them.** A tolerance of 0 from one pair passes only
+  bit-identical encodes, which is B2's rejected hash of the frame. `spider-walk`'s is
+  refuted; `walker-walk`'s has the same weakness (two pairs read 0 by now, from the example
+  that diverged for the other rig) and is read again from six renders. If its 15 pairs read
+  0, 0 stands and its note says so.
+- **The hero's 0.004 is provisional until its set is eight.** Four renders gave six pairs
+  that share four frames: 0.001549 to 0.003186, and the seventh pair read 0.002478. The
+  rounding leaves a quarter of headroom over a largest value taken from four frames; the
+  ceiling leaves room up to 0.0076. Six of the eight renders exist (2c's four encoded files,
+  2d's shoot and check); Phase 2e renders two more and reads the 28 pairs. The tolerance is
+  then fixed by the rule above, whether that keeps 0.004 or not.
+- **A loop is judged over the loop.** The share over every frame's cells is the judged
+  quantity, as the script computes it today. A wrong loop (another pass, light, pose or
+  scene) is wrong in every frame, where the noise is spikes in a few (C1), so the loop's
+  share separates them and the worst frame's does not (expected from C1; Phase 2e reads it).
+  `--check` prints a loop's worst frame and its share beside the loop's, as a reading.
+  Not asked of the check: a loop wrong in one or two frames only. 2e reads a loop started
+  one frame late beside the noise, and the log says whether the check sees it.
+- **A tolerance is never read again from the pair that failed it.** Today's is the one
+  case allowed: the set was under the minimum, so the number was void, as B2's 0.007 was.
+  From Phase 2f on, a `--check` over a tolerance that stands on a full set is a finding
+  (the frames and logs go to the architect); a new set is read only after a named change
+  of the look or of the encoder.
+
+Rejected: **the worst frame as the judged quantity** (its noise equals a wrong picture's
+share, C1); **PNG frames compared for loops** (the reference is the file the README shows,
+B2); **a still encoded per frame for the comparison** (the check would no longer measure the
+committed file, and the carry between frames is part of that file); **0.003 for the spider
+from the one pair that failed** (one pair again); **one tolerance for every `clip` entry**
+(the widths and the models differ; each entry's set is its own).
+
+### C3. Ruling 2: the clip example's difference is carried as noise here and parked as a finding
+
+Read in `apps/flythrough/examples/clip.rs` and `examples/shared/still.rs`: the recorded loop
+calls `Frame::set_entity_displays`, `Frame::step` a fixed number of times (64 once, 16 per
+frame) and `debug::read_rgba8`, a staged copy read once it is mapped. Frame `n`'s pose is a
+function of `n`; the one clock read is the stopwatch for the closing line. The example
+starts no live queue and no bake thread (the light is one `bake_until` before the loop), and
+it calls none of the non-waiting reads (`Frame`'s exposure read-out, the store's statistics,
+the pass timer). So nothing on the CPU side of the example is paced by the wall, by a
+worker's arrival or by when a read-back maps. `Frame::step`'s passes were not read past its
+body, and the cause is **not attributed**: what the frames say is a difference in scattered
+single pixels over the whole image that starts between the 257th and the 272nd step (frame
+12's) and stays small, in one of two pairs.
+
+- **Not Plan 0106's:** that plan removes wall-paced waits from tests; no wait here is paced
+  by the wall.
+- **For this plan it is noise**, some 70 times under the settled hero's as PNG pixels, and
+  Ruling 1 reads it into the loops' tolerances. No scene, flag or setting changes to hide it.
+- **For the engine it is a finding** (two runs of a fixed-step tool on one adapter should
+  give the same frames, and a golden image test leans on that): a backlog entry of this
+  date, under "Tooling and process", with the reading that would attribute it. Phase 2e adds
+  what falls out for free: each loop pair's first differing PNG frame and its pixel count.
+
+### Phase 2e: The loops' noise sets and the hero's, read (a reading; no tracked file but the log)
+- **Owner skill:** dev
+- **What:** one hold of the lock, a rig under `live/`, the release binaries the script
+  builds: two more renders of `hero` as the entry stands; six renders each of `spider-walk`
+  and `walker-walk` as their entries stand; for each loop two wrong renders: `--filter off`
+  (or, if the example refuses it, another lighting flag that removes a pass, named) and
+  `--facing` 15 degrees off the facing the run's first line prints. About 270 s of renders
+  (2 x 30 s, 8 x 15 s, 8 x 11 s by 2d's times). After the hold, on the CPU, each render is
+  encoded as its entry encodes, and the log tabulates: the hero's 28 pairs (2c's four, 2d's
+  two, the two new); for each loop its 15 noise pairs, each wrong loop against noise render
+  1, and noise render 1 against itself started one frame late (frame 1 first, frame 0
+  last; no render). Per loop pair: the share over the loop, the worst frame with its share,
+  the largest cell, the first PNG frame that differs and its count of differing pixels.
+- **Files touched:** `docs/plans/logs/0093.md`.
+- **Done when:** the tables are in the log with the hold's lock time and load, and one line
+  per entry names its tolerance by C2 (the largest pair rounded up, the smallest wrong share
+  beside it, the ratio) and says whether the loop started late reads over it.
+- **Stop, reported:** an entry's largest noise pair is over a third of its smallest wrong
+  share (for the hero, over 0.0076; the frame shifted in time is not a wrong share for this
+  rule); or the hold would pass 900 s. The tables go to the architect; no wrong picture is
+  swapped for a grosser one to make the ratio.
+
+### Phase 2f: The tolerances, the worst frame and the shoot (a fix; closes Phase 2)
+- **Owner skill:** dev
+- **What:** `docs/images/shots.json`: each entry's `tolerance` and `note` from 2e, by C2.
+  `scripts/shoot-images.mjs`: `cellShare` also returns the worst frame and its share, and
+  `--check` prints them for a loop, unjudged. Then the remainder of 2d: the shoot, `--check`
+  right after, a second `--check` later the same day, the `--print hero` commands by hand,
+  and the three WebP files committed with the phase.
+- **Files touched:** `scripts/shoot-images.mjs`, `scripts/shoot-images.test.mjs` (two frames
+  built in memory, one cell moved by L + 1 in the second: the share is 1 over the cells of
+  both, the worst frame is frame 1 and its share 1 over one frame's cells; equal buffers
+  name no worst frame), `docs/images/shots.json`, `docs/images/hero.webp`,
+  `spider-walk.webp`, `walker-walk.webp`, `docs/flythrough.md` (the shooting section, if a
+  line of it changes), `docs/plans/logs/0093.md`.
+- **Done when:** Phase 2d's Done when in full, with this added: `--check` prints for each
+  loop its worst frame and that frame's share; every `note` names six renders or more and
+  its largest pair. No hold passes 900 s. The script's tests pass in under a second, and
+  `node scripts/test-changed.mjs --profile quick` is green. The resume notes leave the log.
+- **Stop, reported:** a `--check` over its tolerance. The tolerance is not edited and no
+  render is added to a set; the frames, logs and the per-frame table go to the architect.
+
+The Implementation log gains rows for Phases 2e and 2f.
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases

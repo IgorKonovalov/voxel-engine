@@ -1403,6 +1403,14 @@ Taken by [Plan 0080](plans/done/0080-the-fly-throughs-menu-one-overlay-a-palette
 Done 2026-11-13 (4ea561f): a `--path` benchmark starts the lamp off unless `--lamp` is given, and `run.json` names it. **Bench readings of the cave and castle paths from before 4ea561f ran with the lamp on and are not compared with readings after it.**
 
 
+### The clip example's frames differ run to run on one adapter (2026-11-26)
+
+From [Plan 0093](plans/0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) Phase 2d (its section "Amended 2026-11-26 (architect, a loop's tolerance)", C3; readings in `docs/plans/logs/0093.md`). Two runs of `clip --clip walk --seed 1 --fps 25` on the RTX 3080 Laptop gave PNG frames that are the same for frames 0 to 11 and differ from frame 12 on in about a hundred scattered pixels of 921600 (largest channel difference 14), nowhere near the model; an earlier pair of the same command was bit-identical, and the walker's two pairs were.
+
+- **What the code says:** the example's loop is paced by the frame number, starts no live queue and no bake thread, and reads no clock and no non-waiting read-back, so the cause is inside `Frame::step`'s passes or the driver. Not attributed; not a wall-paced wait, so not Plan 0106's.
+- **What it would take:** a reading on that adapter: pairs of runs with one pass or setting off at a time (the upscaler at scale 1, the filter, the temporal pass, the entity pool) until the frames are bit-identical, and the same pairs on lavapipe, where the golden images are blessed.
+- **Pick it up when:** a golden image or a loop's check turns flaky and this is the suspect, or a plan asks for bit-identical frames from a fixed-step tool. Plan 0093 carries it as noise inside its loops' tolerances.
+
 ## Ideas from Bonsai
 
 Parked 2026-11-19: the owner pointed at [Bonsai](https://github.com/scallyw4g/bonsai), a C++
