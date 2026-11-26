@@ -595,6 +595,13 @@ impl ThreadLink {
         })
     }
 
+    /// Blocks until the bake thread has stepped every message sent and handed in each step's
+    /// entries, or waits at the outbox's cap, or has ended ([`BakeThread::wait_step`]). Takes
+    /// nothing: the next frame's take holds what it made.
+    pub(crate) fn wait_step(&self) {
+        self.thread.wait_step();
+    }
+
     /// The bake thread's steps so far.
     #[cfg(test)]
     pub(crate) fn steps(&self) -> u64 {

@@ -34,6 +34,11 @@ pub(crate) trait Weighed {
 struct Outbox<O> {
     entries: Vec<O>,
     bytes: usize,
+    /// Steps whose last entries are in (the step whole, its returned entries after any it
+    /// handed in): with [`Shared::picked`] the bake thread's idle state.
+    done: u64,
+    /// Whether a put waits at the cap now.
+    at_cap: bool,
 }
 
 struct Shared<M, O> {
@@ -41,7 +46,8 @@ struct Shared<M, O> {
     outbox: Mutex<Outbox<O>>,
     /// The bake thread's wait: a message arrived, room was made, or the stop.
     wake: Condvar,
-    /// The render thread's wait ([`BakeThread::take_until`]): an entry made, or the thread ended.
+    /// The render thread's waits ([`BakeThread::take_until`], [`BakeThread::wait_step`]): an
+    /// entry made, a put waiting at the cap, or the thread ended.
     made: Condvar,
     stop: AtomicBool,
     /// Set as the bake thread ends, by its stop or a panic, under the outbox's lock.
@@ -50,6 +56,10 @@ struct Shared<M, O> {
     /// Steps the bake thread has run: counted as a step's last entries go in, or as one of its
     /// entries starts to wait at the cap.
     steps: AtomicU64,
+    /// Messages the bake thread has taken from the inbox: added under the inbox's lock as it
+    /// takes one, so with the inbox empty `picked == done` holds only once every message sent
+    /// has been stepped whole.
+    picked: AtomicU64,
 }
 
 impl<M, O> Shared<M, O> {
@@ -88,7 +98,15 @@ impl<M, O: Weighed> Shared<M, O> {
             if self.stop.load(Ordering::Acquire) {
                 break;
             }
+            if !ob.at_cap {
+                ob.at_cap = true;
+                self.made.notify_all();
+            }
             ob = self.wake.wait(ob).unwrap_or_else(PoisonError::into_inner);
+        }
+        ob.at_cap = false;
+        if last {
+            ob.done += 1;
         }
         ob.bytes += bytes;
         ob.entries.extend(out);
@@ -130,6 +148,8 @@ where
             outbox: Mutex::new(Outbox {
                 entries: Vec::new(),
                 bytes: 0,
+                done: 0,
+                at_cap: false,
             }),
             wake: Condvar::new(),
             made: Condvar::new(),
@@ -137,6 +157,7 @@ where
             ended: AtomicBool::new(false),
             cap,
             steps: AtomicU64::new(0),
+            picked: AtomicU64::new(0),
         });
         let sh = shared.clone();
         let handle = std::thread::Builder::new()
@@ -154,6 +175,7 @@ where
                                 return side;
                             }
                             if let Some(m) = slot.take() {
+                                sh.picked.fetch_add(1, Ordering::Release);
                                 break m;
                             }
                             slot = sh.wake.wait(slot).unwrap_or_else(PoisonError::into_inner);
@@ -223,6 +245,33 @@ where
                 .made
                 .wait(ob)
                 .unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+
+    /// Blocks until the bake thread has stepped every message sent to it and handed in each
+    /// step's last entries, or waits at the outbox's cap, or has ended (by its stop or a panic,
+    /// read with [`BakeThread::failed`]); at once when nothing was sent. It takes nothing from
+    /// the outbox. No timeout: it waits on [`Shared::made`], which a put, a put's wait at the cap
+    /// and the thread's end notify under the outbox's lock. A test's and a headless tool's wait:
+    /// no frame path calls it.
+    pub(crate) fn wait_step(&self) {
+        let sh = &*self.shared;
+        let mut ob = Shared::<M, O>::lock(&sh.outbox);
+        loop {
+            if sh.ended.load(Ordering::Acquire) || ob.at_cap {
+                return;
+            }
+            // The inbox's lock is taken under the outbox's here and nowhere the other way
+            // round. `done` moves only under the outbox's lock, held; `picked` only under the
+            // inbox's, held for the read.
+            let idle = {
+                let slot = Shared::<M, O>::lock(&sh.inbox);
+                slot.is_none() && sh.picked.load(Ordering::Acquire) == ob.done
+            };
+            if idle {
+                return;
+            }
+            ob = sh.made.wait(ob).unwrap_or_else(PoisonError::into_inner);
         }
     }
 
@@ -411,6 +460,100 @@ mod tests {
             "room made, the waiting step lands"
         );
         drop(t);
+    }
+
+    /// The wait for the step blocks while a step is held and returns only after the release
+    /// from a second thread, with the step's entries in; it returns at once with nothing sent,
+    /// when the thread waits at the cap, and after a panic ended the thread.
+    #[test]
+    fn the_step_wait_returns_after_the_held_step_and_never_before() {
+        let (gate_tx, gate_rx) = std::sync::mpsc::channel::<()>();
+        let (held_tx, held_rx) = std::sync::mpsc::channel::<()>();
+        let gate = Mutex::new(gate_rx);
+        let held = Mutex::new(held_tx);
+        let t = BakeThread::start(
+            (),
+            1 << 20,
+            |_a: u32, b: u32| b,
+            move |_, _, _, hand| {
+                let _ = held.lock().expect("one step at a time").send(());
+                let _ = gate.lock().expect("one step at a time").recv();
+                hand(vec![Entry(1)]);
+                vec![Entry(2)]
+            },
+        )
+        .expect("spawned");
+        t.wait_step();
+        assert_eq!(t.steps(), 0, "nothing sent: at once, no step");
+
+        let released = Arc::new(AtomicBool::new(false));
+        let at = Arc::new(Mutex::new(None::<Instant>));
+        t.send(0);
+        let releaser = {
+            let (released, at) = (released.clone(), at.clone());
+            std::thread::spawn(move || {
+                held_rx.recv().expect("the step holds");
+                *at.lock().expect("one writer") = Some(stopwatch());
+                released.store(true, Ordering::Release);
+                gate_tx.send(()).expect("open");
+                // The second message's step goes through at once.
+                held_rx.recv().expect("the second step holds");
+                gate_tx.send(()).expect("open");
+            })
+        };
+        t.wait_step();
+        let back = stopwatch();
+        assert!(
+            released.load(Ordering::Acquire),
+            "the wait returned only after the release"
+        );
+        let at = at.lock().expect("written").expect("released");
+        assert!(
+            at <= back,
+            "the release's instant is at or before the return"
+        );
+        assert_eq!(t.steps(), 1);
+        let made: Vec<usize> = t.take().iter().map(|e| e.0).collect();
+        assert_eq!(made, vec![1, 2], "the step's entries, its last among them");
+
+        // Three sends merge into at most two steps; the wait covers every message sent.
+        for m in 1..=3 {
+            t.send(m);
+        }
+        t.wait_step();
+        let made = t.take().len();
+        assert!(t.steps() >= 2, "the second step ran");
+        assert_eq!(made as u64, (t.steps() - 1) * 2, "each step whole");
+        assert!(!t.waiting(), "no message waits");
+        releaser.join().expect("the releaser ran");
+        drop(t);
+
+        // At the cap: one step fills the outbox, the next waits at the cap and so does the wait.
+        let t = BakeThread::start((), 10, |_a: u32, b: u32| b, |_, _, _, _| vec![Entry(10)])
+            .expect("spawned");
+        t.send(0);
+        t.wait_step();
+        assert_eq!(t.steps(), 1);
+        t.send(1);
+        t.wait_step();
+        assert_eq!(t.steps(), 2, "the second step waits at the cap");
+        assert_eq!(t.outbox_bytes(), 10);
+        drop(t);
+
+        // A panic ends the thread: the wait returns and the panic is read.
+        let mut t = BakeThread::start(
+            (),
+            10,
+            |_a: u32, b: u32| b,
+            |_, m: u32, _, _| {
+                assert!(m < 3, "message {m} breaks the step");
+                Vec::<Entry>::new()
+            },
+        )
+        .expect("spawned");
+        t.send(3);
+        t.wait_step();
+        assert_eq!(t.failed().as_deref(), Some("message 3 breaks the step"));
     }
 
     /// Dropping the handle joins the thread, waiting or held at the cap; a panic on the thread

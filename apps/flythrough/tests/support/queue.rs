@@ -237,6 +237,15 @@ impl Q {
         self.step_with(true)
     }
 
+    /// One frame stepped by count: [`Q::step`] (which waits on the device), then the bake
+    /// thread's step of the message that frame sent waited for (`Frame::wait_bake_step`; at
+    /// once in lockstep), so the next frame's take finds this one's step made.
+    pub fn step_counted(&mut self) -> QueueStats {
+        let st = self.step();
+        self.frame.wait_bake_step();
+        st
+    }
+
     pub fn q(&self) -> svet_render::QueueRead<'_> {
         self.frame.bake_queue().expect("the queue started")
     }

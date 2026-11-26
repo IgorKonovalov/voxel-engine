@@ -156,6 +156,19 @@ impl Frame {
         }
     }
 
+    /// Blocks until the bake thread has stepped every message the frames sent it and handed in
+    /// that step's last entries (its lists, ops and books), or waits at the outbox's cap, or has
+    /// ended; at once in lockstep and with the thread not running. It takes nothing: the next
+    /// frame's take holds what the thread made, so a frame stepped after this wait finds the
+    /// last one's step made. No timeout and no sleep: it blocks on the outbox's condition. A
+    /// test's and a headless tool's wait, to step the threaded queue by count: no frame path
+    /// calls it.
+    pub fn wait_bake_step(&self) {
+        if let Some(link) = &self.baked.thread {
+            link.wait_step();
+        }
+    }
+
     /// Whether the bake thread runs now (on, started, not stopped by a panic).
     pub fn bake_thread_running(&self) -> bool {
         self.baked.thread.is_some()
