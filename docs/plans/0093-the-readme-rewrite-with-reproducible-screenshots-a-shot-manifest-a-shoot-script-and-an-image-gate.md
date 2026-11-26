@@ -1109,8 +1109,8 @@ chunk or its record.
 | 2c: the check's quantity, read | dev | done: C 8, L 4; the hero 0.004; readings in [the log](logs/0093.md) | `f5f3632c` |
 | 2d: the check, the batches, the shoot | dev | stopped: `--check` after the shoot over tolerance on `spider-walk` (log) | `3ece99fb` (wip) |
 | 2e: the noise sets, read | dev | stopped: both loops' `--filter off` reads 0, under their noise; the hero 0.004 (log) | `bceef9a9` |
-| 2f: the tolerances, the worst frame, the shoot | dev | done; readings in [the log](logs/0093.md) | committed with this row |
-| 3: the image gate, fragments, CI | dev | not started | |
+| 2f: the tolerances, the worst frame, the shoot | dev | done; readings in [the log](logs/0093.md) | `30213ffa` |
+| 3: the image gate, fragments, CI | dev | done; readings in [the log](logs/0093.md) | committed with this row |
 | 4: candidates and contact sheets | dev | not started | |
 | 5: the owner picks | human | not started | |
 | 6: the picks, the final shoot, the rewrite | dev | not started | |
@@ -1182,6 +1182,19 @@ each. Empty is fine.)_
   tolerance (log).
 - Phase 2f: `--check` prints a loop's worst frame as `worst frame F at S (unjudged)`, or
   `worst frame none` when no cell is over.
+- Phase 3: the settled start's module doc reworded (`apps/flythrough/src/run/settle.rs`, a
+  file outside Phase 3's list) so `check-comment-hygiene.mjs` exits 0; its own commit `45e8dd67`.
+- Phase 3: the fixture's 301 KB still is 301 000 zero bytes: the fixture is 304 672 bytes on
+  disk and about 3.7 KB as git objects (log).
+- Phase 3: rules beyond the phase's list: a `cap_bytes` above the kind's cap is a finding, an
+  entry's `kind` other than `still` or `loop` is a finding, a `frozen` file that is missing is a
+  finding; the manifest's top-level `readme_cap_bytes` is the fixture's lowered total cap.
+- Phase 3: `check-images.mjs` has a `--self-test` (the five lines, the one draft, the
+  repository clean); `ci.yml` runs it beside the plain gate.
+- Phase 3: `check-doc-links.mjs` gained the optional `root`, skips the seeded subtrees of
+  `scripts/fixtures` on an ordinary run, compares fragments lowercased, and reads a link whose
+  label holds an image (`[![..](..)](#license)`); the fixture seeds two fragment findings
+  (`backlog.md#gone` and a same-file `#nowhere`).
 
 ### Close triggers
 

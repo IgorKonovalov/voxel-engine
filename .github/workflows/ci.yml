@@ -166,6 +166,10 @@ jobs:
         run: node --test "scripts/*.test.mjs"
       - name: Doc links
         run: node scripts/check-doc-links.mjs
+      - name: Images
+        run: node scripts/check-images.mjs
+      - name: Images self-test
+        run: node scripts/check-images.mjs --self-test
       - name: Comment hygiene
         run: node scripts/check-comment-hygiene.mjs
       - name: Index rows

@@ -3,6 +3,7 @@
     "hero": {
       "kind": "still",
       "file": "hero.webp",
+      "draft": true,
       "width": 1600,
       "quality": 82,
       "source": "flythrough",
@@ -17,6 +18,7 @@
     "spider-walk": {
       "kind": "loop",
       "file": "spider-walk.webp",
+      "draft": true,
       "width": 800,
       "fps": 25,
       "quality": 70,
@@ -31,6 +33,7 @@
     "walker-walk": {
       "kind": "loop",
       "file": "walker-walk.webp",
+      "draft": true,
       "width": 480,
       "fps": 25,
       "quality": 70,
