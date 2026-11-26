@@ -11,8 +11,14 @@
 //! along `f` (the share of [`HELD_RINGS`] x [`HELD_AZ`] fixed cosine-weighted rays that leave
 //! [`HELD_REACH`] voxels without meeting an opaque voxel, from the empty voxel before each of up
 //! to [`HELD_FACES`] of the cell's dig faces of direction `f`, their mean; a ray that does not rise
-//! is closed, as the bake's are), at least [`HELD_FLOOR`] under [`DigEstimate::Surface`];
-//! under [`DigEstimate::Depth`] no value is raised to a floor, 0 included.
+//! is closed, as the bake's are), at least [`HELD_FLOOR`] under [`DigEstimate::Surface`].
+//! Under [`DigEstimate::Depth`] no value is raised to a floor, 0 included, and a ray that
+//! clears the near reach counts open only where it goes on, with no opaque voxel, until it
+//! stands at the height the base was read at (the top of the record's cell above, or the
+//! chunk's top for the summary; a base from the cell's own record keeps the near rays alone);
+//! the value is the base times [`depth_form`] of that share.
+
+use std::collections::HashMap;
 
 use super::faces::{class_masks, mask_bit};
 use super::*;
@@ -34,15 +40,23 @@ const HELD_FACES: usize = 8;
 /// Bricks of margin about the touched bricks the opacity grid holds: a ray's reach and one.
 const GRID_MARGIN: i32 = (HELD_REACH + 8) / 8;
 
+/// The held value's share of its base under [`DigEstimate::Depth`] from the share of the rays
+/// that reach the base's height: the share itself (Plan 0105 Phase 4's rule on its CPU table).
+fn depth_form(reach: f32) -> f32 {
+    reach
+}
+
 /// A brick's opaque mask (bit `x + 8 y` of word `z`) by global brick.
 type BrickMask<'a> = Box<dyn FnMut([i32; 3]) -> [u64; 8] + 'a>;
 
 /// The opaque voxels about a dig's touched bricks, a mask a brick over a box of bricks, each
-/// read at its first use; a voxel outside the box reads empty.
+/// read at its first use and kept by brick (the last one read cached); a voxel outside the box
+/// reads empty.
 pub(crate) struct Opaque<'a> {
     lo: [i32; 3],
-    size: [i32; 3],
-    bricks: Vec<Option<[u64; 8]>>,
+    hi: [i32; 3],
+    bricks: HashMap<[i32; 3], [u64; 8]>,
+    last: Option<([i32; 3], [u64; 8])>,
     mask: BrickMask<'a>,
 }
 
@@ -53,18 +67,29 @@ impl<'a> Opaque<'a> {
         hi: [i32; 3],
         mask: impl FnMut([i32; 3]) -> [u64; 8] + 'a,
     ) -> Self {
-        let size = [0, 1, 2].map(|k| (hi[k] - lo[k] + 1).max(0));
         Self {
             lo,
-            size,
-            bricks: vec![None; (size[0] * size[1] * size[2]) as usize],
+            hi,
+            bricks: HashMap::new(),
+            last: None,
             mask: Box::new(mask),
         }
     }
 
     /// The grid about chunk `c`'s bricks `slots` in `world` under `classes`
     /// ([`face_classes`]), [`GRID_MARGIN`] bricks wide; a chunk not resident reads empty.
-    pub(crate) fn about(world: &'a World, classes: &'a [u8], c: [i32; 3], slots: &[u16]) -> Self {
+    /// Under [`DigEstimate::Depth`] it grows to hold a far ray's march ([`far_extent`]):
+    /// up to the highest height a base can be read at (chunk `c`'s top, or [`HELD_CELLS`]
+    /// cells of `cell` voxels over the highest touched brick), and sideways by the outer
+    /// ring's run over that rise.
+    pub(crate) fn about(
+        world: &'a World,
+        classes: &'a [u8],
+        c: [i32; 3],
+        slots: &[u16],
+        cell: u32,
+        estimate: DigEstimate,
+    ) -> Self {
         let mut lo = [i32::MAX; 3];
         let mut hi = [i32::MIN; 3];
         for &s in slots {
@@ -73,6 +98,9 @@ impl<'a> Opaque<'a> {
                 lo[k] = lo[k].min(c[k] * 8 + b[k] - GRID_MARGIN);
                 hi[k] = hi[k].max(c[k] * 8 + b[k] + GRID_MARGIN);
             }
+        }
+        if estimate == DigEstimate::Depth && !slots.is_empty() {
+            (lo, hi) = far_extent(lo, hi, c, cell);
         }
         let store = world.store();
         let mut chunks: BTreeMap<[i32; 3], Option<Arc<std::sync::RwLock<Chunk>>>> = BTreeMap::new();
@@ -90,24 +118,56 @@ impl<'a> Opaque<'a> {
         })
     }
 
+    /// Whether voxel `v` (global) lies in the grid's box.
+    pub(crate) fn holds(&self, v: [i32; 3]) -> bool {
+        (0..3).all(|k| (self.lo[k]..=self.hi[k]).contains(&v[k].div_euclid(8)))
+    }
+
     /// Whether voxel `v` (global) is opaque.
     pub(crate) fn at(&mut self, v: [i32; 3]) -> bool {
-        let b = [0, 1, 2].map(|k| v[k].div_euclid(8) - self.lo[k]);
-        if (0..3).any(|k| b[k] < 0 || b[k] >= self.size[k]) {
+        if !self.holds(v) {
             return false;
         }
-        let i = (b[0] + self.size[0] * (b[1] + self.size[1] * b[2])) as usize;
+        let g = v.map(|x| x.div_euclid(8));
         let l = v.map(|x| x.rem_euclid(8) as usize);
-        let mask = match self.bricks[i] {
-            Some(m) => m,
-            None => {
-                let m = (self.mask)([0, 1, 2].map(|k| self.lo[k] + b[k]));
-                self.bricks[i] = Some(m);
+        let mask = match self.last {
+            Some((b, m)) if b == g => m,
+            _ => {
+                let m = match self.bricks.get(&g) {
+                    Some(m) => *m,
+                    None => {
+                        let m = (self.mask)(g);
+                        self.bricks.insert(g, m);
+                        m
+                    }
+                };
+                self.last = Some((g, m));
                 m
             }
         };
         mask_bit(&mask, l)
     }
+}
+
+/// The outer ring's run sideways a voxel of rise about a vertical normal (its share of the
+/// cosine-weighted hemisphere is `(HELD_RINGS - 0.5) / HELD_RINGS` of `sin^2`, so the tangent
+/// is the root of `2 HELD_RINGS - 1`).
+fn outer_run() -> f32 {
+    ((2 * HELD_RINGS - 1) as f32).sqrt()
+}
+
+/// The box of bricks `lo..=hi` about chunk `c`'s touched bricks grown to hold a far ray's
+/// march under [`DigEstimate::Depth`]: up to the highest base height (the chunk's top, or
+/// [`HELD_CELLS`] cells of `cell` voxels over the box's top) and one brick, and sideways by
+/// [`outer_run`] times the rise from the box's bottom to that height.
+fn far_extent(lo: [i32; 3], hi: [i32; 3], c: [i32; 3], cell: u32) -> ([i32; 3], [i32; 3]) {
+    let top = ((c[2] + 1) * 64).max((hi[2] + 1) * 8 + HELD_CELLS * cell as i32);
+    let rise = top - lo[2] * 8;
+    let side = (rise as f32 * outer_run() / 8.0).ceil() as i32;
+    (
+        [lo[0] - side, lo[1] - side, lo[2]],
+        [hi[0] + side, hi[1] + side, hi[2].max(top.div_euclid(8) + 1)],
+    )
 }
 
 /// The unit vector of face direction `f` (`2 axis + 1` toward `+axis`).
@@ -119,10 +179,17 @@ fn face_normal(f: usize) -> [f32; 3] {
 
 /// The near openness along face direction `f` from the empty voxel `o` (global): the share of
 /// the fixed rays about `f` that leave [`HELD_REACH`] voxels with no opaque voxel; a direction
-/// that looks down, 0.
-pub(crate) fn openness(solid: &mut Opaque<'_>, o: [i32; 3], f: usize) -> f32 {
+/// that looks down, 0. Beside it the far share: with `top`, of those rays the ones that go on
+/// with no opaque voxel until their voxel's z reaches `top` (a ray that leaves the grid's box
+/// first is closed); without, the near share.
+pub(crate) fn openness(
+    solid: &mut Opaque<'_>,
+    o: [i32; 3],
+    f: usize,
+    top: Option<i32>,
+) -> [f32; 2] {
     if f == 4 {
-        return 0.0;
+        return [0.0; 2];
     }
     let n = face_normal(f);
     let a0 = if n[2].abs() > 0.5 {
@@ -139,22 +206,41 @@ pub(crate) fn openness(solid: &mut Opaque<'_>, o: [i32; 3], f: usize) -> f32 {
     ];
     let c = o.map(|v| v as f32 + 0.5);
     let mut open = 0u32;
+    let mut far = 0u32;
     for r in 0..HELD_RINGS {
         let s2 = (r as f32 + 0.5) / HELD_RINGS as f32;
         let (st, ct) = (s2.sqrt(), (1.0 - s2).sqrt());
         for k in 0..HELD_AZ {
             let a = (k as f32 + 0.5 * (r & 1) as f32) * std::f32::consts::TAU / HELD_AZ as f32;
             let d = [0, 1, 2].map(|i| n[i] * ct + (t[i] * a.cos() + b[i] * a.sin()) * st);
+            let at = |i: i32| [0, 1, 2].map(|q| (c[q] + d[q] * i as f32).floor() as i32);
             let mut hit = d[2] <= 0.0;
             let mut i = 1;
             while !hit && i <= HELD_REACH {
-                hit = solid.at([0, 1, 2].map(|q| (c[q] + d[q] * i as f32).floor() as i32));
+                hit = solid.at(at(i));
                 i += 1;
             }
             open += u32::from(!hit);
+            if hit {
+                continue;
+            }
+            let Some(top) = top else {
+                far += 1;
+                continue;
+            };
+            // On from the near reach until the ray's voxel stands at `top`: an opaque voxel or
+            // the grid's edge on the way closes it.
+            let mut v = at(i - 1);
+            while !hit && v[2] < top {
+                v = at(i);
+                hit = !solid.holds(v) || solid.at(v);
+                i += 1;
+            }
+            far += u32::from(!hit);
         }
     }
-    open as f32 / (HELD_RINGS * HELD_AZ) as f32
+    let rays = (HELD_RINGS * HELD_AZ) as f32;
+    [open as f32 / rays, far as f32 / rays]
 }
 
 fn normalize(v: [f32; 3]) -> [f32; 3] {
@@ -230,6 +316,10 @@ pub struct HeldPart {
     pub from: HeldBase,
     pub own: Option<f32>,
     pub open: f32,
+    /// The share of the rays that also reach the base's height (under
+    /// [`DigEstimate::Depth`]; the near share where the base is the cell's own record, and
+    /// under [`DigEstimate::Surface`]).
+    pub reach: f32,
     pub new_faces: u16,
     pub old_faces: u16,
     pub record: u32,
@@ -345,21 +435,34 @@ pub(crate) fn held_visibilities(
                 let mut parts = None;
                 if !new.is_empty() {
                     let picks = new.len().min(HELD_FACES);
-                    let open: f32 = (0..picks)
+                    let capped = own_f.is_some_and(|o| o < up);
+                    let base = own_f.map_or(up, |o| o.min(up));
+                    // Under `Depth` a far ray rises to the height the base was read at: the top
+                    // of the record's cell above, the chunk's top for the summary; a base from
+                    // the cell's own record keeps the near rays alone.
+                    let top = match (estimate, from) {
+                        (DigEstimate::Surface, _) | (_, HeldBase::Above(0)) => None,
+                        _ if capped => None,
+                        (_, HeldBase::Above(k)) => Some((g[2] + k + 1) * cell as i32),
+                        (_, HeldBase::Summary) => Some((c[2] + 1) * 64),
+                    };
+                    let [open, reach] = (0..picks)
                         .map(|i| {
                             let lv = new[i * new.len() / picks];
                             let o = [0, 1, 2].map(|k| gb[k] * 8 + lv[k] + n[k]);
-                            openness(solid, o, f)
+                            openness(solid, o, f, top)
                         })
-                        .sum::<f32>()
-                        / picks as f32;
-                    let base = own_f.map_or(up, |o| o.min(up));
-                    let estimate = (base * open.sqrt()).max(floor);
-                    sum += new.len() as f32 * estimate;
-                    parts = Some((estimate, open, new.len(), old.len()));
+                        .fold([0.0; 2], |s, x| [s[0] + x[0], s[1] + x[1]])
+                        .map(|s| s / picks as f32);
+                    let value = match estimate {
+                        DigEstimate::Surface => (base * open.sqrt()).max(floor),
+                        DigEstimate::Depth => base * depth_form(reach),
+                    };
+                    sum += new.len() as f32 * value;
+                    parts = Some((value, open, reach, new.len(), old.len()));
                 }
                 vis[f] = sum / list.len() as f32;
-                if let (Some(t), Some((estimate, open, n_new, n_old))) =
+                if let (Some(t), Some((estimate, open, reach, n_new, n_old))) =
                     (trace.as_deref_mut(), parts)
                 {
                     let (radiance_from, old_radiance) = radiance_source(own, f);
@@ -374,6 +477,7 @@ pub(crate) fn held_visibilities(
                         from,
                         own: own_f,
                         open,
+                        reach,
                         new_faces: n_new as u16,
                         old_faces: n_old as u16,
                         record: record as u32,
@@ -608,6 +712,64 @@ mod tests {
         let depth = held_of(&held(DigEstimate::Depth), floor);
         assert_eq!(surface, [HELD_FLOOR; 6], "under surface");
         assert_eq!(depth, [0.0; 6], "under depth");
+    }
+
+    /// Under `Depth` a ray is open only where it rises to its base's height: a floor face at
+    /// voxel [16, 16, z] of a pit 20 voxels wide (x and y in 6..26) under an open sky, the
+    /// ground's top at 64 (chunk [0, 0, 0]'s top), its base the summary's 0.9 (no record in
+    /// the pit's column). 40 voxels down (z 23) it holds more than 0.4 under `Surface` (the
+    /// near rays clear 16 voxels) and exactly 0 under `Depth` (a ray 24 degrees off the
+    /// vertical runs 17.9 voxels sideways in 40, the wall is at most 10.5 away); 8 voxels down
+    /// (z 55) it holds more than 0 under `Depth`.
+    #[test]
+    fn a_pit_floor_is_open_under_depth_only_where_its_rays_reach_the_summarys_height() {
+        let pit = |deep: i32| {
+            Opaque::from_bricks([-3, -3, -3], [10, 10, 10], move |g| {
+                let mut m = [0u64; 8];
+                for z in 0..8 {
+                    for y in 0..8 {
+                        for x in 0..8 {
+                            let v = [g[0] * 8 + x, g[1] * 8 + y, g[2] * 8 + z];
+                            let hole = (6..26).contains(&v[0])
+                                && (6..26).contains(&v[1])
+                                && (64 - deep..64).contains(&v[2]);
+                            if v[2] < 64 && !hole {
+                                m[z as usize] |= 1 << (x + 8 * y);
+                            }
+                        }
+                    }
+                }
+                m
+            })
+        };
+        let words = surface(&[[0, 0, 7]]);
+        let held = |deep: i32, estimate| {
+            let floor = brick_slot([2, 2, (63 - deep) / 8]) as u16;
+            let faces = ChunkFaces {
+                bricks: vec![(floor, vec![((64 * ((63 - deep) % 8)) << 3 | 5) as _])],
+                glass: vec![],
+            };
+            let boxes = [[[6, 6, 64 - deep], [25, 25, 63]]];
+            held_of(
+                &held_visibilities(
+                    &mut pit(deep),
+                    &words,
+                    &boxes,
+                    [0, 0, 0],
+                    &faces,
+                    &[floor],
+                    8,
+                    estimate,
+                    None,
+                ),
+                floor,
+            )[5]
+        };
+        let surface40 = held(40, DigEstimate::Surface);
+        assert!(surface40 > 0.4, "40 down under surface {surface40}");
+        assert_eq!(held(40, DigEstimate::Depth), 0.0, "40 down under depth");
+        let depth8 = held(8, DigEstimate::Depth);
+        assert!(depth8 > 0.0, "8 down under depth {depth8}");
     }
 
     #[test]

@@ -194,8 +194,14 @@ impl BakeQueue {
                                 let faces = self.list(run.world, ChunkCoord(*c), classes).0;
                                 let mut trace = Vec::new();
                                 let held = if hold {
-                                    let mut solid =
-                                        Opaque::about(run.world, &classes[..], *c, near);
+                                    let mut solid = Opaque::about(
+                                        run.world,
+                                        &classes[..],
+                                        *c,
+                                        near,
+                                        cell,
+                                        estimate,
+                                    );
                                     held_visibilities(
                                         &mut solid,
                                         words,
