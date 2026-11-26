@@ -12,6 +12,7 @@ use std::sync::mpsc;
 
 mod books;
 mod cycle;
+mod fade;
 
 /// The rig with its bake half on the thread: the mirror, the settings, the mailbox and the
 /// recording half stay here.
@@ -807,16 +808,21 @@ fn the_edits_frame_waits_for_its_list_and_no_other_frame_does() {
     assert_eq!(t.applied.len(), applied, "nothing applied while held");
     let (before, issued) = (t.applied.len(), t.rig.half.issued.len());
     t.carve([60, 20, 4], [67, 23, 7]);
+    // The wait is timed from before the release thread starts its 100 ms, and the release's
+    // instant is read against the frame's return.
+    let at = stopwatch();
     let release = std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(100));
+        let released = stopwatch();
         drop(gate);
+        released
     });
-    let at = stopwatch();
     t.frame().expect("the edit's frame returns with its list");
-    let waited = seconds_since(at);
-    release.join().expect("released");
+    let (returned, waited) = (stopwatch(), seconds_since(at));
+    let released = release.join().expect("released");
     let box_frame = t.rig.half.frame;
     assert!(waited >= 0.1, "returned after the release: {waited} s");
+    assert!(returned >= released, "the frame returned after the release");
     assert!(
         t.link.lists_frame >= box_frame,
         "the box's step taken: lists of message {} at frame {box_frame}",
@@ -840,86 +846,7 @@ fn the_edits_frame_waits_for_its_list_and_no_other_frame_does() {
             .map(|(f, s)| (*f, s.len()))
             .collect::<Vec<_>>()
     );
-    a_dig_into_a_fading_chunk_shows_its_held_block();
-}
-
-/// Done when (3) of Plan 0099 Phase 3c, the case of [`the_edits_frame_waits_for_its_list_and_no_other_frame_does`]:
-/// a dig into chunk 0 while its ring 1's fade runs, with the step before the dig's held so that
-/// its lists (a fade's show of chunk 0) and the dig's come in one frame. The frame returns with
-/// chunk 0's held block's words at the place the pool's chunk table names, as the store's copy
-/// holds them.
-fn a_dig_into_a_fading_chunk_shows_its_held_block() {
-    use std::sync::atomic::Ordering::SeqCst;
-    const A: [i32; 3] = [0, 0, 0];
-    let (hook, from, gate) = hold_armed();
-    let mut t = ThreadRig::new(Some(hook), OUTBOX_BYTES);
-    t.pool = Some(Vec::new());
-    drain(&mut t);
-    t.carve([20, 20, 4], [23, 23, 7]);
-    t.frame().expect("the first dig's frame");
-    let mut fading = false;
-    for _ in 0..400 {
-        t.frame().expect("the frame returns");
-        if t.link.books.stats.fading > 0 {
-            fading = true;
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
-    assert!(fading, "the first dig's ring 1 lands and fades");
-    // The next step (S) shows the fade and is held; the dig's step (D) reads the box after it.
-    from.store(t.rig.half.frame + 1, SeqCst);
-    t.frame().expect("the held step's message goes out");
-    assert!(
-        within(|| t.link.peek(|m| m.is_none())),
-        "the step took its message and is held"
-    );
-    t.frame().expect("the frame returns");
-    let before = t.applied.len();
-    t.carve([24, 20, 4], [27, 23, 7]);
-    let release = std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        drop(gate);
-    });
-    t.frame().expect("the edit's frame returns with its list");
-    release.join().expect("released");
-    let after = t.applied.len();
-    t.books_of(t.rig.half.frame);
-    let (first, words) = *t.link.books.blocks.get(&A).expect("chunk 0 keeps a block");
-    let shows = t.applied[before..after]
-        .iter()
-        .filter(|a| a.kind == W_POOL && a.offset == first * 4)
-        .count();
-    assert!(
-        shows >= 2,
-        "the fade's show and the held block both written at chunk 0's place in the edit's frame ({shows})"
-    );
-    let ThreadRig {
-        link, rig, pool, ..
-    } = t;
-    let pool = pool.expect("kept");
-    let st = link.stop().expect("the thread stops");
-    let held = st
-        .side
-        .store
-        .block_words(ChunkCoord(A))
-        .expect("the store's copy");
-    assert_eq!(held.len() as u64, words);
-    let mut store = Store::new(64 << 20);
-    store.start_queue(rig.mirror.window(), rig.queue.settings.cell);
-    let table = store.table_word(ChunkCoord(A)) as usize * 4;
-    let word = u32::from_le_bytes(pool[table..table + 4].try_into().expect("4 bytes"));
-    assert_eq!(
-        u64::from(word & !crate::bake::TABLE_COARSE),
-        first,
-        "the pool's table names the books' place"
-    );
-    let at = first as usize * 4;
-    let shown: Vec<u32> = bytemuck::pod_collect_to_vec(&pool[at..at + held.len() * 4]);
-    assert!(
-        shown == held,
-        "chunk 0's place holds the held block after the edit's frame"
-    );
+    fade::a_dig_into_a_fading_chunk_shows_its_held_block();
 }
 
 /// The clock's tick in ms: `Instant`'s resolution, a nanosecond.
