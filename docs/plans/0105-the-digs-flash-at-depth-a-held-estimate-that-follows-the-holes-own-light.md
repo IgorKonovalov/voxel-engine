@@ -686,6 +686,202 @@ Recommended: (a) as ruled, and the window judges the slow change after a dig wit
 exposure live; (b) the slow change after a dig gets its own bar (a later amendment names
 it).
 
+## Amended 2026-11-26 (architect, Phase 4's two misses)
+
+After Phase 4's readings ([the log](logs/0105.md), readings 13 and 14; code read at
+`21324b90`; the traced tables `live/p0105/p4-*-lock-depth.txt` recomputed offline, no run).
+**Phase 4's far rays stay. Two changes follow, one a phase: (4b) under `depth` a held value
+under one byte of the record is written as 0; (4c) the form over the share of reach slides
+from the share to its square root between one and two rays in twelve.** B2's second clause is
+restated against `S`. Phase 5 follows once main holds Plan 0101; the window and Phase 7
+stand. Earlier sections stand except the clauses named here.
+
+The recomputation rebuilds each traced part's held value from its printed base, shares and
+face counts (the base and the shares snap to the record's byte and to the ray count); under
+Phase 4's form it reproduces the D+0 byte of every traced part of the fifteen read digs, so
+the other forms below are computed on the same parts. They are derived, not measured.
+
+### Miss 1: `side` 2 m is the record's byte, rounded up over a landed 0
+
+- **The cause is the rounding to the nearest byte.** The three parts over their landed 0 hold,
+  in real numbers, 0.84, 0.69 and 0.54 of a byte (`[-1, 9, 8]` slot 255 face 3, `[-1, 10, 8]`
+  slot 135 face 5 and slot 198 face 1), and `visibility_words` writes each as 1. The landed
+  values are under half a byte and are written as 0. The held estimate is within a third of
+  a byte of the truth; the byte puts the two on opposite sides.
+- **The kept faces are not a cause of their own.** They carry 0.77 of slot 255's 0.84 and 0.45
+  of slot 135's 0.69; slot 198 has none and still rounds up (base above 3, 0.102, times a
+  reach of 2 rays in 96). With the kept faces at the dig faces' value the three read 0.10,
+  0.28 and 0.54: one part still over. No rule on kept faces is taken.
+- **The fade is not a cause, and it explains the shape** (read from `fade_mix` and
+  `DIG_FADE`, consistent with the stored column, not read apart). The visibility bytes mix
+  at t = 1/4, 1/2, 3/4 and 1 and round half up: at t = 1/2 (D+2) a byte going 0 to 1 already
+  shows 1 and a byte going 1 to 0 still shows 1, so every one-byte difference in either
+  direction sits at its higher byte (stored 0.305 against 0.260 at D+0); at t = 3/4 (D+3)
+  both are at their landed byte (0.073, the settled value). With no held byte over its
+  landed byte every faded byte lies at or under the landed one, so the fade needs no change.
+- **Not the exposure** (2.1472e-1 to 2.1505e-1 through the window, D-1 2.1464e-1) **and not
+  the smoothed normal's mix apart**: it is linear in the cell's six values and has nothing
+  to mix where they are 0.
+- **With those parts at 0** every traced D+0 byte at `side` 2 m is at or under its landed
+  byte (three are under: 0 against 1 twice, 1 against 3). Key, direct and the direction
+  values are 0, so the stored part is at most the settled 0.073 in every frame and the box
+  reads between -5.5 (black; `S` is 5.5) and 0.0 over `S`. The size of the dark start is not
+  derivable without the pixels; Phase 4b reads it.
+- **The fix: under `depth` a held value under one byte holds 0.** The record cannot hold less
+  than a byte, and a byte over a landed 0 is the flash under an eye in the hole (the p95 of
+  +28 is the pixels that read it). Recomputed on every read dig: from 2 m no part is over
+  its landed byte at `down` and `side`; `wide` keeps one part a depth at 2 and 3 m over a
+  landed 2 to 10 bytes, as Phase 4 read it under B1. Rounding every held value down was
+  weighed and not taken: it changes nothing more from 2 m on these tables and takes about a
+  sixth more off the 1 m dig's walls at `down`.
+
+### Miss 2 and B3: what the shallow bar defends, and the form
+
+**B2's second clause is restated: at 1 m, at `down` and `wide`, no frame's mean is under `S`
+by more than 4 levels** (with the first clause: within 4 of `S` on either side). `side` at
+1 m is the side dig under the mouth the owner accepted black for the fade's frames; its
+lowest mean stays a reading. B3 from 2 m stays a reading for the window (down to -7.2 there:
+black then up, the side he asked to err on).
+
+Why this is the owner's claim. He compared no two arms. He said the dig near the surface is
+mostly fine and must stay so, and that dark is the side to err on. Every bar of this plan
+measures "fine" as the distance of a dig's frames from where they settle, 4 levels. The
+clause as written measured the distance from today's frames instead, and today's frames are
+themselves off: +3.0 over `S` at `down` 1 m, +63.6 at `side` 1 m. So it refused a frame 1.1
+under `S` at `down` (nearer the settled look than today's dig) and, at `side`, could only be
+met by keeping the flash. That is the exposure check's fault again: a stand-in that binds
+the new estimate to something that is not the owner's.
+
+**It is looser than the written clause on the dark side, by today's own bright error** (the
+floor moves from 1.0 under `S` to 4.0 under at D+0), and that is said plainly: the owner's
+"yes" was to the architect's wording, so the restatement is his question below. It passes
+nothing: **Phase 4 misses it at `down` 1 m (-5.0, by 1.0) and at `wide` 1 m (-4.1, by 0.1)**,
+and 4b's rule takes the 1 m dig a little further down. The form changes.
+
+**The form, from the traced parts.** For every dig direction whose faces are mostly the
+dig's and whose base is at least 4 bytes, the landed value the dig faces need over their
+base, against the share of rays that reach the base's height:
+
+| share of reach | parts | landed over base: p25 / median / p75 | the share / its root at the median | under the root |
+|---|---|---|---|---|
+| 0 | 37 | 0 / 0 / 0 | 0 / 0 | 0 |
+| up to 1 ray in 12 | 55 | 0.00 / 0.07 / 0.20 | 0.07 / 0.26 | 45 |
+| between 1 and 2 in 12 | 25 | 0.25 / 0.50 / 0.73 | 0.14 / 0.37 | 7 |
+| 2 in 12 and more | 13 | 0.36 / 0.63 / 0.79 | 0.21 / 0.46 | 4 |
+
+Up to one ray in twelve the share is the landed light and the root is over it at 45 parts of
+55 (Phase 3's flash at `side`, and its parts over at `down` 2 m). From two rays in twelve
+the landed light is three times the share and still over the root's median: the base's
+light comes from the directions that still leave a shallow hole, not evenly from the sky
+the rays sample. The depth is read by the share itself: at `down` it is 0.14 to 0.23 on the
+1 m floor and at most 1 in 12 from 2 m.
+
+**The form: `base * s^e`, e = 1 for s up to 1/12, 1/2 from 1/6, linear in s between.** The
+two anchors are one and two of the face's twelve rays, not fitted figures; the form is
+continuous and rises with s. Rejected, each recomputed: the root everywhere (parts over by
+more than a byte at `down` 2 m and `side` 1 and 2 m); the root on up faces only (four parts
+3 to 9 bytes over at `side` 1 m); the root where the base is the cell's own record (parts
+over at `down` and `side` 2 m); a step at 1 in 8 (the same table, a cliff between two digs).
+
+What it does with 4b's rule, per site and depth (dug up faces / walls, bytes summed, against
+landed; Phase 4's in brackets):
+
+- **`down` and `side` from 2 m, `wide` 5 and 7 m: no part over its landed byte.** `down` 2 m
+  holds 2 / 0 of 32 / 12 (6 / 3): the frames start darker than Phase 4's -5.7, black then up.
+- **`down` 1 m: 52 / 40 of 75 / 66 (25 / 46).** Phase 3's root read -1.0 and Phase 4's share
+  -5.0 at D+0; a two-weight fit on those two arms puts this form at about -3.7. The fit
+  under-reads the landed frame by 11 % and today's by 21 %, so the figure is a guess with
+  more than a level either way: the phase reads it.
+- **`wide` 1 m: 60 / 67 of 67 / 92 (37 / 69)**, one up part 6 bytes over a landed 4. `wide` 2
+  and 3 m: 12 / 4 of 34 / 21 and 18 / 2 of 19 / 10, two or three parts 1 to 2 bytes over a
+  landed 2 to 11.
+- **`side` 1 m: 8 / 8 of 4 / 16 (7 / 10)**, two up parts 1 and 3 bytes over (Phase 4: one, 2
+  over; it read +0.7 at its highest). The share there is 0.094, just past one ray in twelve.
+
+If 4c misses the restated B2, the routes left are not another form over the same rays: the
+table holds no quantity that tells the 1 m floor from the 2 m floor other than the share.
+
+### The step's cost
+
+**It belongs to Phase 7's nfr readings, with one reading owed in Phase 4c before the
+window.** Reading 14's D+0 step does not show a cost of the estimate: 50 to 83 ms appears in
+both arms and both phases at changing depths (`surface` 68.5 ms at 7 m in reading 10, 49.6
+at 1 m in reading 14), the `depth` run that shows most of it held load1 14.45, and `wide`
+under `depth`, the most parts and far rays, reads 18 to 23 ms flat against `surface`'s 17 to
+22 at `down` from 2 m. `stages.total_ms` is the whole step and `dig_ns` is the budget's cost a sample
+of a dig's job, not the held estimate's time, so no column in hand times it. Section 4 of
+`docs/nfr.md` pins the edit's wait against lockstep's bake call on the same dig frames;
+both sides hold the estimate, so that line cannot see it grow. Phase 4c prints the held
+estimate's own time a read dig; Phase 7 puts both arms in `docs/nfr/04-edits.md`.
+
+### Phase 4b: A held value under one byte holds 0 (exploration, a fix)
+- **Owner skill:** dev
+- **What:** Under `depth`, each of the six values a dug cell's held record takes (a
+  direction's mean over its faces, the fill of a direction with no face, a cell with no
+  face) is written as 0 where it is under 1/255; from 1/255 up it rounds as every record
+  does. `surface` is unchanged. Nothing else: the form is Phase 4's share.
+- **Files touched:** `crates/svet-render/src/bake/held.rs`, `docs/plans/logs/0105.md`.
+- **Done when:** at `side`, lockstep, under `depth`: B1 at 2, 3, 5 and 7 m (at 2 m no frame's
+  mean over `S` by more than 4 and no p95 by more than 8, where Phase 4 read +9.9 / +28),
+  and the trace lists no part from 2 m whose D+0 byte is over its landed byte; 1 m printed.
+  CPU tests in `bake::held::tests` (under 1 s): values of 0.54, 0.69 and 0.84 of a byte
+  hold 0 and 1.10 holds one byte under `depth`; a direction of 24 kept faces at 2 bytes
+  beside 38 dig faces whose rays all close holds 0 under `depth` (48 / 62 is 0.77 of a
+  byte) and more than 0 under `surface`. Quick tier, clippy, fmt. **Stops:** a bar missed;
+  a part from 2 m still over its landed byte. One hold of the lock (`side`: 459 s in
+  Phase 4). Binary: `gpu_outdoor`.
+
+### Phase 4c: The share slides to its root between one and two rays in twelve (exploration, a fix)
+- **Owner skill:** dev
+- **What:** `depth_form` as above, on Phase 4's share of reach, with 4b's rule. The rig's
+  `forms over landed` row prints this form beside the four it has. A reading-only stat, the
+  held estimate's own time at the edit (the calls of `held_visibilities` of a step, summed),
+  printed a read dig in the bars line; no behaviour change.
+- **Files touched:** `crates/svet-render/src/bake/held.rs`, `bake/queue/digs.rs` and
+  `bake/queue/stats.rs` (the stat), `apps/flythrough/tests/gpu_outdoor/dig_depth.rs`,
+  `docs/plans/logs/0105.md`.
+- **Done when:** under `depth` against `S`: **B1** at `down`, `side` and `wide` from 2 m (5 m
+  at `down` and `wide` on the frames all on a record, the casting frames printed); **B2 as
+  restated** at `down` and `wide` 1 m (no frame's mean over `S` by more than 4 or under it by
+  more than 4) and its first clause at `side` 1 m; B3 printed at every depth. Lockstep at
+  the three sites, the bake thread at `down` and `side`. The held estimate's time under
+  `depth` at every read dig, and under `surface` at `down` (one more hold; its frames repeat
+  reading 14's). CPU tests (under 1 s): `depth_form` gives 1/12 at 1/12, 0.210 at 1/8
+  (the exponent is 0.75), 0.408 at 1/6, 0.577 at 1/3, 0 at 0, and never falls over k/96 for
+  k from 0 to 96; Phase 4's pit test still holds (exactly 0 at 40 voxels down). Quick tier,
+  clippy, fmt. **Stops:** a bar missed (no second form, no moved anchor); the held
+  estimate's time under `depth` over 2 ms at the median read dig or 5 ms at any one with
+  load1 under 4 at the lock (proposed lines, a guess at what a dig's frame can carry; the
+  architect rules on a miss); a hold projected over 20 minutes is not started. Six holds,
+  one site, mode and arm each (Phase 4: 347 to 683 s). Binary: `gpu_outdoor`.
+
+### Phases 5, 6 and 7, as changed
+
+- **Phase 5 runs after 4c and only once main holds Plan 0101 and is merged into the lane.**
+  It can pass or miss without the form (its frames are the casting ones), but its landing
+  runs through the queue files Plan 0101's lane edits (`bake/queue/step.rs`, `mod.rs`,
+  `open.rs`, `list.rs`, `split_tests.rs`, by that lane's diff against main; this lane is
+  behind main), and 4b and 4c touch none of those.
+  If 4c is read before Plan 0101 lands, the lane waits; Phase 5 is not started on a tree
+  without it. Its done-when reads B2 as restated here; the rest of its text stands.
+- **Phase 6, the window, stands** (the narrow one-dig pit past 5 m first, then side digs
+  from inside it, no camera hold, stdout visible). Each run's text names its arm
+  (`--dig-estimate surface`, then `depth`): the HUD shows the row only off the default.
+- **Phase 7 stands**, with B2 as restated in its soak-marked reading and the held
+  estimate's time among its readings in `docs/nfr/04-edits.md`. ADR-0082's Outcome note
+  draft gains "a held value under one byte holds 0" and the form at the close.
+- The Implementation log takes rows 4b and 4c from `dev` at the first commit under this
+  amendment.
+
+### Question for the owner (does not block 4b; 4c is read against the answer)
+
+**The shallow dig's bar: your "yes" was to "the new estimate may not move the 1 m dig by
+more than 4 levels", which the architect wrote against today's frames.** Recommended: (a) as
+restated: the 1 m dig within 4 levels of its settled look on either side, so it may start
+up to 4 under where today's starts 3 over; (b) as written: within 4 of today's frames, so no
+more than 1 under settled at the dig's first frame, which on these tables needs the root on
+every face and brings back parts over their landed light at 2 m.
+
 ## Data shapes
 
 ```rust
