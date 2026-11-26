@@ -25,6 +25,13 @@ From [Plan 0106](plans/0106-no-gate-test-passes-by-a-clock-the-red-dig-test-step
 - **Open:** the owner's question (the first frame waits for the camera's chunk, or start-up ends on a bound and its light lands in view), carried by the plan as its two arms. Why a streamed start's lockstep step costs about three times as much since the Plan 0099 merge (which is what made the check at 31 land in an upload backlog) is unread: the plan's Phase 3.
 - **Beside it:** [Plan 0108](plans/0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md)'s start-up readings on a streamed source log the pre-roll's steps per start and say whether their tree holds Plan 0109 Phase 1.
 
+### The outdoor child's kill guard (2026-11-26)
+
+From [Plan 0106](plans/0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md), Ruling 9. `apps/flythrough/tests/gpu_outdoor.rs`'s `run` kills its child at 300 s; the two soak tests on it (`a_source_switch_leaves_nothing_behind` and its 60-frame form) run a switched pre-roll, so the guard is not sized on today's tree. Its allow-list row carries the ratio read in Plan 0106 Phase 6a.
+
+- **What it takes:** when `RUN_BOUND` is sized ([Plan 0109](plans/0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md) Phase 6), the same reading for this child (its loaded walls by name) and the guard at ten times the slowest, the row's ratio corrected. Nothing if the row already reads 10 or more.
+- **Pick up:** with Plan 0109 Phase 6; the architect adds it to that phase's files at the plan's next amendment.
+
 ### The record by rule at every opening, and the bake's key ray at its cap (2026-11-23)
 
 From [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 10 (its section "Phase 10 after its reading"; readings in `docs/plans/logs/0096.md`, "Phase 10a"). A small plan of its own, to run ahead of Plan 0099's Phase 1 (ruled at Plan 0096's close, 2026-11-23, v0.71.0). **Drafted 2026-11-24 as [Plan 0101](plans/0101-the-record-by-rule-at-every-opening-an-audit-on-the-real-scenes-first-then-the-three-exclusions-lifted.md) with [ADR-0085](adrs/0085-the-zero-record-is-ruled-on-the-mirror-as-it-stands-exact-by-the-re-list-not-by-the-columns-finality.md) (proposed); awaits the owner's go.** The draft carries the rule alone (the key ray is Plan 0100's Phase 2), puts the audit on the real scenes ahead of any behaviour change, and recommends running after Plan 0099 closes instead of ahead of its Phase 1 (its question 1); this entry leaves when the owner answers.
