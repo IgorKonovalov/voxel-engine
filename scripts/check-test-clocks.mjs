@@ -9,9 +9,9 @@
 // a test file declares (`mod fade;`) or a `#[cfg(test)] mod name;` declares, and every
 // `#[cfg(test)]` item elsewhere. Comments and string literals are blanked first, so a doc line
 // or a message naming a token is not a use. Exempt: the inside of a `mod reading { .. }` block
-// (a measurement run by hand may time anything) and the inside of a function marked
-// `#[ignore = "soak"]` (the weekly tier, swept on its own). A `sole:` mark is not exempt: those
-// tests run whenever their package changes.
+// (a measurement run by hand may time anything), and a helper every call of which sits in one.
+// No tier mark is exempt: a test marked `#[ignore = "soak"]` (the weekly tier) or `sole:` is
+// read as a gate test is, and so is a helper only such a test calls.
 //
 // The rules, each site reported with its enclosing function (the test, or the helper it calls):
 //
@@ -277,15 +277,10 @@ function scan(root) {
     if (!isWhole && cfgItems.length === 0) continue;
     testFiles++;
     const fns = functions(src);
-    // Exempt spans: `mod reading` blocks, soak-marked functions, then every helper whose calls
-    // in this file all sit in exempt spans (at least one call), to a fixed point. A helper
-    // called from another file is not followed: it stays reported.
-    const spans = [
-      ...readingMods(src),
-      ...fns
-        .filter((f) => /#\[\s*ignore\s*=\s*"soak"\s*\]/.test(withStrings.slice(f.attrs, f.open)))
-        .map((f) => [f.attrs, f.close]),
-    ];
+    // Exempt spans: `mod reading` blocks, then every helper whose calls in this file all sit in
+    // exempt spans (at least one call), to a fixed point. A helper called from another file is
+    // not followed: it stays reported.
+    const spans = [...readingMods(src)];
     const exempt = (at) => inside(spans, at);
     for (let grew = true; grew; ) {
       grew = false;
@@ -461,6 +456,8 @@ const EXPECTED = [
   "crates/seeded/tests/seeded.rs:14 -> rule 1: `sleep` in `paced_by_a_sleep`",
   "crates/seeded/tests/seeded.rs:21 -> rule 2: `elapsed` in `bound_by_a_constant`",
   "crates/seeded/tests/seeded.rs:27 -> rule 2: `ms` in `bound_through_a_name`",
+  "crates/seeded/tests/seeded.rs:56 -> rule 1: `sleep` in `a_long_series`",
+  "crates/seeded/tests/seeded.rs:60 -> rule 1: `yield_now` in `paced_helper`",
   "crates/seeded/src/lib.rs:30 -> rule 2: `seconds_since` in `panics_past_a_bound`",
   "crates/seeded/tests/threaded.rs:9 -> rule 3: `set_bake_thread` in `thread_on_and_counted`",
   "crates/seeded/tests/timed.rs:9 -> rule 4: `TIMESTAMP_QUERY` in `timed_device`",

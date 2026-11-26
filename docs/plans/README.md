@@ -7,7 +7,7 @@ The engine was `voxel-engine`, with crates `vxe-*`, variables `VXE_*` and the WI
 `vxe:logic`, until Plan 0087 renamed it `svet` (v0.73.0); records from before keep those names,
 and `vxe-<x>` reads as `svet-<x>`.
 
-**Next free number: 0110** (0109 a blocked chunk is checked again when its blocker clears, drafted 2026-11-26 from Plan 0106's Phases 10 and 11; 0107 the mirror's slot image packed on the stream workers and 0108 the start-up readings, drafted 2026-11-26 from the review of work off the render thread; 0106 no gate test passes by a clock, approved 2026-11-26, its Phase 1 the fix for main's red CI; 0105 the dig's flash at depth, approved 2026-11-26; 0104 the wobble anchored to the owner's eye, closed 2026-11-26; 0101 the record by rule at every opening, approved 2026-11-24; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
+**Next free number: 0110** (0109 a blocked chunk is checked again when its blocker clears, drafted 2026-11-26 from Plan 0106's Phases 10 and 11; 0107 the mirror's slot image packed on the stream workers and 0108 the start-up readings, drafted 2026-11-26 from the review of work off the render thread; 0106 no gate test passes by a clock, closed 2026-11-26; 0105 the dig's flash at depth, approved 2026-11-26; 0104 the wobble anchored to the owner's eye, closed 2026-11-26; 0101 the record by rule at every opening, closed 2026-11-26; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
 the sky around the camera; 0098 the calm light by default, closed 2026-11-24; 0099 the bake
 step off the main thread, closed 2026-11-26; 0100 a sun fixed in the world, closed 2026-11-25; ADRs are a separate sequence, see `../adrs/README.md` for its next
 free number). Plan 0095, the motion wobble (a calm key light in motion), closed 2026-11-21,
@@ -20,14 +20,17 @@ owed steps"). Plan 0102, the removal of `own` (FSR 2 is the only upscaler), clos
 wobble it was written for still there; its follow-on is Plan 0104. Plan 0099, the bake step off the main thread, closed
 2026-11-26, v0.76.0 (ADR-0083 accepted); the dig's flash at depth it left is Plan 0105's. Plan 0104, the
 wobble anchored to the owner's eye, closed 2026-11-26, v0.77.0, with no remedy (the owner's call);
-what is left under the defaults is in the backlog.
+what is left under the defaults is in the backlog. Plan 0101, the record by rule at every
+opening, closed 2026-11-26, v0.78.0 (ADR-0085 accepted with an Outcome); what it left is in the backlog. Plan 0106, no gate
+test passes by a clock, closed 2026-11-26, v0.79.0 (`scripts/check-test-clocks.mjs` in CI); `RUN_BOUND` and the switch test's tier
+are Plan 0109 Phase 6's.
 
 ## Active roster
 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Status | Live constraint |
 |------|-------|--------|-----------------|
-| [0033](0033-far-field-clipmap-to-a-kilometre.md) | The far field: a clipmap of three coarse chunk levels to about 1 km | approved | M10, ADR-0028 (proposed, revised). Re-read 2026-11-17: absent is sky; questions answered. After 0081. |
+| [0033](0033-far-field-clipmap-to-a-kilometre.md) | The far field: a clipmap of three coarse chunk levels to about 1 km | approved | M10, ADR-0028 (proposed, revised). Re-read 2026-11-26: Phase 6 by the column horizon; 4 questions. World briefs beside 0081, render after it. |
 | [0034](0034-water-surface-waves-reflection-refraction-underwater-fog.md) | Liquid surfaces: analytic waves, traced reflection and refraction, absorption under the surface | approved | M10, ADR-0029 (proposed). Re-read 2026-11-17 (the reflected hit reads 0086's baked sky). After Plan 0033. |
 | [0035](0035-aerial-perspective-and-volumetric-clouds-with-cloud-shadows.md) | Aerial perspective over the near and far field, and volumetric clouds that shadow the ground | approved | M10, ADR-0030 (proposed). Re-read 2026-11-17: `E_sky` reads `cloud_sky`; questions answered. After 0034. |
 | [0036](0036-weather-rain-snow-wind-wet-surfaces-snow-cover-lightning.md) | Weather: rain, snow, wind, wet surfaces and snow cover, lightning | approved | M10, ADR-0031 (proposed). Re-read 2026-11-17, questions answered. After Plan 0037. |
@@ -35,19 +38,17 @@ what is left under the defaults is in the backlog.
 | [0071](0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md) | The consumer's path: a render example as the contract, a renderer tested alone, one name per thing, errors | approved | Cross-cutting, ADR-0057. From the 2026-11-12 review. After 0045, 0069 and 0044's Phase 8. |
 | [0073](0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md) | A settings menu and a settings file for the fly-through and the tester | approved | ADR-0058. Apps only. After 0069, 0071 and 0080; amended 2026-11-16 (owner). |
 | [0076](0076-a-key-help-overlay-for-the-fly-through-from-the-key-table.md) | A key help overlay for the fly-through: `F1` (readings move to `Enter`), written from the key tables, modes live, 80 x 45 | superseded | Apps only, no ADR. Folded into 0080 (owner, 2026-11-16). |
-| [0081](0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md) | A surface detail layer: blades, caps and pebbles marched above styled faces, lit as hits, faded by size on screen | approved | M10, ADR-0063 (proposed). Re-read 2026-11-17. After 0086 and 0080, before 0033. |
+| [0081](0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md) | A surface detail layer: blades, caps and pebbles marched above styled faces, lit as hits, faded by size on screen | approved | M10, ADR-0063 (proposed). Re-read 2026-11-26, 4 questions. After 0107 and 0108. |
 | [0082](0082-squash-and-stretch-a-scale-per-part-in-the-pose-and-the-clips.md) | Squash and stretch: a scale per axis per part in the pose and the clips, a slime in the library with a bounce | approved | M6, ADR-0064 (proposed). Approved 2026-11-16. After 0063, the clip chore, 0078 and 0079 P1-3. |
 | [0084](0084-staged-structures-stages-from-a-vox-a-stamp-with-a-write-policy-and-a-region-a-reveal-and-a-demolish.md) | Staged structures: stages from a `.vox`'s layers, a stamp with a write policy and a region, a reveal over ticks, a demolish | approved | M7, ADR-0067. Approved 2026-11-16. After Plan 0083 closes. |
 | [0085](0085-entity-variants-holding-clips-and-an-entity-stamped-into-the-world.md) | Entity variants (hide, swap, remap) from the `.rig`, a clip that holds, a posed entity stamped into the world | approved | M6, ADR-0068, ADR-0069 (proposed). Approved 2026-11-16. After 0063, the chore, 0078 and 0082. |
 | [0089](0089-deterministic-simulation-testing-seeded-scenarios-a-simulated-channel-a-mirror-oracle-and-gates.md) | Deterministic simulation testing: seeded scenarios, a shrinker, a simulated channel, a mirror oracle, determinism gates | approved | ADR-0073. After 0087 (owner). Pre-flight 2026-11-19, q7 answered. |
-| [0090](0090-the-pop-counter-scenes-on-lavapipe-count-the-pixels-that-break-the-light-rules-a-ratchet.md) | The pop counter: fixed scenes on lavapipe count the pixels that break each light rule, by source; a baseline that only falls | approved | Cross-cutting, ADR-0076 (proposed). After 0086 closes, before 0081. |
+| [0090](0090-the-pop-counter-scenes-on-lavapipe-count-the-pixels-that-break-the-light-rules-a-ratchet.md) | The pop counter: fixed scenes on lavapipe count the pixels that break each light rule, by source; a baseline that only falls | approved | Cross-cutting, ADR-0076 (proposed). Before 0081 or not: its question 4. |
 | [0091](0091-the-frame-profiler-scopes-across-threads-a-gpu-lane-a-dump-for-agents-and-a-hud-ticker.md) | The frame profiler: scopes across the threads, a GPU lane, a dump the agent ranks, budget scopes, a HUD ticker | approved | M7, ADR-0077. After 0087 and 0089, before 0090 (owner). |
 | [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
 | [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs. Refreshed 11-26. After 0104, beside 0101, 0105; before 0091. |
-| [0101](0101-the-record-by-rule-at-every-opening-an-audit-on-the-real-scenes-first-then-the-three-exclusions-lifted.md) | The record by rule at every opening: an audit first, then the exclusions lifted | approved 11-24 | ADR-0085 (proposed). After 0100 P2 and 0099's close. |
 | [0103](0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md) | A pipeline cache for the renderer: the driver's cache through wgpu in an engine envelope, bytes the consumer keeps | draft, parked 11-24 | ADR-0087 (proposed). Parked: the driver's cache already warms a second start (logs/0103.md). |
 | [0105](0105-the-digs-flash-at-depth-a-held-estimate-that-follows-the-holes-own-light.md) | The dig's flash at depth: a held estimate that follows the hole's own light | approved 11-26 | After 0099. P1 reads the blink at depth; the fix is a setting until the window. |
-| [0106](0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md) | No gate test passes by a clock: the red dig test, the sweep, a gate script | approved 11-26 | P1-4, 7, 9 done, P5, 8, 10-11 read: the 30-step recheck, to 0109. P6a-c owed, then the close. |
 | [0107](0107-the-mirrors-slot-image-packed-on-the-stream-workers.md) | The mirror's slot image packed on the stream workers | approved 11-26 | ADR-0056. P1 re-reads the sync and can stop it. Lane after 0101 and 0105 merge. |
 | [0108](0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md) | The start-up readings: a shorter pre-roll, the cold pipelines split | approved 11-26 | A chore, no ADR. Beside 0093. P3 before the next tester archive. |
 | [0109](0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md) | A blocked chunk is checked again when its blocker clears: the streamed start | approved 11-26 | P1 built (5-10 steps), its stop ruled; P1b the re-pin, P2-3 readings, P4 the owner. |
@@ -115,6 +116,33 @@ Each starts on main after the one before it closes, unless its line says otherwi
    far canopies, the cloud shadow after the history, the clouds kept and scaled by profile, snow
    on the layer a followup, and Plan 0037 before Plan 0036. The run order after 0086 and 0080
    merge: 0081, 0033, 0034, 0035, 0037, 0036.
+   **Re-read 2026-11-26 (architect, the owner's "the refresh starts now"):** Plans 0081 and 0033
+   each carry a "Re-read 2026-11-26 (architect)" section against main 69d5ce97 (v0.77.0): the
+   style word as Plan 0086 built it, the calm defaults (ADR-0082: no screen history, so a
+   detail hit takes its face's light and the far field's key light is the column map's horizon,
+   Plan 0033's Phase 6 rewritten), the bake thread's copy of the mirror, Plan 0107's slot
+   images, the files now at their caps, and the phases cut into one brief each. ADR-0063 and
+   ADR-0028 are revised in place, still proposed. Eight owner questions await answers (four a
+   plan). **The order (owner, 2026-11-26):** the batch's lanes start after Plans 0107 and 0108,
+   which start after the open lanes (0101, 0105, 0093, 0106): 0081, 0033, 0034, 0035, 0037,
+   0036. Plan 0033's world-side briefs (1a, 2a, 2b) touch no file of those plans and take no
+   GPU lock, so they can start at once if the owner says so; its render briefs follow Plan
+   0081's merge, its streamer brief Plan 0107's.
+   **Not re-read in this pass**, with where the next pass starts on each:
+   - **0034** (water): its reflected and refracted hits are lit by "the directional sample" and
+     the sky ray; under the calm defaults a hit off a wave has no face record and no history,
+     so its light source must be named (the horizon and `E_sky`, or a ray with its noise).
+   - **0035** (aerial perspective, clouds): the cloud shadow enters "after the history" and at
+     `key_sample`; neither is there by default. It must multiply the horizon or the record's
+     key visibility, and decide what a baked record under a moving cloud means.
+   - **0037** (the night sky): the night's light arrives through `E_sky` and the store's sky
+     visibility, which stands; its exposure phases predate ADR-0081's anchor by the sky around
+     the camera, and its sky bodies as key lights meet the sun fixed in the world (ADR-0084).
+   - **0036** (weather): wet surfaces and snow cover change what the composite reads per face
+     while the bake's records hold the dry world; lightning as a fired light meets the bake
+     thread's write lists; its wind is Plan 0081's `set_detail_wind`.
+   All four name `key_sample`, `sky_ray_sample`, the direct target's history and the upscaler
+   `own` in places, and each wants its phases cut into briefs.
 
 **Plans from the architecture review of 2026-11-12** (`../reviews/2026-11-12-architecture-review.md`),
 approved by the owner on 2026-11-12 ("45 after 67, 70 after 45. all draft plans can be
@@ -311,6 +339,8 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0106](done/0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md) | No gate test passes by a clock: the sweep of both tiers, the tests stepped by count, a gate script in CI | 2026-11-26, v0.79.0 |
+| [0101](done/0101-the-record-by-rule-at-every-opening-an-audit-on-the-real-scenes-first-then-the-three-exclusions-lifted.md) | The record by rule at every opening (ADR-0085): audited at 0 blocks differing, then the three exclusions lifted | 2026-11-26, v0.78.0 |
 | [0104](done/0104-the-wobble-anchored-to-the-owners-eye-clips-he-ranks-a-measure-that-ranks-them-then-the-remedy.md) | The wobble anchored on clips the owner ranked; closed with no remedy; Plan 0100's unpicked settings removed, `key cover ray` kept, off | 2026-11-26, v0.77.0 |
 | [0099](done/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) | The bake step off the main thread: a bake thread, write lists, lockstep as a setting; the feed and the RTX forest's in-view line missed, disclosed; ADR-0083 accepted | 2026-11-26, v0.76.0 |
 | [0100](done/0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md) | A sun fixed in the world: closed on the bake's key ray at its cap and three settings, off; no default changed; the wobble stays, to a follow-on plan; ADR-0084 accepted | 2026-11-25, v0.75.0 |

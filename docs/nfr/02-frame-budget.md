@@ -1284,3 +1284,56 @@ Beside them, one run each (Phase 6b, quiet):
   edge). The dig rig records from 240 settling frames after its drain, so its two rows before
   the first dig are not the first steps after it, and no headless rig at `cde2e966` moves the
   camera to refill the view. Reading it needs a line or a rig changed and a rebuild.
+
+**The record by rule at every opening (Plan 0101 Phase 3, 2026-11-26, ADR-0085; release
+`flythrough` at `85bf694d`, headless, lockstep (the bake thread off), `--source outdoor` from the
+first world frame, the forest at 15:00 and the hills at noon; RTX 3080 Laptop at Floor 1920 x
+1080 (drain 1.5 ms), RADV RENOIR at Portable 1280 x 720 (6.0 ms); exclusive perf lock per run,
+quiet at the start (load1 0.94 to 1.47; the RTX forest 2.07 at its end); one run a scene, the
+RENOIR forest twice (the first with a cold pipeline build); every row and the base's in
+[`docs/plans/logs/0101.md`](../plans/logs/0101.md), Phase 3).** The base is the same tree
+without the rule at every opening (Phase 1, `67062697`, `--queue-rule-reading`, the same
+flags). A difference inside the spread of the same behaviour run two or three times (the audit
+runs: RTX forest in view 12.0 to 33.0 s, residency 27.6 to 41.5; RTX hills 11.8 to 25.0, 34.7
+to 47.4; RENOIR forest 17.2 to 17.5; RENOIR hills 13.8 to 13.9, 110.0 to 137.1) is "not
+separable".
+
+| reading | RTX forest | RTX hills | RENOIR forest | RENOIR hills |
+|---|---|---|---|---|
+| In view landed (base) | 13.5 s (35.6): not separable | 11.0 s (20.2): not separable | 14.1 s (17.3): -3.2 s | 10.2 s (13.7): -3.5 s |
+| The whole residency empty (base) | 39.5 s (49.4): not separable | 29.1 s (45.3): not separable | not empty by frame 5 940 (not empty) | 111.4 s (136.7): not separable |
+| Zero records by the rule (base) | 3 589 (261) | 3 702 (320) | 1 019 (14) | 1 066 (6) |
+| Jobs opened, whole run (base) | 7 989 (12 183) | 8 425 (11 351) | 3 736 (4 451) | 4 129 (5 218) |
+| The queue's step, regime B, p50 / p99 (base) | 13.008 / 33.734 ms (14.347 / 28.525) | 13.255 / 42.003 ms | 1.145 / 11.063 ms | 1.144 / 12.178 ms |
+
+The re-list's lap (`touched`, RTX forest, regime B) p50 / p99 0.000 / 1.092 ms against 0.001 /
+1.429 at the base; no index by column was built. The audit (`--queue-rule-audit`) at the same
+tip compared 4 203 and 4 753 blocks a run on the RTX and 1 022 and 1 124 on the RENOIR, by case
+(full, provisional, partial, class 1), and 0 differ in every case on all four runs. The store's
+bytes across two RTX forest runs were not read: no fly-through flag writes or hashes the store
+at this tip (`--bake-file` is refused since Plan 0059).
+
+**The rule at every opening, the bytes and the bake thread (Plan 0101 Phase 4 (c), 2026-11-26;
+release `flythrough` at `2c1b860f`, two runs at `fca23ca9` (one more counter on the line);
+headless, the RTX forest as above (RTX 3080 Laptop, Floor, 1920 x 1080, drain 1.5 ms), from the
+first world frame at a still camera; exclusive perf lock per run, quiet at the start (load1 1.30
+to 1.43) but one bake thread run loaded (2.24); every row in
+[`docs/plans/logs/0101.md`](../plans/logs/0101.md), Phase 4 (c)).** `--queue-rule-reading` hashes
+the zeroed chunks' blocks (FNV-1a 64, every word but the landing word) and the whole store's.
+Three lockstep runs and three with `--bake-thread on` read the same 3 589 zeroed chunks, every
+block hash equal chunk by chunk within each mode and across them, and the same whole-store hash
+over 9 494 blocks (a reading, no bar). One `--queue-rule-audit --bake-thread on` run differs on
+0 blocks in every case (compared full 210, provisional 1 116, partial 2 967, class 1 401).
+
+| reading (RTX forest) | lockstep, three runs | bake thread on, three runs |
+|---|---|---|
+| In view landed | 37.9, 32.0, 30.0 s | 14.7 (loaded), 15.2, 6.2 s |
+| The whole residency empty | 46.0, 39.8, 38.2 s | 22.9 (loaded), 24.7, 22.7 s |
+| Zero records by the rule (re-listed, across a border) | 3 589 (0, 0) each | 3 589 (0, 0) each |
+| Jobs opened | 8 014, 8 032, 7 989 | 9 104, 9 060, 8 486 |
+| The queue's step, regime B, p50 / p99 | 15.148 / 40.431, 13.356 / 38.983, 14.218 / 35.877 ms | the render thread's call 0.751 / 1.617, 0.802 / 1.546, 0.767 / 1.410 ms; the step on the bake thread 10.102 / 24.607, 11.319 / 24.055, 9.344 / 27.214 ms |
+| The re-list's lap (`touched`) p50 / p99 | 0.001 / 1.409, 0.000 / 1.425, 0.001 / 1.225 ms | 0.000 / 2.538, 0.001 / 1.499, 0.000 / 2.021 ms |
+
+The lockstep step's p50 lies -6.9 to +5.6 % of Phase 1's base (14.347 ms). The lockstep in-view
+and residency readings beside Phase 3's one run (13.5 and 39.5 s) are not separable (the same
+behaviour read 12.0 to 33.0 s and 27.6 to 41.5 there). The lines of section 2 do not move.

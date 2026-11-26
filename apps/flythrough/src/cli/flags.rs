@@ -493,7 +493,7 @@ fn session_flags() -> Vec<Flag<Parsing>> {
         Flag::value(
             &["--report"],
             "DIR",
-            "write DIR/run.json at exit (with --path)",
+            "write DIR/run.json at exit (with --path or --queue-rule-reading)",
             |p: &mut Parsing, v| {
                 p.args.report = Some(v.text.into());
                 Ok(())

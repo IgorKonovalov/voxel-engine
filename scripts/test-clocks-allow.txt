@@ -12,6 +12,7 @@ crates/svet-render/src/bake/queue/split_tests/thread/fade.rs | gated | seconds_s
 crates/svet-script-wasm/tests/determinism.rs | timers_are_always_ready_and_never_wait | elapsed | the guest sleeps 30 s twice; under 5 s is the claim's scale (the loads before the clock), slowest loaded 53.2 ms, ratio 94
 apps/flythrough/tests/gpu_shutdown.rs | headless_run | sleep | RUN_BOUND's 20 ms poll of the child: a kill guard's poll, the child is waited on by try_wait
 apps/flythrough/tests/gpu_shutdown.rs | headless_run | elapsed | RUN_BOUND, a 120 s kill guard on the child; 3.4x the slowest of 11 loaded runs (35.8 s), under 10: its resize is deferred to Phase 11 (Plan 0106 amendment, Phase 3's two leftovers)
+apps/flythrough/tests/gpu_outdoor.rs | run | sleep | the 50 ms poll of a 300 s kill guard on the child (soak tests only), waited on by try_wait; 300 s over the slowest of Phase 6a's six loaded test walls (62.8 s, an upper bound on any one child), ratio 4.8, under 10: sized with RUN_BOUND on Plan 0109's tree (Plan 0106 Ruling 9)
 apps/flythrough/tests/gpu_shutdown.rs | timed_drop | recv_timeout | DROP_BOUND 5 s on the streamer drops: the claim that a drop returns (ADR-level), slowest loaded 17.9 ms, ratio 279
 apps/flythrough/tests/gpu_shutdown.rs | assert_teardown_within_bound | as_secs_f64 | DROP_BOUND 5 s on the teardown's summed stages: the claim that the teardown returns, slowest loaded 195.5 ms, ratio 25.6
 
@@ -22,6 +23,9 @@ crates/svet-render/src/bake/stages.rs | a_lap_takes_the_calls_inside_it | sleep 
 
 # A clock compared with itself within a tick (Plan 0106's Decision, form 2), not a bound.
 crates/svet-render/src/bake/queue/split_tests/thread/cycle.rs | the_cycle_parts_sum_to_the_time_between_two_steps | span | the parts' sum against the same instants' span, within TICK_MS (a nanosecond)
+
+# The bake thread on where no count beside it is asserted.
+apps/flythrough/tests/gpu_shutdown.rs | the_headless_flythrough_with_the_bake_thread_exits_within_bound | --bake-thread on | a headless child with the thread on; asserts the exit status, the teardown's stages in order (one line a stage, causal) and DROP_BOUND (its own row), no frame or step count (Plan 0106 Ruling 9)
 
 # Test-only waits with nothing to block on.
 crates/svet-render/src/bake/queue/lister.rs | wait_listed | sleep | #[cfg(test)]; polls the lister pool every 100 us until it has listed, the pool has no condition variable; unbounded, asserts nothing

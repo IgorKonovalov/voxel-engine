@@ -17,6 +17,11 @@ pub struct Streamed {
     pub reads: Vec<u32>,
     /// The fly-through's streamed residency and mirror in place of the rig's own ([`Hold`]).
     pub hold: Option<Hold>,
+    /// Stepped by count: each frame takes every chunk its update queued
+    /// (`Streamer::wait_idle` in place of `poll`) and waits on the device after its step, so
+    /// the queue's next step reads every earlier submit. Off, the frames run at the stream
+    /// workers' and the device's pace.
+    pub stepped: bool,
 }
 
 /// [`streamed`] at the fly-through's streamed settings: LOD radius `r_lod`, the mirror's
@@ -52,7 +57,8 @@ pub struct StreamedRead {
 
 /// A world streamed in process around `s.eye`, reached as by a jump: the spawn's block first
 /// (radii 1), then each frame the stream updated (full radius `s.r`, 2 more LOD, hysteresis 1,
-/// 8 workers, a following window), polled and synced with no budget, the live queue stepped at
+/// 8 workers, a following window), polled (or waited, [`Streamed::stepped`]) and synced with no
+/// budget, the live queue stepped at
 /// the fly-through's settings (coarse 8, near 2, the default slice) and the frame rendered at
 /// 320 x 180, manual exposure 1, the lamp off, the store's counters on. At each frame of
 /// `s.reads`: the hit pixels' mean luminance of the accumulated stored part and of the direct
@@ -118,7 +124,12 @@ pub fn streamed_with(
     let last = s.reads.iter().copied().max().unwrap_or(0);
     for f in 0..=last {
         streamer.update(&world, &[eye]);
-        gpu.apply_events(&streamer.poll(&world));
+        let events = if s.stepped {
+            streamer.wait_idle(&world)
+        } else {
+            streamer.poll(&world)
+        };
+        gpu.apply_events(&events);
         gpu.set_focus(eye);
         let mut enc = device.create_command_encoder(&Default::default());
         gpu.sync(&world, &queue, &mut enc).expect("the mirror fits");
@@ -144,6 +155,11 @@ pub fn streamed_with(
             .expect("the queue runs")
             .expect("the queue's step");
         frame.step(&device, &queue, &gpu, &camera, &LightParams::headlamp());
+        if s.stepped {
+            device
+                .poll(svet_render::wgpu::PollType::wait_indefinitely())
+                .expect("the device polls");
+        }
         each(f, &device, &queue, &mut frame);
         if f == last && s.hold.is_some() {
             held_report(&gpu, &frame, &view, eye, residency.r_full);

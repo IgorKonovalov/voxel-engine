@@ -14,7 +14,7 @@ use svet_render::SyncStats;
 use crate::path::WARMUP_S;
 
 mod queue;
-pub use queue::{QueueDrain, drain_words};
+pub use queue::{QueueDrain, drain_words, rule_hash_text};
 
 /// The `schema` field: bumped when a field changes meaning or goes away.
 pub const SCHEMA: u32 = 2;

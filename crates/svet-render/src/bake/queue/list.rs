@@ -63,7 +63,7 @@ impl BakeQueue {
             if self.box_waits() {
                 break;
             }
-            match self.push_listed(store, eye, class, ChunkCoord(c), l) {
+            match self.push_listed(run.mirror, store, eye, class, ChunkCoord(c), l) {
                 Ok(samples) => {
                     #[cfg(test)]
                     if let Some(hook) = self.listed_hook.as_mut() {
@@ -138,6 +138,7 @@ impl BakeQueue {
     /// faceless instead. The job's samples at most (0 for none).
     pub(in crate::bake) fn push_listed(
         &mut self,
+        gpu: &Shadow,
         store: &mut Store,
         eye: [i32; 3],
         class: u8,
@@ -155,7 +156,10 @@ impl BakeQueue {
         let provisional = self.provisional_checked.remove(&c);
         let ruled = self.ruled_checked.remove(&c);
         let missed = self.rule_missed_checked.remove(&c);
+        let audit = self.audit_checked.remove(&c);
+        self.audit_jobs.remove(&c);
         self.zeroed.remove(&c);
+        self.zeroed_open.remove(&c);
         if faces.faces() == 0 {
             self.reach.remove(&c);
             self.partial_due.remove(&c);
@@ -183,7 +187,10 @@ impl BakeQueue {
         if ruled {
             // The rule's zero record: no job; its block is placed at this step's submit. It is
             // what a bake at any count writes, so it holds the near tier and no band's
-            // promotion refines it (`u32::MAX` is never below a band's count).
+            // promotion refines it (`u32::MAX` is never below a band's count). It is final: read
+            // on the reach as it stands, it is flagged neither partial nor provisional (its
+            // placement clears both), so no catch-up or arrival re-queues it; the re-list does
+            // ([`BakeQueue::relist_zeroed`]). Over a held block it lands as a class 1 job's does.
             self.job_partial.remove(&c);
             self.job_provisional.remove(&c);
             self.job_coarse.insert(c, false);
@@ -191,6 +198,20 @@ impl BakeQueue {
             self.ruled.push((coord, first_word, faces, 0));
             self.zeroed.insert(c);
             self.stats.zeroed += 1;
+            // Its faces were listed with each neighbour the store did not hold read as rock: the
+            // neighbours the shadow does not hold full are noted, and the chunk is listed again
+            // when one of them is (ADR-0085).
+            let open = (0..6).fold(0u8, |m, f| {
+                let n = ChunkCoord(neighbour(coord, f));
+                if gpu.is_mirrored(n) && !gpu.is_lod(n) {
+                    m
+                } else {
+                    m | 1 << f
+                }
+            });
+            if open != 0 {
+                self.zeroed_open.insert(c, open);
+            }
             return Ok(0);
         }
         if partial {
@@ -218,6 +239,9 @@ impl BakeQueue {
                 dirs.iter().filter(|d| **d).count() as u64 * u64::from(brick_samples)
             })
             .sum();
+        if let Some(case) = audit {
+            self.audit_jobs.insert(c, (case, faces.clone()));
+        }
         self.lp.push(Job {
             coord,
             faces,
@@ -277,7 +301,7 @@ impl BakeQueue {
 pub(in crate::bake) type Held = [Option<Arc<PreparedMasks>>; 6];
 
 /// The chunk across `face` of `coord` (`face / 2` the axis, odd the positive side).
-fn neighbour(coord: ChunkCoord, face: usize) -> [i32; 3] {
+pub(super) fn neighbour(coord: ChunkCoord, face: usize) -> [i32; 3] {
     let mut c = coord.0;
     c[face / 2] += if face % 2 == 1 { 1 } else { -1 };
     c

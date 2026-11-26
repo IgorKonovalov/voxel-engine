@@ -28,7 +28,12 @@ fn sun_sky(el: f32) -> svet_render::sky::Sky {
 /// over chunks (2..=4, 3, 1) under it, no emitter; the live queue at light radius 2 over a
 /// sun at elevation 40, the camera above the surface; `rule` sets the queue's zero rule.
 fn buried_rig(rule: bool) -> Option<support::queue::Q> {
-    use support::queue::{Setup, box_op, rig, world_of};
+    buried_rig_of(buried_world(), rule)
+}
+
+/// [`buried_rig`]'s world.
+fn buried_world() -> svet_world::World {
+    use support::queue::{box_op, world_of};
     let world = world_of([7, 7, 7], ROCK);
     for (min, max) in [
         ([0, 0, 320], [448, 448, 448]),
@@ -38,6 +43,12 @@ fn buried_rig(rule: bool) -> Option<support::queue::Q> {
             .apply(&box_op(min, max, Mode::Carve))
             .expect("the box is resident");
     }
+    world
+}
+
+/// [`buried_rig`] over `world` (the buried world, changed before the mirror's first sync).
+fn buried_rig_of(world: svet_world::World, rule: bool) -> Option<support::queue::Q> {
+    use support::queue::{Setup, rig};
     let mut q = rig(world, &Setup::at([224.0, 224.0, 400.0]))?;
     q.frame.set_sky(Some(sun_sky(40.0)));
     q.frame.set_bake_queue(move |q| q.zero_rule = rule);
@@ -71,6 +82,166 @@ fn a_buried_chunk_with_no_emitter_in_reach_gets_the_bakes_bytes_without_a_job() 
     }
     assert!(ruled.q().stats().zeroed >= CAVE.len() as u64);
     assert_eq!(baked.q().stats().zeroed, 0);
+}
+
+/// Steps `q` until `done` holds after a step (at most [`support::queue::MAX_STEPS`]), asserting
+/// after every step that no cave chunk is in a GPU job (a job's chunk holds its `job_coarse` mark
+/// from its listing to its placement, a step later at the earliest; a ruled record is placed in
+/// its listing's step).
+fn step_with_no_cave_job(
+    q: &mut support::queue::Q,
+    what: &str,
+    mut done: impl FnMut(&support::queue::Q) -> bool,
+) {
+    for _ in 0..support::queue::MAX_STEPS {
+        q.step();
+        for c in CAVE {
+            let t = q.q().tracks(ChunkCoord(c));
+            assert!(!t.contains(&"job_coarse"), "{what}: {c:?} in a job: {t:?}");
+        }
+        if done(q) {
+            return;
+        }
+    }
+    panic!(
+        "{what}: not done in {} steps: {:?}",
+        support::queue::MAX_STEPS,
+        q.q().stats()
+    );
+}
+
+/// [`step_with_no_cave_job`] for [`AFTER_STEPS`] more steps, to a queue with no job open or
+/// pending. (The streamed rigs never empty: the chunks by the window's top and sides, whose
+/// reach leaves the window inside the full radius, wait for chunks no streamer brings.)
+fn steps_on_with_no_cave_job(q: &mut support::queue::Q, what: &str) {
+    let mut n = 0;
+    step_with_no_cave_job(q, what, |q| {
+        n += 1;
+        n >= AFTER_STEPS && q.q().stats().jobs == 0
+    });
+}
+
+/// The steps a streamed rig runs on after the cave's records, for a job that would follow them.
+const AFTER_STEPS: usize = 120;
+
+/// The cave's records in `ruled` against the whole world's GPU bake with the rule off: each
+/// zeroed, flagged neither provisional nor partial, and equal byte for byte.
+fn assert_cave_ruled_as_baked(ruled: &support::queue::Q, what: &str) {
+    let Some(mut baked) = buried_rig(false) else {
+        return;
+    };
+    baked.settle();
+    for c in CAVE {
+        let t = ruled.q().tracks(ChunkCoord(c));
+        assert!(
+            t.contains(&"zeroed"),
+            "{what}: {c:?} took no zero record: {t:?}"
+        );
+        for flag in ["provisional", "job_provisional", "partial", "job_partial"] {
+            assert!(!t.contains(&flag), "{what}: {c:?} is {flag}: {t:?}");
+        }
+        let (a, b) = (ruled.target(c), baked.target(c));
+        assert!(a.is_some(), "{what}: {c:?} holds no block");
+        assert_eq!(a, b, "{what}: {c:?}: the rule's record against the GPU's");
+    }
+    assert_eq!(ruled.q().stats().zero_relisted, 0, "{what}");
+}
+
+/// The chunk over the cave's middle column left out of the world (air, above the cave's reach
+/// boxes and under the camera's chunk) in [`the_cave_under_a_column_waiting_to_upload_is_ruled`].
+const WAITING: [i32; 3] = [3, 3, 5];
+
+fn not_waiting(c: ChunkCoord) -> bool {
+    c.0 != WAITING
+}
+
+fn every(_: ChunkCoord) -> bool {
+    true
+}
+
+/// Plan 0101 Phase 2, done-when (4), the column not final: the buried rig with the rule on as a
+/// streamed world whose streamer holds every chunk within 8 of the camera's, [`WAITING`] not yet
+/// in the world (so neither mirrored nor pending) at the openings that list the cave, the column
+/// wait off and the partial reach (the cave's reach crosses the window's floor, past a full
+/// radius of 6). The cave's chunks take the zero record with no GPU job; [`WAITING`] arrives and
+/// no job follows; their records equal the whole world's GPU bake with the rule off, and they
+/// are neither provisional nor partial. Soak: 25.2 s on lavapipe at load 19 (two settles of the
+/// 7 x 7 x 7-chunk rig and 120 steps on), over the gate's 10 s line.
+#[test]
+#[ignore = "soak"]
+fn the_cave_under_a_column_waiting_to_upload_is_ruled() {
+    let w = ChunkCoord(WAITING);
+    let world = buried_world();
+    let chunk = world.store().remove(w).expect("the rig's chunk");
+    let Some(mut q) = buried_rig_of(world, true) else {
+        return;
+    };
+    q.resident = Some(not_waiting);
+    q.lod_radius = Some(8);
+    q.full_radius = Some(6);
+    q.frame.set_bake_reach(svet_render::ReachMode::Partial);
+    let cave_zeroed = |q: &support::queue::Q| CAVE.iter().all(|&c| q.q().zeroed(ChunkCoord(c)));
+    step_with_no_cave_job(&mut q, "waiting", cave_zeroed);
+    assert!(
+        !q.gpu.is_mirrored(w) && !q.gpu.is_pending(w),
+        "the chunk over the cave is still waiting"
+    );
+    let provisional = q.q().stats().provisional_opened;
+    println!(
+        "waiting: the cave zeroed, {provisional} jobs opened provisional, {:?}",
+        q.q().stats()
+    );
+    assert!(provisional > 0, "columns not final over the rig's chunks");
+    q.world
+        .store()
+        .insert(w, chunk.read().expect("the chunk's lock").clone());
+    q.world.store().mark_dirty(w);
+    q.resident = Some(every);
+    step_with_no_cave_job(&mut q, "arrived", |q| q.gpu.is_mirrored(w));
+    steps_on_with_no_cave_job(&mut q, "arrived");
+    assert_cave_ruled_as_baked(&q, "waiting");
+}
+
+/// The full radius [`the_cave_whose_reach_crosses_the_full_radius_is_ruled`] shrinks to, in
+/// chunks about the camera's chunk (3, 3, 6): the cave's chunks lie within it (at most 26 in
+/// squared distance), chunks of their reach past it (the window's floor's (1, 3, 0) at 40).
+const FULL_RADIUS: i32 = 6;
+
+fn within_full_radius(c: ChunkCoord) -> bool {
+    let d = [c.0[0] - 3, c.0[1] - 3, c.0[2] - 6];
+    d.iter().map(|v| v * v).sum::<i32>() <= FULL_RADIUS * FULL_RADIUS
+}
+
+/// Plan 0101 Phase 2, done-when (4), the partial reach: the buried rig with the rule on as a
+/// streamed world whose full radius is [`FULL_RADIUS`], every chunk past it LOD-only, under the
+/// partial reach mode, so the cave's reach crosses the full radius and is not whole. The cave's
+/// chunks take the zero record with no GPU job; their records equal the whole world's GPU bake
+/// with the rule off, and they are neither provisional nor partial. Soak: 16.1 s on lavapipe at
+/// load 19, over the gate's 10 s line.
+#[test]
+#[ignore = "soak"]
+fn the_cave_whose_reach_crosses_the_full_radius_is_ruled() {
+    let world = buried_world();
+    support::make_lod(&world, |c| !within_full_radius(c));
+    let Some(mut q) = buried_rig_of(world, true) else {
+        return;
+    };
+    q.resident = Some(within_full_radius);
+    q.full_radius = Some(FULL_RADIUS);
+    q.frame.set_bake_reach(svet_render::ReachMode::Partial);
+    let cave_zeroed = |q: &support::queue::Q| CAVE.iter().all(|&c| q.q().zeroed(ChunkCoord(c)));
+    step_with_no_cave_job(&mut q, "partial", cave_zeroed);
+    steps_on_with_no_cave_job(&mut q, "partial");
+    let st = q.q().stats();
+    println!("partial: {st:?}");
+    assert!(
+        st.partial_opened > 0,
+        "chunks of the rig bake from partial reaches"
+    );
+    for c in CAVE {
+        assert!(q.gpu.is_mirrored(ChunkCoord(c)) && !q.gpu.is_lod(ChunkCoord(c)));
+    }
+    assert_cave_ruled_as_baked(&q, "partial");
 }
 
 /// Plan 0096 Phase 2 bar 4: a uniform rock chunk inside the rock (5, 5, 2), every neighbour

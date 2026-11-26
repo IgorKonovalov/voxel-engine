@@ -675,15 +675,17 @@ impl Run {
         frame.set_bake_slots(self.args.bake.slots);
         if frame.bake_queue().is_some() {
             let (order, withdraw) = (self.args.queue_order(), self.args.bake.queue_withdraw);
-            let (census, rule) = (
+            let (census, rule, audit) = (
                 self.args.bake.queue_census,
                 self.args.bake.queue_rule_reading,
+                self.args.bake.queue_rule_audit,
             );
             frame.set_bake_queue(move |q| {
                 q.order = order;
                 q.withdraw = withdraw;
                 q.census_every_opening = census;
                 q.rule_reading = rule;
+                q.rule_audit = audit;
             });
             self.queue.listing_due = self.args.bake.queue_census;
         }

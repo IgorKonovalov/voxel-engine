@@ -134,10 +134,10 @@ output.
 
 ```
 node scripts/check-test-clocks.mjs scripts/fixtures/test-clocks
-node scripts/check-test-clocks.mjs --self-test    # expects exit 0, 11 of 11
+node scripts/check-test-clocks.mjs --self-test    # expects exit 0, 13 of 13
 ```
 
-Expect **exit 1 and exactly seven findings**, then the count line `7 finding(s) across 6 files
+Expect **exit 1 and exactly nine findings**, then the count line `9 finding(s) across 6 files
 of test code`. The tree is one crate, `crates/seeded`, and its own `scripts/test-clocks-allow.txt`
 (one live row, one stale):
 
@@ -151,14 +151,15 @@ of test code`. The tree is one crate, `crates/seeded`, and its own `scripts/test
 | rule 4 | `tests/timed.rs`'s `timed_device`, in a file that calls `.step(` | `crates/seeded/tests/timed.rs:9 -> rule 4: ...` |
 | a stale allow-list row | `scripts/test-clocks-allow.txt` line 5, `removed_long_ago` | `scripts/test-clocks-allow.txt:5 -> a row whose site is gone: ...` |
 | an allow-listed site | `seeded.rs`'s `the_claims_own_delay` | not reported |
-| a soak test and a helper only it calls | `seeded.rs`'s `a_long_series`, `paced_helper` | not reported |
+| rule 1 in a soak test | `seeded.rs`'s `a_long_series`, marked `#[ignore = "soak"]` | ``crates/seeded/tests/seeded.rs:56 -> rule 1: `sleep` in `a_long_series`: ...`` |
+| rule 1 in a helper only a soak test calls | `seeded.rs`'s `paced_helper` | ``crates/seeded/tests/seeded.rs:60 -> rule 1: `yield_now` in `paced_helper`: ...`` |
 | a reading | `seeded.rs`'s and `timed.rs`'s `mod reading` | not reported |
 | tokens in comments and strings | `seeded.rs`'s module doc and `tokens_in_strings` | not reported |
 | a duration against zero or a value | `seeded.rs`'s `compared_with_zero_or_a_value` | not reported |
 | production code | `src/lib.rs`'s `back_off` and `late` | not reported; only test code is read |
 | the blocking wait in a declared module | `tests/waited.rs`, whose `mod support;` names `wait_bake_step` | not reported |
 
-`--self-test` asserts the seven lines (file, line, rule, token and function), nothing beyond
+`--self-test` asserts the nine lines (file, line, rule, token and function), nothing beyond
 them, one of the two rows used, and a floor on the repository: at least 100 files of test code
 scanned and at least 5 allow-list rows matching a site, which a dead detector takes to zero.
 

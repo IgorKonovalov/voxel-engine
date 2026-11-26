@@ -1,6 +1,6 @@
 # 0081: A surface detail layer: blades, caps and pebbles marched above styled faces, lit as hits, faded by size on screen, swayed by a wind the game sets
 
-> **Status:** approved (2026-11-16, the owner's go with every recommended answer); amended 2026-11-17 (architect re-read against main 3b3986d0 after Plan 0032's close, Plan 0069, Plan 0080's lane and Plan 0086: the section "Amended 2026-11-17 (re-read)" below is the phases' errata)
+> **Status:** approved (2026-11-16, the owner's go with every recommended answer); amended 2026-11-17 (architect re-read against main 3b3986d0 after Plan 0032's close, Plan 0069, Plan 0080's lane and Plan 0086: the section "Amended 2026-11-17 (re-read)" below is the phases' errata); **re-read 2026-11-26 (architect, against main 69d5ce97: the section "Re-read 2026-11-26 (architect)" is the errata of both, splits the phases into one brief each and carries four owner questions)**
 > **Created:** 2026-11-16
 > **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md); the cave presets serve M6's consumer
 > **Related ADRs:** [ADR-0063](../adrs/0063-surface-detail-is-a-procedural-shell-marched-at-the-hit-described-per-material-on-the-render-side.md)
@@ -141,6 +141,117 @@ The Budgets table's base is main after Plan 0086 merges, not Plan 0032: the hit 
 reads inside a 5.1 to 5.6 ms RTX frame and a 37.5 to 45.8 ms RENOIR frame at 1080p (Plan 0032
 Phase 7, `docs/nfr/02-frame-budget.md`), and Phase 1 bar 5 reads the base again. No owner
 question is added by this re-read.
+
+## Re-read 2026-11-26 (architect)
+
+Read at main 69d5ce97 (v0.77.0) after Plans 0086, 0087, 0095 to 0100, 0102 and 0104 closed,
+against the open lanes (0101, 0105, 0093, 0106) and Plans 0107 and 0108, which land before
+this lane starts (owner, 2026-11-26). This section is the errata of the phases **and of the
+2026-11-17 section**: where the two disagree, this one wins. No phase text was edited: every
+stale name is mapped here. Crate names are `svet-*` (Plan 0087, merged). Four owner questions
+at the end; three touch image stability.
+
+### Drift (what the plan or the 2026-11-17 section says, then the tree)
+
+| It says | The tree has |
+|---|---|
+| group 0's next free binding is 19 | 19 is the column map (`gpu_world/columns.rs`, an `r32sint` texture); **20** is the next, 5 and 6 are still unused (`frame/pipelines.rs` `world_layout`) |
+| the style word: "bits 0 to 7 the style index plus one, bit 8 `SHADOW_AS_BRICK`" | Plan 0086 landed the word otherwise (`frame/settings.rs`): `SHADOW_AS_BRICK` is bit 0, `SHADOW_ABSORB` bit 1, the absorb sigma from bit 8 (`SHADOW_SIGMA_SHIFT`) on, and the word is uploaded **as an `f32`** (`Frame::set_material_styles`, the tail of `emission_scale`), so it is exact to 24 bits only. The detail index takes **bits 2 to 7** (index plus one, 0 none), so **`MAX_STYLES` is 63, not 64** (the style uniform is 63 rows, 4032 B), and bar 1's "the 65th is refused" reads "the 64th". `set_surface_details` writes those bits and leaves the rest of the word; `set_material_styles` leaves the index bits |
+| "the bake is untouched" | true of its output, but the bake reads the style words (`SHADOW_ABSORB` is the bake's too) and since Plan 0099 it runs on the bake thread over its own copy of the mirror (`Shadow`, ADR-0083). A change of the index bits must queue no bake job and cross no thread: bar 1 of brief 1a asserts it in lockstep (below) |
+| the baked light is read in the temporal pass, one site (`store_voxel(rec.p, nf)`) | four readers key by the face under the hit: `temporal.wgsl` (the store's sky and key visibility, the emissive read), `shade.wgsl`, `sky_light.wgsl` `key_cover_near` (the face's centre) and `key_horizon.wgsl` `key_horizon_at(p, nf)` (the column horizon, lifted along the face normal), plus the seeds of `pair.wgsl`. A `HIT_DETAIL` record's `p` is up to 4 voxels above its face and its normal is no axis, so brief 1b adds **one helper in `hitrec.wgsl`** that returns a record's face voxel and face normal (the face's for a detail hit, today's for every other) and every reader above calls it. `temporal.wgsl` is at 1171 of 1200 lines: the helper and anything else new go in `hitrec.wgsl` or `detail.wgsl` |
+| "lit by the light pass like any hit, with the sun's shadow rays from the element" | the calm defaults (ADR-0082, Plan 0098) take no screen history in the light passes: a far face's key light is the column map's horizon, a near face's sky term is the store's record, and what a ray would need a history for is answered from a smooth source. See "The light at a detail hit" and question 1 |
+| the far normal's band is `[2, 6]`, the layer at `[6, 12]` has faded where it acts | `DEFAULT_FAR_NORMAL` is `[4, 8]` pixels a voxel and the key light steps to its far source at the band's half, 6 px (`KeyFarMix::Step`). `[6, 12]` ends exactly there; `[2, 4]` runs the layer through the whole far band. See question 2 |
+| `lighting.key_at`, `lighting.key_horizon`, `key_cover record`, the upscaler `own` | removed (Plans 0104 and 0102). FSR 2 is the only upscaler; "FSR 2 off" in a golden reads "the native scale" as `gpu_outdoor_golden.rs` renders it today |
+| `hud/modes.rs` at 1197 lines, `frame/encode.rs` at 1193 | 1048 and 1122: both have room, the new-module advice stands. Now at their caps instead: `toggles.rs` (1171; the entry goes in `toggles/`), `cli/tests.rs` (1181; the parse test goes in `cli/tests/outdoor.rs`), `cli/flags.rs` (1179), `frame/settings.rs` (1162; `SurfaceDetailSettings` lives in `detail.rs`) |
+| "byte-identical to the base commit's binary" (Phase 1 bar 2) | no test can run another commit's binary: the bar reads "with the table empty and `on` true, the hit buffer, the direct target and the composite equal those with `on` false, byte for byte, and the existing goldens hold" |
+| the readings' command (`--frames 300`, the last 30, at `--render 1920x1080` on both adapters) | every start now runs the light pre-roll, and the view bakes for seconds after the first world frame (17.9 to 19.0 s on the RTX forest, `docs/nfr.md` section 2); a headless run steps the bake thread in lockstep. A reading names its regime and is taken **after the in-view landing** (the `bake queue:` line says when); the RTX reads at Floor 1920 x 1080 and the RENOIR at **Portable 1280 x 720** with the layer forced on, as `nfr.md` reads that adapter since Plan 0069. Plan 0108 may add `--pre-roll`; the runs keep its default |
+| Plan 0090 "before 0081" (the index) | Plan 0090 is approved and not started, and the owner's order of 2026-11-26 does not name it. See question 4 |
+
+### The light at a detail hit (replaces Phase 1's "Lit as a hit" where they differ)
+
+A detail hit takes **its face's light**: the sky visibility, the key light's visibility
+(record, column horizon or the near source, whichever the face would take at that size on
+screen) and the emissive record are read for the face under the element through the helper
+above, and the element's shading normal enters only the cosine and the root term. No ray
+starts at a swayed position. The list lights' shadow rays (ADR-0044: one ray a light, no
+random number) start at the element's **rest** position. The arm "a key ray from the
+element's rest position" is a setting read in brief 3b beside the default, not the default.
+ADR-0063 is revised to say so (2026-11-26; it is still proposed).
+
+### Briefs (one phase per dev brief; a reading is its own brief)
+
+The phases' text and bars stand; they run as these briefs, each one commit and one row of
+the Implementation log.
+
+| brief | from | takes | tier |
+|---|---|---|---|
+| 1a | Phase 1: the table, the style bits, the settings rows, the flags, the menu entry and banner | bars 1 and 4, plus `a_detail_table_queues_no_bake_job` (lockstep, `Frame::set_bake_queue`, stepped by count, under 5 s): setting and clearing a table leaves the queue's job count and the `Shadow`'s bytes as they were | quick; no shader |
+| 1b | Phase 1: the shell at the hit cell, the face helper, lit and coloured | bars 2 and 3 | `gpu_detail`, `gpu_shader_portability` |
+| 1c | Phase 1 bar 5: the first reading | the base and `grass`, both adapters, after the landing | runs under the lock |
+| 2a | Phase 2: the run, the probes, the steps view | bars 1 and 2 | `gpu_detail` |
+| 2b | Phase 2 bar 3: the cost of each arm | readings | runs |
+| 3a | Phase 3: the fade, the minimum width, the rest position, the sway, the normal blend | bars 1 and 2 | `gpu_detail` |
+| 3b | Phase 3 bars 3 and 4: the stillness reading with its stop rule, the slow pan, the key-ray arm | readings; the stop rule stops before 4a | `gpu_detail` (`mod reading`), `examples/strip.rs` |
+| 4a | Phase 4: caps, pebbles, every face, emission, the presets, the settings it adds | bars 1 to 4 | `gpu_detail`, quick |
+| 4b | Phase 4 bar 5: the readings for the window | readings | runs |
+| 5 | the owner's window | as written | human |
+| 6 | the picks as tests | as written | `gpu_detail`, the golden files |
+
+Rules the briefs inherit since 2026-11-17: no test passes by a clock (Plan 0106: "0.5 s of
+`dt` apart" is `set_dt`, a count, and stands); a gate test is under 10 s on lavapipe or born
+soak; no run past about 20 minutes under the lock (brief 3b's five arms of 128 frames are
+projected from the first arm before the rest run); in the window the camera is never held
+and no `--pre-roll-drain` is passed; every toggle shows its mode on screen (bar 4); the runs
+of 1c, 2b and 4b are taken headless before any window.
+
+### Budgets and bars, checked against `docs/nfr.md` today
+
+The lines stand: primary rays 3.0 ms and lighting **4.0 ms** at Floor (rebalanced at Plan
+0069), Portable one 33.3 ms line. The base moved: the RTX forest's frame is 8.3 ms wall with
+the bake thread on while the view bakes, the RENOIR's 24 ms at Portable; the 5.1 to 5.6 ms and
+37.5 to 45.8 ms the 2026-11-17 section cites are Plan 0032's and are not the base. The
+projections (0.3 to 0.8 ms RTX, 2 to 5 ms on the slow adapter) are still guesses. **Brief 1c
+retakes:** the hit and light passes' GPU time by `FRAME_PASSES` with the layer off and on, at
+the `outside` spawn and the forest, RTX at Floor and RENOIR at Portable, after the landing;
+`Frame::frame_bytes` at the base. With the face's light as the default the light pass should
+not move at all, and 1c says whether it does. The stillness reference of brief 3b is read
+again on the bare floor under the calm defaults (light history off): Plan 0032's figure is
+not carried.
+
+### ADR-0063
+
+Revised 2026-11-26 in place (proposed, so not append-only yet): the light at a detail hit is
+the face's, the style index sits in Plan 0086's style word (63 styles), and the fade
+candidates follow the far band. Its Decision otherwise stands.
+
+### Order
+
+Plan 0081 before Plan 0033's **render** phases still stands, for the files, not the look:
+both write `hit.wgsl`, `hitrec.wgsl` (the kind-dependent bits), group 0's next binding,
+`toggles/` and `cli/outdoor.rs`. The look no longer couples them: the layer ends 6.4 to
+12.8 m out, the first far level starts at 83 m. Plan 0033's world-side briefs touch none of
+this plan's files and need no GPU lock; they may run beside it (Plan 0033's re-read).
+
+### Owner questions (each with a recommendation)
+
+1. **The light at a detail hit** (image stability). Recommended: **the face's light, no ray
+   from the element**, as above: a blade is lit as the ground it stands on, by sources that
+   do not change frame to frame, and the root term and the cosine give it shape. Given up:
+   a tall cap in a crevice is lit as its floor. Alternative: a key ray from the element's
+   rest position each frame, which needs the history the calm defaults removed, or shows its
+   noise.
+2. **The fade candidates** (image stability). Recommended: **`[6, 12]` and `[4, 8]`** in
+   place of `[2, 4]`: `[4, 8]` is the far normal's own band, so the layer leaves as the face
+   turns far (6.4 to 12.8 m at 1080p Floor), and no element is drawn where the shading normal
+   is the 27-count gradient. `[2, 4]` (12.8 to 25.7 m) puts sub-pixel blades in the band the
+   owner's wobble clips are about; it stays reachable as a setting value, unread.
+3. **The probes** (image stability, cost). Recommended: keep brief 2a's silhouette probes as
+   written, default 0, and let the window pick; no change. Named because a probe hit is a
+   new edge against the sky under FSR 2, which is where the parked "crowns sparkle" entry
+   lives; brief 3b's stillness reading gains the horizon pose with probes 4.
+4. **Plan 0090 before this plan?** Recommended: **no wait**. The pop counter is approved and
+   unstarted; the batch runs in the owner's order of 2026-11-26, and 0090 takes its baseline
+   whenever it runs. The index row is corrected.
 
 ## TL;DR
 
@@ -531,6 +642,17 @@ degrees, 5.2; at 60, 1.7.
      driver and commit; `docs/nfr/03-memory.md` the style buffer's bytes (`Frame::frame_bytes`
      at the base and the tip).
 
+## Amended 2026-11-26 (owner, the re-read's four questions)
+
+"All recommended on outdoor questions" (owner, 2026-11-26), so the recommended option of each question of the section "Re-read 2026-11-26 (architect)" stands:
+
+1. **Light at a detail hit:** the face's light, no ray from the element.
+2. **Fade candidates:** `[6, 12]` and `[4, 8]`; `[2, 4]` stays reachable as a setting value, unread.
+3. **Silhouette probes:** as written, default 0; the window picks.
+4. **Plan 0090 before this plan:** no wait.
+
+The lane starts with the batch, after Plans 0108 and 0107 (owner, the same day).
+
 ## Data shapes
 
 ```rust
@@ -663,10 +785,15 @@ at main after Plan 0032 merges, and Phase 1 reads it again.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The walking skeleton: blades on the grass, the style table, the detail hit | dev | not started | |
-| 2: The run and the silhouette | dev | not started | |
-| 3: Still and swaying: the fade, the minimum width, the rest position, the wind | dev | not started | |
-| 4: Caps, pebbles, every face, emission, the cave presets and the settings | dev | not started | |
+| 1a: the table, the style bits, the settings, the flags and the menu entry | dev | not started | |
+| 1b: the shell at the hit cell, the face helper, lit and coloured | dev | not started | |
+| 1c: the first reading | dev | not started | |
+| 2a: the run and the silhouette | dev | not started | |
+| 2b: the cost of each arm | dev | not started | |
+| 3a: the fade, the minimum width, the rest position, the wind | dev | not started | |
+| 3b: the stillness reading and the slow pan | dev | not started | |
+| 4a: caps, pebbles, every face, emission, the cave presets | dev | not started | |
+| 4b: the readings for the window | dev | not started | |
 | 5: The owner's windowed check | human | not started | |
 | 6: The picks as tests | dev | not started | |
 
