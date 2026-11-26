@@ -1,6 +1,6 @@
 # 0106: No gate test passes by a clock: the red dig test stepped by count, the sweep, and a gate script
 
-> **Status:** draft (2026-11-26). **Phase 1 is the fix for main's red CI and stands on its own**: it may start before the rest is approved. Phases 2 to 4 await the owner's go.
+> **Status:** in-progress (2026-11-26): Phase 1, the fix for main's red CI, done on its own. Phases 2 to 4 await the owner's go.
 > **Created:** 2026-11-26
 > **Milestone:** none (harness; follows Plan 0099, `docs/roadmap.md` M9's bake thread)
 > **Related ADRs:** [ADR-0083](../adrs/0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md) (the bake thread; not changed)
@@ -160,7 +160,7 @@ impl Frame {
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the red test steps by count | dev | not started | |
+| 1: the red test steps by count | dev | done; readings in [the log](logs/0106.md#phase-1-the-red-test-steps-by-count); the wall-paced reading's `ms` is taken after each frame's pad, not after the last pool read | 4c90a671, then committed with this row |
 | 2: class A, the rest | dev | not started | |
 | 3: class B | dev | not started | |
 | 4: the gate script | dev | not started | |
