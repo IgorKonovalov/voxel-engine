@@ -24,6 +24,9 @@ pub(crate) struct StillArgs {
     pub(crate) at: Vec<u32>,
     /// `--still-dir DIR`: where `--still-at`'s PNGs go; unset, [`DEFAULT_STILL_DIR`].
     pub(crate) dir: Option<PathBuf>,
+    /// `--settled-start`: frame 0 waits for full residency and an idle light queue
+    /// (`run::settle`); headless only.
+    pub(crate) settled: bool,
 }
 
 impl StillArgs {
@@ -41,7 +44,8 @@ impl StillArgs {
 
     /// `--still` and `--mode-text` need a headless run that ends by `--frames`; a `--still-at`
     /// frame is one the run draws (under `--frames N`, before frame `N`); `--still-dir` places
-    /// `--still-at`'s files and needs it.
+    /// `--still-at`'s files and needs it; `--settled-start` holds a headless run's camera
+    /// before frame 0, so it needs `--headless`.
     pub(crate) fn check(&self, headless: bool, frames: Option<u32>) -> Result<(), String> {
         if self.any() && !(headless && frames.is_some()) {
             return Err(
@@ -57,6 +61,12 @@ impl StillArgs {
                 "--still-at {f} is past the run's last frame: --frames {n} draws frames 0 to {}",
                 n.saturating_sub(1)
             ));
+        }
+        if self.settled && !headless {
+            return Err(
+                "--settled-start waits before a headless run's frame 0: it needs --headless"
+                    .to_owned(),
+            );
         }
         if self.dir.is_some() && self.at.is_empty() {
             return Err("--still-dir places --still-at's files; it needs --still-at".to_owned());
@@ -113,6 +123,13 @@ pub(super) fn still_flags() -> Vec<Flag<Parsing>> {
                 p.args.still.dir = Some(PathBuf::from(v.text));
                 Ok(())
             },
+        ),
+        Flag::switch(
+            &["--settled-start"],
+            "with --headless: before frame 0 wait, ended by state and never by wall time, for \
+                 full residency and then a light queue with no job and nothing to refine; prints \
+                 `settled: ...` with the counts and steps, and exits non-zero past its step cap",
+            |p: &mut Parsing| p.args.still.settled = true,
         ),
         Flag::value(
             &["--still"],

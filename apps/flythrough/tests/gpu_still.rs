@@ -120,3 +120,65 @@ fn still_at_writes_a_png_of_the_listed_frame() {
     println!("{other} of {} pixels differ from the first", 320 * 180);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `--settled-start` on a small streamed outdoor world (`--residency 2,2`: the smallest full
+/// radius that holds the 33 near chunks the start waits for; at 1 the start never ends) at
+/// 320 x 180 on lavapipe for 2 frames: the run prints `settled: F full, L lod chunks, 0 jobs,
+/// 0 to refine, ...` before frame 0, and F is the closing stats row's `world F full + L lod
+/// chunks`. Soak: 148 s release on lavapipe (2026-11-26), 120 s of it the pre-roll's cap,
+/// whose 125 near chunks cannot bake inside a full radius of 2.
+#[test]
+#[ignore = "soak"]
+fn settled_start_waits_for_full_residency_and_an_idle_queue() {
+    let out = Command::new(env!("CARGO_BIN_EXE_flythrough"))
+        .args([
+            "--headless",
+            "--adapter",
+            "llvmpipe",
+            "--source",
+            "outdoor",
+            "--residency",
+            "2,2",
+            "--render",
+            "320x180",
+            "--frames",
+            "2",
+            "--settled-start",
+        ])
+        .output()
+        .expect("the fly-through runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if !out.status.success() && stderr.contains("no adapter") {
+        println!("skipped: no adapter ({})", stderr.trim());
+        return;
+    }
+    assert!(out.status.success(), "stdout:\n{stdout}\nstderr:\n{stderr}");
+    let settled = stdout
+        .lines()
+        .find_map(|l| l.strip_prefix("settled: "))
+        .unwrap_or_else(|| panic!("no `settled:` line in:\n{stdout}"));
+    let words: Vec<&str> = settled
+        .split([' ', ','])
+        .filter(|w| !w.is_empty())
+        .collect();
+    let count = |after: &str| -> u64 {
+        let i = words
+            .iter()
+            .position(|w| *w == after)
+            .unwrap_or_else(|| panic!("no `{after}` in `{settled}`"));
+        words[i - 1].parse().expect("a count")
+    };
+    assert_eq!(count("jobs"), 0, "{settled}");
+    assert_eq!(count("to"), 0, "chunks to refine: {settled}");
+    let full = count("full");
+    let closing = stdout
+        .lines()
+        .rev()
+        .find_map(|l| l.trim().strip_prefix("world ")?.split_once(" full + "))
+        .unwrap_or_else(|| panic!("no closing `world N full` row in:\n{stdout}"))
+        .0;
+    assert_eq!(closing.parse::<u64>().ok(), Some(full), "{settled}");
+    assert!(full > 0, "{settled}");
+    println!("{settled}");
+}

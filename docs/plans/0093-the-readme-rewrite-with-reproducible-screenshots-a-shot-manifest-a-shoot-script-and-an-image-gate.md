@@ -889,7 +889,10 @@ The Implementation log gains rows for Phases 2b, 2c and 2d; Phase 2's row stays 
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: the still flags and the idempotence reading | dev | done; readings in [the log](logs/0093.md) | `420bcf16` |
-| 2: the manifest and the shoot script | dev | stopped: `--check` after the shoot over tolerance on `hero` (log) | wip, committed with this row |
+| 2: the manifest and the shoot script | dev | stopped: `--check` after the shoot over tolerance on `hero` (log) | `5bc46942` (wip) |
+| 2b: the settled start | dev | done; readings in [the log](logs/0093.md) | committed with this row |
+| 2c: the check's quantity, read | dev | not started | |
+| 2d: the check, the batches, the shoot | dev | not started | |
 | 3: the image gate, fragments, CI | dev | not started | |
 | 4: candidates and contact sheets | dev | not started | |
 | 5: the owner picks | human | not started | |
@@ -923,6 +926,20 @@ each. Empty is fine.)_
   two runs and two more), 0.006305 to 0.007; the clips' 0 is from pairs read in Phase 2.
 - Phase 2: `--check` right after the shoot exits 1: hero 0.117263 against 0.007, the clips 0
   (log). Not met; stopped for the architect.
+- Phase 2b: the flag is `--settled-start`; it lives in `src/cli/still.rs` (the still flags)
+  and the stage in `src/run/settle.rs` (new), entered from `src/run/loading.rs` after the
+  pre-roll; `src/run/queue.rs` gains `QueueRun::settling` (no per-60-frames queue line while
+  it steps at frame 0); `src/run/mod.rs` names the module.
+- Phase 2b: the queue steps at the drain's 40 ms a step while it settles, and the settle ends
+  on 3 idle queue steps in a row (`IDLE_STEPS`), residency full on each.
+- Phase 2b: the `settled:` line also carries the provisional chunks and the steps to
+  residency and of the queue: `settled: F full, L lod chunks, J jobs, C to refine, P
+  provisional after S steps (R to residency, Q of the queue), T ms`.
+- Phase 2b: the `gpu_still` test runs `--residency 2,2`, not 1,1: with a full radius of 1 the
+  start's near residency (33 chunks within squared distance 4) never ends, flag or not (log).
+- Phase 2b: the `gpu_still` test reads 148 s on lavapipe (release; 120 s of it the pre-roll's
+  cap, which bakes none of its 125 near chunks at a full radius of 2) and is born `#[ignore =
+  "soak"]`; at that radius the settle ends after 3 queue steps with no chunk baked (log).
 
 ### Close triggers
 

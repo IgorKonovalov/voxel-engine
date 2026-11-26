@@ -154,3 +154,34 @@ fn a_switch_drops_the_eye_and_counts_the_stills_on() {
     assert_eq!(next.eye, None);
     assert_eq!(next.still.at, vec![0, 20]);
 }
+
+/// `--settled-start` parses with `--headless` and is off unset; without `--headless` it is
+/// refused naming both flags.
+#[test]
+fn settled_start_needs_a_headless_run() {
+    let a = parse_args_from(argv(&[
+        "--headless",
+        "--source",
+        "outdoor",
+        "--settled-start",
+    ]))
+    .unwrap();
+    assert!(a.still.settled);
+    assert!(
+        !parse_args_from(argv(&["--headless"]))
+            .unwrap()
+            .still
+            .settled
+    );
+    for v in [
+        &["--settled-start"][..],
+        &["--source", "outdoor", "--frames", "4", "--settled-start"],
+    ] {
+        assert_eq!(
+            parse_args_from(argv(v)).err().as_deref(),
+            Some("--settled-start waits before a headless run's frame 0: it needs --headless"),
+            "{v:?}"
+        );
+    }
+    assert!(crate::cli::help().contains("--settled-start"));
+}

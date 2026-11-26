@@ -168,6 +168,9 @@ pub(crate) struct QueueRun {
     /// parts beside the frames' wall (the `frames: bake thread cycle` line).
     pub(crate) fed: svet_render::QueueFed,
     pub(crate) cycles: svet_render::CycleLine,
+    /// While `--settled-start` steps the queue before frame 0 (`run::settle`): the frame
+    /// counter stands at 0, so the per-60-frames line is not printed.
+    pub(crate) settling: bool,
 }
 
 /// One edit's frame of the live queue (a reading).
@@ -857,11 +860,12 @@ impl Run {
         // A line a second: of wall time in a window, of 60 frames headless (a headless frame is
         // 1/60 s of the glide and the exposure).
         let t = ms_since(self.start);
-        let due = if self.args.headless {
-            self.frame.is_multiple_of(60)
-        } else {
-            t - self.queue.line_ms >= 1000.0
-        };
+        let due = !self.queue.settling
+            && if self.args.headless {
+                self.frame.is_multiple_of(60)
+            } else {
+                t - self.queue.line_ms >= 1000.0
+            };
         if due && let Some(st) = self.queue.stats {
             // The store's counters without waiting: the newest copy finished on the GPU, its
             // age in frames on the line.
