@@ -1,6 +1,6 @@
 # 0106: No gate test passes by a clock: the red dig test stepped by count, the sweep, and a gate script
 
-> **Status:** in-progress (2026-11-26): Phase 1, the fix for main's red CI, done and merged on its own. Phases 2 to 4 approved (owner, 2026-11-26), with the soak tier's sweep added as Phases 5 and 6. Phases 1 to 4 and 7 done. Phases 10 and 11 read (Phase 11 returned to the architect); Phase 12 reserved ("Amended 2026-11-26 (architect, Phase 10's reading)").
+> **Status:** in-progress (2026-11-26): Phase 1, the fix for main's red CI, done and merged on its own. Phases 2 to 4 approved (owner, 2026-11-26), with the soak tier's sweep added as Phases 5 and 6. Phases 1 to 4 and 7 done. Phases 10 and 11 read; Ruling 4 corrected by Ruling 5 and Phase 12 withdrawn into Plan 0109 ("Amended 2026-11-26 (architect, Phase 11's reading)"). Owed: Phases 8, 9, 5, 6, then the close.
 > **Created:** 2026-11-26
 > **Milestone:** none (harness; follows Plan 0099, `docs/roadmap.md` M9's bake thread)
 > **Related ADRs:** [ADR-0083](../adrs/0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md) (the bake thread; not changed)
@@ -247,6 +247,50 @@ Phase 10 came back (`79b0744c`, the readings log's Phase 10 section). The code w
 **Owner questions** (the first is a stability question and is not decided here; the second takes the recommendation unless the owner says otherwise):
 1. When the camera's chunk cannot bake at a start because its surroundings are still streaming in: does the first frame **wait for it** (as now, with the wait cut to the least the stream allows), or does start-up **end on a bound and show the frame with that chunk's light still landing**? The second is faster and shows light arriving in view; Plan 0108 Phase 2 (the owner looks at the start) is where it can be seen. Recommended to look before choosing; the fix plan carries both arms until then.
 2. The fix as its own small plan (next free number in `docs/plans/README.md`), drafted after Phase 11, not as phases of Plan 0108 (a chore of readings whose outdoor starts would read two lengths until the fix lands). **Recommended and taken.**
+
+## Amended 2026-11-26 (architect, Phase 11's reading)
+
+Phase 11 came back (`e9e40e6b`, the readings log's Phase 11 section) with part of Ruling 4 contradicted. The code was read at that tip and the raw step tables in the lane's `live/p11/` (`node live/p11/steps.mjs <tag> --all`); nothing was run. Ruling 4 stays as written above; this corrects it. Each statement says whether it is from the code, from the rows, or a guess.
+
+### Ruling 5: what holds the camera's chunk is the age of its blocked mark, not what blocked it
+
+**Ruling 4 was wrong on one count and right on two.** Wrong: "what blocks is the reach". Only the check at step 1 fails on the reach; every later failed check has the reach ready and the lights ready, and fails on the columns. Right: the grid of 30, and a long pre-roll as one or two failed rechecks. The run line's `waiting reach` counts every refusal of `bakeable`, reach or columns (`queue/open.rs`), which is how the two were read as one.
+
+**From the code.**
+- **The mark is cleared by age only.** A candidate `bakeable` or `lights_ready_near` refuses is stamped with the step (`BakeQueue::blocked`) and skipped by every opening until `QUEUE_RECHECK` (30) steps have passed (`queue/open.rs`, `queue/list.rs`). The stamp leaves early only when the chunk itself leaves the mirror, its own prepared masks arrive, or an edit box touches it (`queue/step.rs` `forget_unheld`, `queue/message.rs`). A change in the chunk's reach drops its cached reach verdict (`drop_reach`) and **not** its stamp: nothing rechecks a chunk because what blocked it has cleared.
+- **The column check is wider than the reach.** With `column_wait` off (the default), `bakeable` passes a chunk whose columns are not final only if no chunk waits to upload in any column over its reach footprint, **at any height of the mirror's window** (`queue/mod.rs`, `reach_columns_final` over `column_final(.., None)`); the block is then provisional. The reach walk covers 613 chunks; the footprint's columns cover the window's whole height.
+- **Why chunks wait to upload at all.** A sync writes at most `SYNC_BUDGET_MIB` (2 MiB) and defers the rest, nearest first (`gpu_world/window.rs` `select`, `apps/flythrough/src/streaming.rs`); the pre-roll runs one sync a step (`PreRoll::step`). So chunks are pending whenever a step's arrivals from the stream workers outrun one sync.
+- **The bake thread, its lister pool, the shadow and the residency snapshot are not what a check reads wrongly.** The runs are lockstep; the shadow's pending count equals the mirror's in every row (Phase 11); the snapshot is taken each step from the streamer after its poll (`run/loading.rs`).
+
+**From the rows.**
+- **The chunk was bakeable within the first six steps of every traced tip run, long or short.** The reach reads ready from step 4 to 6 (t2 to t8), and the mirror has 0 chunks pending at steps 4 to 13 (t2), 3 to 10 and 12 to 14 and 19 to 27 (t3), 3 to 10 and 14 to 15 and 21 to 27 (t4), so no column of the footprint can hold one. At `c87bf7a6` it was bakeable from step 12 or 14. Every run then waits for step 31. **The long mode is the same wait taken twice or three times**: by step 31 the tip's stream has delivered five times the chunks `c87bf7a6`'s has (6000 to 7000 full against 1361) and is in a standing upload backlog (37 to 876 pending from about step 28 on), so the check lands in it.
+- **`c87bf7a6` is not immune, it is early.** Its steps are short (26 to 107 ms with no job open), each receives 20 to 80 chunks, under one sync's worth (about 216 to 230 chunks a step, read where a backlog drains), so nothing is pending at 2 to 31. At step 32, after a burst of 594 chunks, it reads 378 pending and 98 of them in the camera's footprint columns: one step after its check.
+- **A step's time follows its arrivals in both trees**: about 1 ms a chunk (0.9 at the tip, 1.4 at `c87bf7a6`), 130 to 290 ms and 100 to 250 chunks a step at the tip against 26 to 107 ms and 20 to 80. A long step is followed by a burst and a backlog (t4: 416 ms, then 428 chunks and 194 pending; 814 ms, then 716 and 876).
+
+**Guesses, named as such.**
+- **Why a step costs three times as much since `e1628197`.** The rows give the loop (a longer step receives more chunks, and a step's main-thread work is by the chunk) and not what lengthened it first. The merge added per-change work to the lockstep step (the shadow's notes, with a column's lowest top per changed chunk; the frame's message), and a small added cost is amplified by that loop; no trace printed the step's stages, so this is not read. It is a finding of its own: a streamed start's main-thread step grew threefold on lavapipe at a merge that was meant to move work off that thread. [Plan 0109](0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md) Phase 3 reads it.
+- **Which chunk held a footprint column at the failed checks.** Not named, and **not owed**: any pending chunk in those columns does it, and the fix does not depend on which.
+- Whether the RTX host's chunk is bakeable as early as lavapipe's (its five runs are untraced; the 32 and 95 step counts match).
+
+**Verdict: the defect is the recheck by age.** A chunk that is bakeable at step 5 is opened at step 31 on every tree and every adapter read; the pending uploads only decide how often the check at 31 (and 61) fails too, and the merge moved those odds by making the steps longer. Rejected as the cause to fix: **the pending uploads** (a 2 MiB sync against a stream in full flow is the budget working); **the column rule** (ADR-0070's amendment: the sky rays read the column map, so a top about to change is not baked under); **a smaller constant** (still an age: a check that misses by a step waits the whole of it again).
+
+**No further reading is owed before the fix.** The blocked mark's rule is in the code, and the rows show the chunk bakeable 25 steps before its check in all eight tip runs and both base runs. The fix is drafted as Plan 0109; its first phase carries its own before and after on these same command lines.
+
+### What a start pays today (derived, not measured in a window)
+
+Every chunk found blocked at its first opening waits 30 steps, and at a streamed start the camera's chunk always is (its reach is not resident at step 1 in all ten traced runs). On the RTX host, headless, at load 10 to 18: a short start is 32 steps in 5.8 to 6.8 s (about 0.2 s a step), of which about 25 steps (about 5 s) are the wait if the chunk is bakeable as early as on lavapipe (unread there); the long start, 1 run of 5, is 95 steps and 31 s. A window start with the default near shell waits on every near chunk, so it pays at least the one wait whenever any of them is blocked at its first check. A quiet machine's step time and a window's are unread: [Plan 0108](0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md) Phase 1 reads them (amended there).
+
+### Phase 12 is withdrawn into Plan 0109
+
+The switch test's tier and `RUN_BOUND`'s ten loaded runs and resize are read on the tree the fix leaves, so they are Plan 0109 Phase 6, not a phase of this plan held open across another plan's lane. This plan closes without them: the source switch stays in the gate, unmarked; the close's `test-times.mjs` names it as over the line with Rulings 3 to 5 as the reason; `RUN_BOUND` stays 120 s and is the known next false red until Plan 0109 Phase 6. Rejected: **holding this plan open** (its harness work is separable and its script should reach main); **the soak mark at the close** (Ruling 3 stands: the test is what showed the finding, and the fix should bring it back near its listed time).
+
+### What proceeds now
+
+Nothing left in this plan waits for Plan 0109. Order, one dev brief each, as the amendments above set: **Phase 8** (the next brief: the reset seed under each dig hold, three arms by name on lavapipe under the lock), **Phase 9** by its reading, **Phase 5** (the soak tier's reading, no run), **Phase 6**, then the fresh-session close review, which accepts or rejects the allow-list's rows beyond Phases 2 and 3's leftovers (the Implementation log's Phase 4 notes).
+
+**For the Implementation log** (the dev's, with its next commit): row 12 reads "withdrawn into Plan 0109 Phase 6 (amendment of Phase 11's reading)".
+
+**Owner questions.** Question 1 above (wait for the camera's chunk, or end on a bound) stays open and is carried by Plan 0109 as its two arms; it is not decided here. Plan 0109 needs the owner's go.
 
 ## Data shapes
 
