@@ -379,7 +379,8 @@ fn dig_estimate_flag() -> Flag<Parsing> {
         "the record a dig holds under --dig-hold on until its re-bake lands: surface, the \
              surface's sky visibility times the root of a near openness, at least 0.02 of the \
              open sky; depth, the same with no floor, so a dug face no ray of which leaves \
-             the hole holds 0 and rises to its light at the landing [surface]",
+             the hole holds 0 and rises to its light at the landing; surface flashes at depth \
+             [depth]",
         |p: &mut Parsing, v| {
             p.args.outdoor.dig_estimate =
                 Some(v.named(svet_render::DigEstimate::from_name, "surface or depth")?);

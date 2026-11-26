@@ -125,14 +125,19 @@ fn the_profiles_hold_the_owners_picks() {
 /// five picks, no light history, the key light's far from the column map's horizon stepped in
 /// at the band's half and the disc penumbra, with the arms not picked off (the landing's two
 /// fades, the far's wide light, the far's light history); and every named profile holds the
-/// five, the far normal's band 4..8 among them.
+/// five, the far normal's band 4..8 among them. Plan 0105 Phase 7a (the owner's window): a dig
+/// holds a value until its re-bake lands, by the `depth` estimate, on the default and on every
+/// profile (none overrides the field, ADR-0055).
 #[test]
 fn every_profile_holds_the_calm_picks() {
-    use crate::frame::{KeyFar, KeyFarMix, Penumbra};
+    use crate::frame::{DigEstimate, DigHold, KeyFar, KeyFarMix, Penumbra};
     let picks = |l: &Lighting| (l.light_history, l.key_far, l.key_far_mix, l.penumbra);
     let calm = (false, KeyFar::Column, KeyFarMix::Step, Penumbra::Disc);
+    let dig = |l: &Lighting| (l.dig_hold, l.dig_estimate);
+    let held = (DigHold::On, DigEstimate::Depth);
     let l = Lighting::default();
     assert_eq!(picks(&l), calm);
+    assert_eq!(dig(&l), held);
     assert_eq!(
         (
             l.landing_fade,
@@ -146,6 +151,7 @@ fn every_profile_holds_the_calm_picks() {
     for p in Profile::ALL {
         let s = RenderSettings::profile(p);
         assert_eq!(picks(&s.lighting), calm, "{}", p.name());
+        assert_eq!(dig(&s.lighting), held, "{}", p.name());
         assert_eq!(s.look.far_normal, DEFAULT_FAR_NORMAL, "{}", p.name());
     }
 }

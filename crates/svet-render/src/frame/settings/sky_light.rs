@@ -123,11 +123,12 @@ impl DigHold {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DigEstimate {
     /// The value at least a floor above black (`HELD_FLOOR`), a cell with no face its base at
-    /// least the floor. The default.
-    #[default]
+    /// least the floor. A setting: a dug face at depth starts brighter than its landed light
+    /// (the flash the owner's window of Plan 0105 Phase 6 saw).
     Surface,
     /// No floor on any path: a face holds its base times the root of its openness, 0
-    /// included, and a cell with no face its base.
+    /// included, and a cell with no face its base. The default.
+    #[default]
     Depth,
 }
 

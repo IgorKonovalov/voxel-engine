@@ -690,7 +690,7 @@ impl BakeQueue {
             key_step: crate::frame::DEFAULT_KEY_STEP,
             landing_fade: false,
             dig_store_hold: true,
-            dig_estimate: crate::DigEstimate::Surface,
+            dig_estimate: crate::DigEstimate::default(),
             trace_held: false,
             held_trace: Vec::new(),
             landed_word: None,

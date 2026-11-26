@@ -922,7 +922,7 @@ pub struct Lighting {
     /// What a dig shows until its re-bake lands with no light history ([`DigHold`]; default
     /// `On`, a held value).
     pub dig_hold: DigHold,
-    /// The held record's estimate under [`DigHold::On`] ([`DigEstimate`]; default `Surface`).
+    /// The held record's estimate under [`DigHold::On`] ([`DigEstimate`]; default `Depth`).
     pub dig_estimate: DigEstimate,
     /// A spike arm (Plan 0098 Phase 5, default off): with no light history, keep it at the far.
     pub light_history_far: bool,
@@ -1017,7 +1017,7 @@ impl Default for Lighting {
             landing_fade: false,
             source_fade: false,
             dig_hold: DigHold::On,
-            dig_estimate: DigEstimate::Surface,
+            dig_estimate: DigEstimate::default(),
             light_history_far: false,
             far_light_wide: false,
             penumbra: Penumbra::Disc,
