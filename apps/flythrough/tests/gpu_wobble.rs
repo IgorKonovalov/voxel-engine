@@ -10,6 +10,23 @@
 //! drained control.
 //! `SVET_WOBBLE` names the arm (see `Arm::parse`), `SVET_TEST_ADAPTER` the adapter. Frames and
 //! maps go under `live/wobble/<arm>/`.
+//!
+//! The readings (each `#[ignore = "reading"]`, run by name) and the variables that spec them:
+//! - `reading::wobble`, `reading::the_wobble_table_over_the_arm_set`: `SVET_WOBBLE`;
+//! - `reading::the_eye_across_a_stop`: `SVET_WOBBLE`, `SVET_EYE_FLY`;
+//! - `coarse::reading::coarse_hold`, `terraces::reading::terraces` and `terraces_w3`:
+//!   `SVET_WOBBLE`;
+//! - `fsr::reading::the_fsr2_stages_after_the_turn`: `SVET_WOBBLE_FSR`;
+//!   `fsr::reading::the_far_flips_by_term`: `SVET_WOBBLE_TERMS`;
+//! - `cover::reading::sun_under_cover`: `SVET_COVER`; its cover arms' reading `cover_arms`:
+//!   `SVET_COVER_ARMS`;
+//! - `owner_move::reading::the_owners_move`: `SVET_POSE`, `SVET_MOVE`, `SVET_WOBBLE`;
+//! - `clips::reading::the_owners_move_as_a_clip`: `SVET_CLIP=<subject>:<arm>[:<stem>[:<opts>]]`
+//!   (opts `keys` writes the `.keys` that `measure` scores, `pin<N>` pins the exposure);
+//! - `measure::reading::the_measures` (CPU, no device): `SVET_MEASURE=<clip>,..|control`.
+//!
+//! The soak tests `the_defaults_hold_still_at_rest_and_the_far_holds` and
+//! `the_far_moves_no_worse_than_the_before` assert; everything else reads.
 #![allow(
     dead_code,
     clippy::too_many_lines,

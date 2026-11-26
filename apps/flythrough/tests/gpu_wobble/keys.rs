@@ -1,15 +1,14 @@
-//! Plan 0104 Phase 4: a clip's track rendered again with each frame's world units written
-//! beside it, for the measures (`measure.rs`) to score on the decoded frames the owner judged.
+//! A clip's track rendered again with each frame's world units written beside it, for the
+//! readings of `measure.rs` to score on the decoded frames the owner judged (Plan 0104).
 //! Nothing is asserted.
 //!
 //! One record a frame in `<stem>.keys`, the display sampled on a stride of [`STRIDE`] pixels
-//! (sample `(sx, sy)` is display pixel `(STRIDE * sx, STRIDE * sy)`), three planes in sample
+//! (sample `(sx, sy)` is display pixel `(STRIDE * sx, STRIDE * sy)`), two planes in sample
 //! order, rows top to bottom:
 //! - `u32` the sample's unit id (0 for a miss), the display pixel's internal pixel's hit;
-//! - `u8` flags: the key slot's source (`support::defects::key_slot`, bits 0..2), the sun
-//!   state (bits 3..4: 0 sunlit, 1 shadowed, 2 turned away, 3 a miss) and a leaf bit (5), all
-//!   of the lighting pixel the display pixel lies in;
-//! - `u8` the key slot's value, 0..255.
+//! - `u8` flags: the sun state (bits 3..4: 0 sunlit, 1 shadowed (the key slot's value under
+//!   one half), 2 turned away, 3 a miss) and a leaf bit (5), both of the lighting pixel the
+//!   display pixel lies in; bits 0..2 are zero.
 //!
 //! The unit: a face where it covers 16 display pixels, else the visible faces of one normal
 //! inside a world cube of `2^k` voxels, the smallest `k` at which they cover 16. Coverage is
@@ -79,7 +78,6 @@ impl Keys {
         let (sw, sh) = (dw.div_ceil(STRIDE), dh.div_ceil(STRIDE));
         let mut ids = Vec::with_capacity(self.samples);
         let mut flags = Vec::with_capacity(self.samples);
-        let mut vals = Vec::with_capacity(self.samples);
         let leaf = |h: &[f32; 4]| -> bool {
             let dv = [h[0] - eye[0], h[1] - eye[1], h[2] - eye[2]];
             let t = (dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2])
@@ -101,7 +99,7 @@ impl Keys {
                 let lx = (((x as f32 + 0.5) * lw as f32 / dw as f32) as u32).min(lw - 1);
                 let g = (ly * lw + lx) as usize;
                 let lh_ = lhits[g];
-                let (val, src) = support::defects::key_slot(pair[g][1]);
+                let (val, _) = support::defects::key_slot(pair[g][1]);
                 let state: u8 = if lh_[3] >= 1e30 || !lh_[3].is_finite() {
                     3
                 } else if vis[4 * g + 2] == 0 {
@@ -112,8 +110,7 @@ impl Keys {
                     1
                 };
                 let lf = state != 3 && leaf(&lh_);
-                flags.push(src as u8 | (state << 3) | (u8::from(lf) << 5));
-                vals.push((val * 255.0).round() as u8);
+                flags.push((state << 3) | (u8::from(lf) << 5));
                 let p = (iy * iw + ix) as usize;
                 ids.push(self.unit(&hits[p], recs[p][3], eye, ppv_k));
             }
@@ -122,7 +119,6 @@ impl Keys {
             self.out.write_all(&v.to_le_bytes()).expect("keys");
         }
         self.out.write_all(&flags).expect("keys");
-        self.out.write_all(&vals).expect("keys");
         self.secs += t0.elapsed().as_secs_f64();
     }
 

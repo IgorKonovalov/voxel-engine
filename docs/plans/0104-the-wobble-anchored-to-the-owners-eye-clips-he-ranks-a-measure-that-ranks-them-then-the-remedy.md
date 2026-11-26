@@ -1354,7 +1354,7 @@ taken as recommended ("Amended 2026-11-26 (owner)").
 | 5: two readings that separate the causes ("Amended 2026-11-26") | dev | done: 5a, held units in the holds: `T b`'s holds 0.00035 to 0.00317 (were 0.00719 to 0.01141), clip totals `T a` 0.01507 against `T b` 0.01123, **holds** by the refutation rule, the under-0.002 figure missed on each hold's first window and both extras; sunlit-leaf row `C a` 0.02480 against `C b` 0.02476; 5b, `S` with no upscaler pinned at 397: outlines 398 / 440 0.007 levels, **the upscaler**; `live/p4/index.md` rewritten; readings in [`logs/0104.md`](logs/0104.md) | committed with this row |
 | the stop: the architect's amendment | - | written, with no remedy phase: the owner closed the plan ("Amended 2026-11-26 (owner)"; row marked by the architect) | |
 | 6a: Plan 0100's unpicked settings removed | dev | done: the removal, quick tier, clippy, fmt and checks green; the gpu binaries 57 passed, no golden differs; the rows walk ruled ("Amended 2026-11-26 (architect, after Phase 6a's stop)"): `lighting.key_cover` 0 pixels under the defaults, 12 071 under the far normal off (`LIVE_UNDER`), the walk passes, 14.0 s; readings in [`logs/0104.md`](logs/0104.md) | e8325704 (wip), committed with this row |
-| 6b: the rig cut to what stays, the anchors named, the pins | dev | not started | |
+| 6b: the rig cut to what stays, the anchors named, the pins | dev | done: candidate 7 and the read-a-frame scoring of holds cut, the `.keys` record 5 bytes a sample; on the cut code `T a` 0.01507 against `T b` 0.01123 and the sunlit-leaf row 0.02480 against 0.02476 repeat; `live/p4/*.keys` deleted, 14 626 939 470 B; the anchors' table and the soak pins (`docs/nfr/07-startup-and-build.md`); readings in [`logs/0104.md`](logs/0104.md) | committed with this row |
 | 6c: main merged in, and the tip's gate in parts | dev | not started | |
 
 ### Notes
@@ -1393,6 +1393,8 @@ each. Empty is fine.)_
   the architect's ruling: stands for this close, parked in `docs/backlog.md`.
 - Phase 6a: the rows walk lists `lighting.key_cover` in `INERT` as `Why::Absent` and proves it
   live in a test-local `LIVE_UNDER` (the far normal off), as the architect ruled.
+- Phase 6b: `S`'s extra window 398..441 lies in a hold and is now scored on held units; its
+  maps (drawn by Phase 4 from the read-a-frame scoring) exist and are not drawn again.
 - Phase 1: `play.sh` adds `--input-conf` (`[` half speed, `]` normal, Enter next) and a
   screenshot directory to the plan's `mpv` line.
 

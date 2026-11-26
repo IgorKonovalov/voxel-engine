@@ -1,6 +1,7 @@
-//! Plan 0104 Phase 4: the two candidate measures and candidate 7's readings, scored on the CPU
-//! (no device) from a clip's decoded frames (`ffmpeg` to raw RGB), its side file's exposure
-//! and the `.keys` of its track rendered again (`keys.rs`). Nothing is asserted.
+//! The stepping edge's readings (Plan 0104): candidate 2 and candidate 1 with its dots, scored
+//! on the CPU (no device) from a clip's decoded frames (`ffmpeg` to raw RGB), its side file's
+//! exposure and the `.keys` of its track rendered again (`keys.rs`). Candidate 2 on held units
+//! is a reading, not a measure: it ordered one pair the owner ranked. Nothing is asserted.
 //!
 //! - **Luma over exposure:** a display pixel's sRGB decoded to linear, Rec. 709 weights, over
 //!   the exposure the frame was drawn with (the side file's value after the frame before: the
@@ -25,23 +26,20 @@
 //!   sum of its windows'.
 //! - **Line (a):** the region holds at least twice its share of the scored tiles among the top
 //!   tenth by score. Line (b) compares the clip totals (the frame-weighted mean of the windows').
-//! - **Candidate 7:** the key slot's source at each sample whose lighting pixel faces the sun
-//!   (as Phase 4 step 2's split compared): its maps, the
-//!   source-0 ratio in the region against the picture, the slot's mean change a frame on units
-//!   by source, and source 0's share in candidate 1's top tenth.
-//!
-//! - **Held units (Plan 0104 Phase 5a):** a hold window (the camera still) is scored a second
-//!   time with each sample's unit taken from the window's first frame for the whole window (the
-//!   luma each frame's own), so a sample whose jittered internal hit crosses a unit's border
-//!   stays in its unit. Moving windows have one scoring. Beside every window, the picture's own
-//!   change: the mean absolute grey difference of consecutive frames and the share of pixels
-//!   over 8 levels. Beside candidate 1, its mean over the units whose samples are mostly
-//!   sunlit leaf over the window.
+//! - **Held units:** a hold window (the camera still) is scored with each sample's unit taken
+//!   from the window's first frame for the whole window (the luma each frame's own), so a
+//!   sample whose jittered internal hit crosses a unit's border stays in its unit. A moving
+//!   window's units are read a frame.
+//! - Beside every window, the picture's own change: the mean absolute grey difference of
+//!   consecutive frames and the share of pixels over 8 levels; beside candidate 1, its mean
+//!   over the units whose samples are mostly sunlit leaf over the window (the sunlit-leaf row).
 //!
 //! `SVET_MEASURE=<clip>[,<clip>..]` (`T-a`, `T-b`, `C-a`, `C-b`, `S`), or `control` for `S`'s
-//! exposure control. With both `T` clips, line (b) at T on the held scoring and the two `T`
-//! moment maps of candidate 2 drawn on one shared scale. Output under `live/p4/`; a map file
-//! that exists is not drawn again.
+//! exposure control (frames 398 and 440 differenced on the outlines and elsewhere). With both
+//! `T` clips, line (b) at T and the two `T` moment maps of candidate 2 drawn on one shared
+//! scale. Reads `live/anchor/<clip>.mkv` and `.txt` and `live/p4/<clip>-k.keys` and
+//! `-k.mkv` (`SVET_CLIP=<subject>:<arm>:<clip>-k` with the `keys` option renders both again);
+//! output under `live/p4/`, a map file that exists not drawn again.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -192,7 +190,6 @@ fn frame_of(mkv: &Path, n: usize) -> Vec<u8> {
 struct KeyFrame {
     ids: Vec<u32>,
     flags: Vec<u8>,
-    vals: Vec<u8>,
 }
 
 fn read_keys(r: &mut impl Read) -> Option<KeyFrame> {
@@ -204,9 +201,7 @@ fn read_keys(r: &mut impl Read) -> Option<KeyFrame> {
         .collect();
     let mut flags = vec![0u8; NS];
     r.read_exact(&mut flags).ok()?;
-    let mut vals = vec![0u8; NS];
-    r.read_exact(&mut vals).ok()?;
-    Some(KeyFrame { ids, flags, vals })
+    Some(KeyFrame { ids, flags })
 }
 
 fn lin_lut() -> [f32; 256] {
@@ -248,11 +243,6 @@ struct Acc {
     sy: f32,
     /// Samples sunlit leaf.
     leaf: u32,
-    /// The slot's value sum and count at sources 0 and 2.
-    s0: f32,
-    n0: u32,
-    s2: f32,
-    n2: u32,
 }
 
 /// A unit's entry in one window's frame.
@@ -264,18 +254,12 @@ struct E {
     n: u16,
     leaf: u16,
     tile: u16,
-    k0: f32,
-    k2: f32,
 }
 
 /// The per-tile sample counts of one window.
 #[derive(Clone)]
 struct Counts {
     all: Vec<f64>,
-    /// Samples whose lighting pixel faces the sun (sunlit or shadowed, the pixels the key slot
-    /// is read at); `src` and the slot's changes count only these.
-    lighting: Vec<f64>,
-    src: [Vec<f64>; 5],
     sunlit_leaf: Vec<f64>,
     sunlit_other: Vec<f64>,
 }
@@ -285,8 +269,6 @@ impl Counts {
         let z = vec![0.0; TW * TH];
         Self {
             all: z.clone(),
-            lighting: z.clone(),
-            src: std::array::from_fn(|_| z.clone()),
             sunlit_leaf: z.clone(),
             sunlit_other: z,
         }
@@ -295,10 +277,6 @@ impl Counts {
         let add =
             |a: &mut Vec<f64>, b: &Vec<f64>| a.iter_mut().zip(b).for_each(|(x, y)| *x += w * y);
         add(&mut self.all, &o.all);
-        add(&mut self.lighting, &o.lighting);
-        for k in 0..5 {
-            add(&mut self.src[k], &o.src[k]);
-        }
         add(&mut self.sunlit_leaf, &o.sunlit_leaf);
         add(&mut self.sunlit_other, &o.sunlit_other);
     }
@@ -325,9 +303,6 @@ struct Maps {
     c2: Vec<f64>,
     dots: Vec<f64>,
     counts: Counts,
-    /// The slot's mean change a frame on units at source 0 and 2, and the unit-frames read.
-    dk0: (f64, usize),
-    dk2: (f64, usize),
     units: usize,
     held: bool,
     diff: [f64; 3],
@@ -408,25 +383,10 @@ fn score(w: Win) -> Maps {
     let mut c1 = vec![0.0; TW * TH];
     let mut c2 = vec![0.0; TW * TH];
     let mut dots = vec![0.0; TW * TH];
-    let (mut dk0, mut nk0, mut dk2, mut nk2) = (0.0, 0usize, 0.0, 0usize);
     let px = f64::from(STRIDE * STRIDE);
     let mut scored = 0;
     let mut leaf = (0.0, 0.0);
     for es in w.units.values() {
-        // The slot's change a frame, by source, on consecutive frames.
-        for p in es.windows(2) {
-            if p[1].f != p[0].f + 1 {
-                continue;
-            }
-            if p[0].k0 >= 0.0 && p[1].k0 >= 0.0 {
-                dk0 += f64::from((p[1].k0 - p[0].k0).abs());
-                nk0 += 1;
-            }
-            if p[0].k2 >= 0.0 && p[1].k2 >= 0.0 {
-                dk2 += f64::from((p[1].k2 - p[0].k2).abs());
-                nk2 += 1;
-            }
-        }
         if es.len() < MIN_FRAMES.min(len) {
             continue;
         }
@@ -501,8 +461,6 @@ fn score(w: Win) -> Maps {
         c2,
         dots,
         counts: w.counts,
-        dk0: (dk0 / nk0.max(1) as f64, nk0),
-        dk2: (dk2 / nk2.max(1) as f64, nk2),
         units: scored,
         held: w.held,
         diff: w.diff,
@@ -559,7 +517,6 @@ fn accumulate(
         let (x, y) = sample_xy(s);
         let fl = k.flags[s];
         let st = (fl >> 3) & 3;
-        let src = usize::from(fl & 7).min(4);
         let v = luma(rgb, lut, x, y) / e;
         let a = frame.entry(id).or_default();
         a.lum += v;
@@ -568,14 +525,6 @@ fn accumulate(
         a.leaf += u32::from(st == 0 && fl & 32 != 0);
         a.sx += x as f32;
         a.sy += y as f32;
-        let kv = f32::from(k.vals[s]) / 255.0;
-        if st <= 1 && src == 0 {
-            a.s0 += kv;
-            a.n0 += 1;
-        } else if st <= 1 && src == 2 {
-            a.s2 += kv;
-            a.n2 += 1;
-        }
     }
     frame
 }
@@ -594,18 +543,12 @@ fn is_hold(c: &Clip, r: (usize, usize)) -> bool {
     [h1, h2].iter().any(|h| r.0 >= h.0 && r.1 <= h.1)
 }
 
-/// Every window's maps of clip `c`, the extras after the segments'; then the hold windows
-/// scored again with held units, in the same order.
+/// Every window's maps of clip `c`, the extras after the segments'; a hold window scored with
+/// held units.
 fn run(c: &Clip, mid: f32, ex: &[f32], lut: &[f32; 256]) -> Vec<Maps> {
     let mut ranges = windows(c);
     ranges.extend(c.extras.iter().copied());
-    let mut specs: Vec<((usize, usize), bool)> = ranges.iter().map(|&r| (r, false)).collect();
-    specs.extend(
-        ranges
-            .iter()
-            .filter(|&&r| is_hold(c, r))
-            .map(|&r| (r, true)),
-    );
+    let specs: Vec<((usize, usize), bool)> = ranges.iter().map(|&r| (r, is_hold(c, r))).collect();
     let mut wins: Vec<Option<Win>> = specs
         .iter()
         .map(|&(r, held)| {
@@ -644,17 +587,11 @@ fn run(c: &Clip, mid: f32, ex: &[f32], lut: &[f32; 256]) -> Vec<Maps> {
             let t = tile_of(x as f32, y as f32);
             counts.all[t] += 1.0;
             let fl = k.flags[s];
-            let st = (fl >> 3) & 3;
-            let src = usize::from(fl & 7).min(4);
-            if st <= 1 {
-                counts.lighting[t] += 1.0;
-                counts.src[src][t] += 1.0;
-                if st == 0 {
-                    if fl & 32 != 0 {
-                        counts.sunlit_leaf[t] += 1.0;
-                    } else {
-                        counts.sunlit_other[t] += 1.0;
-                    }
+            if (fl >> 3) & 3 == 0 {
+                if fl & 32 != 0 {
+                    counts.sunlit_leaf[t] += 1.0;
+                } else {
+                    counts.sunlit_other[t] += 1.0;
                 }
             }
         }
@@ -694,8 +631,6 @@ fn run(c: &Clip, mid: f32, ex: &[f32], lut: &[f32; 256]) -> Vec<Maps> {
                     n: a.n.min(u32::from(u16::MAX)) as u16,
                     leaf: a.leaf.min(u32::from(u16::MAX)) as u16,
                     tile: tile_of(a.sx / n, a.sy / n) as u16,
-                    k0: if a.n0 > 0 { a.s0 / a.n0 as f32 } else { -1.0 },
-                    k2: if a.n2 > 0 { a.s2 / a.n2 as f32 } else { -1.0 },
                 });
             }
             if i + 1 == w.range.1 {
@@ -716,8 +651,6 @@ fn moment(maps: &[Maps], r: (usize, usize), nseg: usize) -> Maps {
         c2: vec![0.0; TW * TH],
         dots: vec![0.0; TW * TH],
         counts: Counts::new(),
-        dk0: (0.0, 0),
-        dk2: (0.0, 0),
         units: 0,
         held: false,
         diff: [0.0; 3],
@@ -729,7 +662,6 @@ fn moment(maps: &[Maps], r: (usize, usize), nseg: usize) -> Maps {
         .collect();
     assert!(!inside.is_empty(), "no window inside {r:?}");
     let tot: f64 = inside.iter().map(|w| (w.range.1 - w.range.0) as f64).sum();
-    let (mut d0, mut d2) = (0.0, 0.0);
     for w in &inside {
         let f = (w.range.1 - w.range.0) as f64 / tot;
         for t in 0..TW * TH {
@@ -738,14 +670,8 @@ fn moment(maps: &[Maps], r: (usize, usize), nseg: usize) -> Maps {
             m.dots[t] += f * w.dots[t];
         }
         m.counts.add(&w.counts, 1.0);
-        d0 += w.dk0.0 * w.dk0.1 as f64;
-        d2 += w.dk2.0 * w.dk2.1 as f64;
-        m.dk0.1 += w.dk0.1;
-        m.dk2.1 += w.dk2.1;
         m.units += w.units;
     }
-    m.dk0.0 = d0 / m.dk0.1.max(1) as f64;
-    m.dk2.0 = d2 / m.dk2.1.max(1) as f64;
     m
 }
 
@@ -789,14 +715,7 @@ fn line_a(v: &[f64], region: &[bool]) -> (f64, f64, bool) {
 /// A map over `rgb` at half size: the frame dimmed, tiles tinted by `v` over `scale` (else its
 /// largest), the top tenth outlined white, the region's tiles outlined cyan. Not drawn where
 /// `path` exists.
-fn map_png(
-    path: &Path,
-    rgb: &[u8],
-    v: Option<&[f64]>,
-    region: &[bool],
-    src: Option<&KeyFrame>,
-    scale: Option<f64>,
-) {
+fn map_png(path: &Path, rgb: &[u8], v: Option<&[f64]>, region: &[bool], scale: Option<f64>) {
     if path.exists() {
         return;
     }
@@ -821,26 +740,6 @@ fn map_png(
                 ];
                 for k in 0..3 {
                     c[k] = c[k] * (1.0 - 0.6 * a) + 255.0 * heat[k] * 0.6 * a.max(0.0);
-                }
-            }
-            if let Some(kf) = src {
-                let s = (y.min(SH - 1)) * SW + x.min(SW - 1);
-                let fl = kf.flags[s];
-                let col = if (fl >> 3) & 3 == 3 {
-                    None
-                } else {
-                    Some(match fl & 7 {
-                        0 => [255.0, 60.0, 40.0],
-                        1 => [255.0, 220.0, 0.0],
-                        2 => [90.0, 160.0, 255.0],
-                        3 => [0.0, 255.0, 120.0],
-                        _ => [200.0, 0.0, 255.0],
-                    })
-                };
-                if let Some(col) = col {
-                    for k in 0..3 {
-                        c[k] = c[k] * 0.5 + col[k] * 0.5;
-                    }
                 }
             }
             let (ex, ey) = (
@@ -877,18 +776,10 @@ fn map_png(
     support::write_png(&path.to_path_buf(), &out, w as u32, h as u32);
 }
 
-/// The keys frame `n` of `c`.
-fn keys_frame(c: &Clip, n: usize) -> KeyFrame {
-    use std::io::{Seek, SeekFrom};
-    let mut f = std::fs::File::open(&c.keys).expect("keys");
-    f.seek(SeekFrom::Start((n * NS * 6) as u64)).expect("seek");
-    read_keys(&mut f).expect("the keys frame")
-}
-
 /// What [`measure`] hands back for the pair's readings.
 struct Measured {
-    /// Candidate 2's clip totals as read a frame and held.
-    c2: [f64; 2],
+    /// Candidate 2's clip total.
+    c2: f64,
     moment_c2: Vec<f64>,
     region: Vec<bool>,
     shot: usize,
@@ -909,100 +800,50 @@ fn measure(name: &str) -> Measured {
     let maps = run(&c, mid, &ex, &lut);
     let nseg = windows(&c).len();
     println!("{}: scored in {:.0} s", c.name, t0.elapsed().as_secs_f64());
-    // Totals a window and the clip's (frame-weighted, segment windows only): as Phase 4 (every
-    // window's units read a frame) and held (the hold windows' units held from their first
-    // frame). The held scorings follow the others in `maps`, in the same order.
-    let nall = nseg + c.extras.len();
+    // Totals a window and the clip's (frame-weighted, segment windows only); a hold window's
+    // units held from its first frame.
     let mut clip_tot = [0.0; 3];
-    let mut held_tot = [0.0; 3];
-    let mut leaf_tot = [0.0; 2];
-    let mut held_k = nall;
+    let mut leaf_tot = 0.0;
     let pct = |x: f64| 100.0 * x;
     // A window's display pixels a frame (the scale of `Maps::leaf`'s pixel-frames).
     let area = |w: &Maps| {
         w.counts.all.iter().sum::<f64>() * f64::from(STRIDE * STRIDE)
             / (w.range.1 - w.range.0) as f64
     };
-    for (k, w) in maps[..nall].iter().enumerate() {
+    for (k, w) in maps.iter().enumerate() {
         let tc = [&w.c1, &w.c2, &w.dots].map(|v| Maps::total(v, &w.counts));
-        let lighting: f64 = w.counts.lighting.iter().sum::<f64>().max(1.0);
-        let src: Vec<String> = (0..5)
-            .map(|s| {
-                format!(
-                    "{:.1}",
-                    100.0 * w.counts.src[s].iter().sum::<f64>() / lighting
-                )
-            })
-            .collect();
         let pd = w.diff[2].max(1.0);
-        let hold = is_hold(&c, w.range);
         println!(
-            "{} {} {} frames {}..{}: c1 {:.5} c2 {:.5} dots {:.5}; units scored {}; slot sources 0/1/2/3/4 % {}; slot change a frame src0 {:.4} ({}) src2 {:.4} ({}); picture a frame {:.4} levels, {:.4} % over 8; c1 on sunlit-leaf units {:.5} ({:.1} % of the scored pixel-frames)",
+            "{} {} {} frames {}..{}: c1 {:.5} c2 {:.5} dots {:.5}; units scored {}; picture a frame {:.4} levels, {:.4} % over 8; c1 on sunlit-leaf units {:.5} ({:.1} % of the scored pixel-frames)",
             c.name,
             if k < nseg { "window" } else { "extra" },
-            if hold { "hold" } else { "moving" },
+            if w.held { "hold, held units" } else { "moving" },
             w.range.0,
             w.range.1,
             tc[0],
             tc[1],
             tc[2],
             w.units,
-            src.join("/"),
-            w.dk0.0,
-            w.dk0.1,
-            w.dk2.0,
-            w.dk2.1,
             w.diff[0] / pd,
             pct(w.diff[1] / pd),
             w.leaf.0 / w.leaf.1.max(1e-12),
             pct(w.leaf.1 / area(w)),
         );
-        // The window's held scoring, where it is a hold.
-        let mut ht = tc;
-        let mut lw = w;
-        if hold {
-            let h = &maps[held_k];
-            held_k += 1;
-            assert!(h.held && h.range == w.range, "held windows in order");
-            ht = [&h.c1, &h.c2, &h.dots].map(|v| Maps::total(v, &h.counts));
-            lw = h;
-            println!(
-                "{} {} hold frames {}..{} held units: c1 {:.5} c2 {:.5} dots {:.5} (as read a frame {:.5} {:.5} {:.5}); units scored {}; c1 on sunlit-leaf units {:.5}",
-                c.name,
-                if k < nseg { "window" } else { "extra" },
-                h.range.0,
-                h.range.1,
-                ht[0],
-                ht[1],
-                ht[2],
-                tc[0],
-                tc[1],
-                tc[2],
-                h.units,
-                h.leaf.0 / h.leaf.1.max(1e-12)
-            );
-        }
         if k < nseg {
             let f = (w.range.1 - w.range.0) as f64 / c.frames as f64;
             for j in 0..3 {
                 clip_tot[j] += tc[j] * f;
-                held_tot[j] += ht[j] * f;
             }
-            leaf_tot[0] += f * lw.leaf.0 / lw.leaf.1.max(1e-12);
-            leaf_tot[1] += f * w.leaf.0 / w.leaf.1.max(1e-12);
+            leaf_tot += f * w.leaf.0 / w.leaf.1.max(1e-12);
         }
     }
     println!(
-        "{} clip totals: c1 {:.5} c2 {:.5} dots {:.5}",
+        "{} clip totals, held units in the holds: c1 {:.5} c2 {:.5} dots {:.5}",
         c.name, clip_tot[0], clip_tot[1], clip_tot[2]
     );
     println!(
-        "{} clip totals, held units in the holds: c1 {:.5} c2 {:.5} dots {:.5}",
-        c.name, held_tot[0], held_tot[1], held_tot[2]
-    );
-    println!(
-        "{} c1 on sunlit-leaf units, clip: held {:.5}, as read a frame {:.5}",
-        c.name, leaf_tot[0], leaf_tot[1]
+        "{} c1 on sunlit-leaf units, clip, held units in the holds: {:.5}",
+        c.name, leaf_tot
     );
     let m = moment(&maps, c.moment, nseg);
     let region = region_tiles(c.region, &m.counts);
@@ -1020,40 +861,8 @@ fn measure(name: &str) -> Measured {
             if holds { "holds" } else { "fails" }
         );
     }
-    // Candidate 7 (2): source 0's share of the lighting samples in the region against the picture's.
-    let sum = |v: &[f64], sel: &dyn Fn(usize) -> bool| {
-        (0..TW * TH).filter(|&t| sel(t)).map(|t| v[t]).sum::<f64>()
-    };
-    let in_r = |t: usize| region[t];
-    let any = |_t: usize| true;
-    let r_share = sum(&m.counts.src[0], &in_r) / sum(&m.counts.lighting, &in_r).max(1.0);
-    let p_share = sum(&m.counts.src[0], &any) / sum(&m.counts.lighting, &any).max(1.0);
-    println!(
-        "{} c7 (2): source 0 in the region {:.4} of its lighting samples, in the picture {:.4}: ratio {:.2}",
-        c.name,
-        r_share,
-        p_share,
-        if p_share > 0.0 {
-            r_share / p_share
-        } else {
-            f64::NAN
-        }
-    );
-    println!(
-        "{} c7 (3) moment: slot change a frame on units, src0 {:.4} ({} unit-frames), src2 {:.4} ({})",
-        c.name, m.dk0.0, m.dk0.1, m.dk2.0, m.dk2.1
-    );
-    let (top1, _) = top_tenth(&m.c1);
-    let top_set = |t: usize| top1.contains(&t);
-    println!(
-        "{} c7 (4): of candidate 1's top tenth ({} tiles), source 0 holds {:.4} of their lighting samples",
-        c.name,
-        top1.len(),
-        sum(&m.counts.src[0], &top_set) / sum(&m.counts.lighting, &top_set).max(1.0)
-    );
     // Maps over the frame he looked at (or the moment's middle).
     let rgb = frame_of(&c.mkv, c.shot);
-    let kf = keys_frame(&c, c.shot);
     let dir = live().join("p4");
     for (lbl, v) in [("c1", &m.c1), ("c2", &m.c2), ("dots", &m.dots)] {
         map_png(
@@ -1062,21 +871,11 @@ fn measure(name: &str) -> Measured {
             Some(v),
             &region,
             None,
-            None,
         );
     }
-    map_png(
-        &dir.join(format!("map-{}-source.png", c.name)),
-        &rgb,
-        None,
-        &region,
-        Some(&kf),
-        None,
-    );
     // `S`'s window after the turn (398 to 440), over his screenshot's frame (413): a reading.
     if let Some(w) = maps[nseg..].iter().find(|w| w.range == (398, 441)) {
         let rgb = frame_of(&c.mkv, 413);
-        let kf = keys_frame(&c, 413);
         let none = vec![false; TW * TH];
         for (lbl, v) in [("c1", &w.c1), ("c2", &w.c2), ("dots", &w.dots)] {
             map_png(
@@ -1085,17 +884,8 @@ fn measure(name: &str) -> Measured {
                 Some(v),
                 &none,
                 None,
-                None,
             );
         }
-        map_png(
-            &dir.join(format!("map-{}-398-440-source.png", c.name)),
-            &rgb,
-            None,
-            &none,
-            Some(&kf),
-            None,
-        );
     }
     // The rendered-again frame against his at the same index.
     let again = frame_of(&dir.join(format!("{}-k.mkv", c.name)), c.shot);
@@ -1116,7 +906,7 @@ fn measure(name: &str) -> Measured {
         t0.elapsed().as_secs_f64()
     );
     Measured {
-        c2: [clip_tot[1], held_tot[1]],
+        c2: clip_tot[1],
         moment_c2: m.c2.clone(),
         region,
         shot: c.shot,
@@ -1124,24 +914,19 @@ fn measure(name: &str) -> Measured {
     }
 }
 
-/// Line (b) at T on candidate 2 (`T a` over `T b`), as read a frame and held, and the two
+/// Line (b) at T on candidate 2 (`T a` over `T b`), held units in the holds, and the two
 /// moment maps of candidate 2 on one shared scale (the larger of the two maxima).
 fn pair_t(a: &Measured, b: &Measured) {
-    for (k, lbl) in ["as read a frame", "held units in the holds"]
-        .iter()
-        .enumerate()
-    {
-        println!(
-            "T line (b) c2, {lbl}: T-a {:.5} against T-b {:.5}: {}",
-            a.c2[k],
-            b.c2[k],
-            if a.c2[k] > b.c2[k] {
-                "his order (holds)"
-            } else {
-                "the other way (fails)"
-            }
-        );
-    }
+    println!(
+        "T line (b) c2, held units in the holds: T-a {:.5} against T-b {:.5}: {}",
+        a.c2,
+        b.c2,
+        if a.c2 > b.c2 {
+            "his order (holds)"
+        } else {
+            "the other way (fails)"
+        }
+    );
     let max = |v: &[f64]| v.iter().copied().fold(0.0, f64::max);
     let scale = max(&a.moment_c2).max(max(&b.moment_c2)).max(1e-12);
     println!(
@@ -1156,7 +941,6 @@ fn pair_t(a: &Measured, b: &Measured) {
             &frame_of(&m.mkv, m.shot),
             Some(&m.moment_c2),
             &m.region,
-            None,
             Some(scale),
         );
     }
