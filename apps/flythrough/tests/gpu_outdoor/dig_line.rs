@@ -897,6 +897,119 @@ mod dig_line {
                 .collect()
         }
 
+        /// Plan 0105 Phase 7a2's print (a reading, nothing asserted). Per dig: the change of
+        /// `QueueStats::digs_whole` from the frame before the dig's first frame (D-1) to it (D+0),
+        /// and from D+0 to D+1. Per frame whose ring breaks 2 % at 4 levels: its ring pixels
+        /// darker than both `before` and `after` by over 4 levels ([`defects::before_after`],
+        /// the pixels [`defects::hole_figures_in`] counts) by the store's table word of their
+        /// hit's chunk in the `before` frame (none, a block, coarse, or unseen: the chunk under
+        /// no pixel of that frame), each split by whether their hit's brick (the hit point's
+        /// voxel's) is one a dig's box made by that frame, dilated by one voxel, touches; and the
+        /// ring's dark shares over 8, 16 and 32 levels.
+        fn whole_text(run: &HoleRun, groups: &[(usize, usize)], f4: &[HoleFigures]) -> String {
+            use std::collections::HashMap;
+            let mut text = String::new();
+            for (k, &(d0, _, _)) in run.digs.iter().enumerate() {
+                let whole = |i: usize| run.frames.get(i).map(|f| f.q.digs_whole);
+                let step = |a: usize, b: usize| match (whole(a), whole(b)) {
+                    (Some(x), Some(y)) => format!("{:+}", y as i64 - x as i64),
+                    _ => "-".into(),
+                };
+                text += &format!(
+                    "  dig {} ({}): digs whole {:?} at D+0, {} from D-1, {} to D+1\n",
+                    k + 1,
+                    run.frames[d0].label,
+                    whole(d0),
+                    step(d0 - 1, d0),
+                    step(d0, d0 + 1)
+                );
+            }
+            let (dw, dh) = (run.out[0] as usize, run.out[1] as usize);
+            let chunk_of = |h: &[f32; 4]| [0, 1, 2].map(|k| (h[k].floor() as i32).div_euclid(64));
+            let first = run.digs[0].0;
+            for (fi, fig) in f4.iter().enumerate().skip(first) {
+                if fig.white_ring.max(fig.black_ring) <= 2.0 {
+                    continue;
+                }
+                let f = &run.frames[fi];
+                let (bi, ai) = defects::before_after(run, groups, fi);
+                let (c, cb, ca) = (
+                    defects::hole_classes(run, f).1,
+                    defects::hole_classes(run, &run.frames[bi]).1,
+                    defects::hole_classes(run, &run.frames[ai]).1,
+                );
+                let (before, after) = (&run.frames[bi].luma, &run.frames[ai].luma);
+                // The before frame's table word by chunk (its pixels' hits; the largest word a
+                // chunk shows).
+                let mut words: HashMap<[i32; 3], u8> = HashMap::new();
+                for (h, &w) in run.frames[bi].hits.iter().zip(&run.frames[bi].table) {
+                    if h[3] < 1e30 && h[3].is_finite() {
+                        let e = words.entry(chunk_of(h)).or_insert(w);
+                        *e = (*e).max(w);
+                    }
+                }
+                let gl = f.hits.len();
+                let gw = ((gl as f64 * dw as f64 / dh as f64).sqrt().round() as usize).max(1);
+                let boxes: Vec<([i64; 3], [i64; 3])> =
+                    run.digs.iter().filter(|d| d.0 <= fi).map(|d| (d.1, d.2)).collect();
+                let touched = |h: &[f32; 4]| {
+                    let v = [0, 1, 2].map(|k| i64::from(h[k].floor() as i32));
+                    boxes.iter().any(|(lo, hi)| {
+                        (0..3).all(|k| {
+                            let b = v[k].div_euclid(8) * 8;
+                            b + 7 >= lo[k] - 1 && b <= hi[k] + 1
+                        })
+                    })
+                };
+                // [word: none, block, coarse, unseen][touched: no, yes]
+                let mut by = [[0u64; 2]; 4];
+                let (mut nr, mut dark) = (0u64, [0u64; 4]);
+                for i in 0..f.luma.len() {
+                    if !(c[i] == defects::DIG_RING_CLASS && cb[i] == defects::DIG_RING_CLASS && ca[i] == defects::DIG_RING_CLASS) {
+                        continue;
+                    }
+                    nr += 1;
+                    let (l, b, a) = (i32::from(f.luma[i]), i32::from(before[i]), i32::from(after[i]));
+                    for (n, lv) in [4, 8, 16, 32].into_iter().enumerate() {
+                        dark[n] += u64::from(l < b.min(a) - lv);
+                    }
+                    if l >= b.min(a) - 4 {
+                        continue;
+                    }
+                    let h = &f.hits[defects::grid_of(i, dw, dh, gw, gl)];
+                    let w = words.get(&chunk_of(h)).map_or(3, |&w| usize::from(w.min(2)));
+                    by[w][usize::from(touched(h))] += 1;
+                }
+                let pct = |a: u64| 100.0 * a as f64 / nr.max(1) as f64;
+                let n4 = dark[0].max(1) as f64;
+                let cell = |w: usize| {
+                    format!(
+                        "{} touched / {} not ({:.0} / {:.0} %)",
+                        by[w][1],
+                        by[w][0],
+                        100.0 * by[w][1] as f64 / n4,
+                        100.0 * by[w][0] as f64 / n4
+                    )
+                };
+                text += &format!(
+                    "  {} (before {}): ring {} px, dark over 4 {} ({:.2} %), over 8 {:.2} %, 16 {:.2} %, 32 {:.2} %; by the before frame's chunk word: none {}; block {}; coarse {}; unseen {}\n",
+                    f.label,
+                    run.frames[bi].label,
+                    nr,
+                    dark[0],
+                    pct(dark[0]),
+                    pct(dark[1]),
+                    pct(dark[2]),
+                    pct(dark[3]),
+                    cell(0),
+                    cell(1),
+                    cell(2),
+                    cell(3)
+                );
+            }
+            text
+        }
+
         /// The run of `seq` (`A` or `B`) under `arm` at the image test's start (`waiting`
         /// false: one frame and the settle) or after 600 frames (`waiting`), on the adapter
         /// the test support opens, with its claims' figures; `wait` the stepper's device-wait
@@ -957,6 +1070,7 @@ mod dig_line {
                 })
                 .collect();
             text += &format!("  frames over 2 % at 4 levels: {}\n", over.join("; "));
+            text += &whole_text(&run, &groups, f4);
             let first_landing = land.iter().flatten().min().copied().unwrap_or(last);
             let shift = f4[first..first_landing.max(first)]
                 .iter()
