@@ -1,6 +1,6 @@
 # 0105: The dig's flash at depth: a held estimate that follows the hole's own light
 
-> **Status:** in-progress (Phase 1 checkpointed 2026-11-26); approved (owner, 2026-11-26: go; his four answers are under "Amended 2026-11-26 (owner)" and bind Phase 1's sites and the remedy's bars; drafted from the owner's report after Plan 0099's window, with
+> **Status:** in-progress (Phase 1 done 2026-11-26, stopped for the architect); approved (owner, 2026-11-26: go; his four answers are under "Amended 2026-11-26 (owner)" and bind Phase 1's sites and the remedy's bars; drafted from the owner's report after Plan 0099's window, with
 > his three answers and no further interview; the questions left are under "Risks & open
 > questions", each with a recommended option). Starts on a main that holds Plan 0099.
 > **Created:** 2026-11-26
@@ -376,7 +376,7 @@ No record, block or buffer changes shape: the held record is the store's record 
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the blink reproduced headless at depth | dev | checkpointed: rig and one run (`down` lockstep), readings in [the log](logs/0105.md) | committed with this row (wip) |
+| 1: the blink reproduced headless at depth | dev | done; stopped for the architect (the one-dig shaft flashes at `down` and `side`, both modes; the held record's sky term, M1's floor; M2 at `down` 5 m only; no M3). `wide`, `slope`, `tunnel` and lavapipe not read. Readings in [the log](logs/0105.md) | committed with this row |
 | 2: the base from the hole's own light | dev | not started | |
 | 3: an openness that reaches the sky (only if 2's bar is missed) | dev | not started | |
 | 4: a chunk with no block holds the dig too (only if 1 shows M2) | dev | not started | |
@@ -394,6 +394,9 @@ each. Empty is fine.)_
   visible to it; the held trace's accessor is a pair of `BakeQueue` fields (`trace_held`,
   `held_trace`) and `queue/digs.rs` passes it; the runs are on the RTX 3080 Laptop (the
   owner's adapter), none yet on lavapipe.
+- Phase 1 adds a reading-only source to the held trace (`HeldPart::radiance_from`,
+  `old_radiance`, `RadianceFrom`): where the provisional block's direction value comes from;
+  nothing the dig writes changes.
 
 ### Close triggers
 

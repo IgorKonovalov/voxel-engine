@@ -14,7 +14,7 @@ mod dig_depth {
         };
         use support::terms::Rig;
         use svet_render::Camera;
-        use svet_render::debug::{HeldBase, HeldPart};
+        use svet_render::debug::{HeldBase, HeldPart, RadianceFrom};
 
         /// The read depths, voxels under the ground: 1, 2, 3, 5 and 7 m.
         const DEPTHS: [i64; 5] = [10, 20, 30, 50, 70];
@@ -429,11 +429,36 @@ mod dig_depth {
                     let _ = writeln!(t, "{row}");
                     summary += &format!("\n{row}");
                 }
+                // By the stored radiance's source in the provisional block: the dig directions
+                // (parts), their cells, the old record's luminance, the record's at D+0 and
+                // landed.
+                let total = r.parts.len() as f64;
+                for from in [RadianceFrom::OldRecord, RadianceFrom::Filled, RadianceFrom::Neighbours] {
+                    let of: Vec<_> = r.parts.iter().filter(|(p, _)| p.radiance_from == from).collect();
+                    if of.is_empty() {
+                        continue;
+                    }
+                    let cells: std::collections::BTreeSet<_> = of.iter().map(|(p, _)| (p.chunk, p.slot, p.sub)).collect();
+                    let mean = |v: Vec<f32>| (v.iter().map(|&x| f64::from(x)).sum::<f64>() / v.len().max(1) as f64, v.len());
+                    let (old, n_old) = mean(of.iter().filter_map(|(p, _)| p.old_radiance).collect());
+                    let (d0, n_d0) = mean(of.iter().filter_map(|(_, rec)| rec[0].map(|h| h[1])).collect());
+                    let (ld, n_ld) = mean(of.iter().filter_map(|(_, rec)| rec[1].map(|l| l[1])).collect());
+                    let zero = of.iter().filter(|(_, rec)| rec[0].is_none_or(|h| h[1] == 0.0)).count();
+                    let row = format!(
+                        "    radiance {from:<10?} parts {:>3} ({:.0} %) cells {:>3}: old record {old:.4} (n {n_old}) at D+0 {d0:.4} (n {n_d0}, none or 0 {zero}) landed {ld:.4} (n {n_ld}), D+0 over landed {:.2}",
+                        of.len(),
+                        100.0 * of.len() as f64 / total,
+                        cells.len(),
+                        d0 / ld.max(1e-9)
+                    );
+                    let _ = writeln!(t, "{row}");
+                    summary += &format!("\n{row}");
+                }
                 for (p, rec) in &r.parts {
                     let _ = writeln!(
                         t,
-                        "      part {:?} slot {} sub {} face {} value {:.3} estimate {:.3} up {:.3} from {:?} own {:?} open {:.3} faces new {} old {} record at D+0 (vis, radiance) {:?} landed {:?}",
-                        p.chunk, p.slot, p.sub, p.face, p.value, p.estimate, p.up, p.from, p.own, p.open, p.new_faces, p.old_faces, rec[0], rec[1]
+                        "      part {:?} slot {} sub {} face {} value {:.3} estimate {:.3} up {:.3} from {:?} own {:?} open {:.3} faces new {} old {} radiance from {:?} old {:?} record at D+0 (vis, radiance) {:?} landed {:?}",
+                        p.chunk, p.slot, p.sub, p.face, p.value, p.estimate, p.up, p.from, p.own, p.open, p.new_faces, p.old_faces, p.radiance_from, p.old_radiance, rec[0], rec[1]
                     );
                 }
             }

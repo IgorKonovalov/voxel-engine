@@ -196,12 +196,26 @@ pub enum HeldBase {
     Summary,
 }
 
+/// Where a held cell's direction value (its stored radiance) comes from in the dig's
+/// provisional block (`provisional_block`, one cell a brick), for a reading ([`HeldPart`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RadianceFrom {
+    /// The kept brick's old record held the direction.
+    OldRecord,
+    /// The kept brick's old record held other directions: their mean (`fill_directions`).
+    Filled,
+    /// The brick held no record: the mean of the records around it (or none).
+    Neighbours,
+}
+
 /// One cell's held value of one direction with its parts, for a reading
 /// (`BakeQueue::trace_held`): the dug cell, the value the record holds (the mean over the
 /// cell's faces of the direction), the estimate its dig faces took, the removed surface's up
 /// visibility and where it came from, the cell's own old record's value (the cap), the
 /// openness (the mean over the picked faces), the faces the dig made and the faces it kept,
-/// and the record's words a brick ([`record_words`]).
+/// the record's words a brick ([`record_words`]), and where its direction value comes from
+/// with the old record's luminance for it (the held direction's, or the mean of the held
+/// ones' for a filled one; `None` for a brick with no record).
 #[derive(Clone, Copy, Debug)]
 pub struct HeldPart {
     pub chunk: [i32; 3],
@@ -217,6 +231,30 @@ pub struct HeldPart {
     pub new_faces: u16,
     pub old_faces: u16,
     pub record: u32,
+    pub radiance_from: RadianceFrom,
+    pub old_radiance: Option<f32>,
+}
+
+/// A trace's source of `own`'s (the cell's old record's) direction `f` value and its
+/// luminance, as `provisional_block` takes it for a cell of a brick.
+fn radiance_source(own: Option<&[u32]>, f: usize) -> (RadianceFrom, Option<f32>) {
+    let lum = |w: u32| {
+        let c = rgb9e5_unpack(w);
+        0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    };
+    let Some(r) = own else {
+        return (RadianceFrom::Neighbours, None);
+    };
+    let mask = r[6] >> 16;
+    if mask & 1 << f != 0 {
+        return (RadianceFrom::OldRecord, Some(lum(r[f])));
+    }
+    let held: Vec<f32> = (0..6)
+        .filter(|d| mask & 1 << d != 0)
+        .map(|d| lum(r[d]))
+        .collect();
+    let mean = (!held.is_empty()).then(|| held.iter().sum::<f32>() / held.len() as f32);
+    (RadianceFrom::Filled, mean)
 }
 
 /// The held visibilities of chunk `c`'s bricks `touched` that `faces` lists, a `[f32; 6]` a
@@ -315,6 +353,7 @@ pub(crate) fn held_visibilities(
                 if let (Some(t), Some((estimate, open, n_new, n_old))) =
                     (trace.as_deref_mut(), parts)
                 {
+                    let (radiance_from, old_radiance) = radiance_source(own, f);
                     t.push(HeldPart {
                         chunk: c,
                         slot: *slot,
@@ -329,6 +368,8 @@ pub(crate) fn held_visibilities(
                         new_faces: n_new as u16,
                         old_faces: n_old as u16,
                         record: record as u32,
+                        radiance_from,
+                        old_radiance,
                     });
                 }
             }

@@ -78,7 +78,7 @@ mod writes;
 pub use self::around::*;
 pub use self::budget::*;
 pub use self::faces::*;
-pub use self::held::{HeldBase, HeldPart};
+pub use self::held::{HeldBase, HeldPart, RadianceFrom};
 pub(crate) use self::issue::*;
 pub use self::job::*;
 pub(crate) use self::job_loop::*;
