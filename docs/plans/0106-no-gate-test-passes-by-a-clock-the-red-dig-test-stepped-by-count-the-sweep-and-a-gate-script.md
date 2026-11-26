@@ -202,6 +202,13 @@ Three things Phase 2 left, read from the code at `eac1d05e` (nothing was run; ev
 - **Files touched:** named then.
 - **Done when:** stated then; until it is, the source switch is in the gate and Phase 6's and the close's `test-times.mjs` name it as over the line with this ruling as the reason.
 
+## Amended 2026-11-26 (architect, Phase 3's two leftovers)
+
+Phase 3 came back with every class B site restated but two (`ee3accbd`, the readings log's Phase 3 section).
+
+- **The three stage sums take two reading-only production edits (dev's option (a)).** Phase 3's remedy ("the laps are compared with the span between the step's own first and last clock reads") cannot be written from the test files: `StepStages::total_ms` is read by a clock call after the last lap (`bake/queue/step.rs`), and `SyncStats` carries each stage's truncated microseconds and no span (`StageClock::stop`, `gpu_world/window.rs`). Phase 3's files gain those two: `total_ms` is taken from the last lap's own instant, and `SyncStats` gains the span between its first and last clock reads. No behaviour moves: no frame path reads either figure but the readings lines, and no new clock call is added (one is removed). Rejected: leaving the three bounds (the claim then still compares two clocks), and a second amendment round for two fields. **Stop:** if either figure is read by anything but a readings line or a test, dev reports the reader and changes nothing.
+- **`RUN_BOUND` is sized after Phase 10, not before.** The child runs read 26 to 36 s loaded (11 runs) and 107.7 s once in Plan 0104's log; ten times that is a kill guard of 6 to 18 minutes, sized on a start-up that Ruling 3 says grew threefold on lavapipe inside two days. A guard sized on a regression would hide it. So Phase 3 closes without the resize: the bound stays 120 s, the readings are logged as they are, and the ten loaded runs a child and the resize join Phase 11, read on the tree Phase 10's finding leaves. Until then `RUN_BOUND` is the known next false red (the plan's Context already says so).
+
 ## Data shapes
 
 ```rust
