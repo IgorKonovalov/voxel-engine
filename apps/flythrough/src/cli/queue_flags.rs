@@ -98,7 +98,7 @@ pub(super) fn queue_flags() -> Vec<Flag<Parsing>> {
         ),
         Flag::switch(
             &["--queue-rule-reading"],
-            "count the jobs opened for chunks the zero rule would answer (a reading)",
+            "count the jobs opened for chunks the zero rule would answer, and hash the zeroed chunks' blocks and the store's once the queue is empty and at the end (a reading)",
             |p: &mut Parsing| {
                 p.args.bake.queue_rule_reading = true;
             },

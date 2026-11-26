@@ -11,14 +11,17 @@ use super::write_ms;
 /// waits). Under `--queue-rule-reading`, the jobs the rule would have answered
 /// ([`svet_render::RuleMissed`]; `None` while the reading has counted nothing). Under
 /// `--queue-rule-audit`, the blocks compared with the rule's zero record and those that differ
-/// by case ([`svet_render::RuleAudit`]; `None` while the audit has compared nothing).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// by case ([`svet_render::RuleAudit`]; `None` while the audit has compared nothing). Under
+/// `--queue-rule-reading`, the newest hashes of the zeroed chunks' blocks and of the store's
+/// ([`svet_render::RuleHashes`]; `None` before the queue was first empty).
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct QueueDrain {
     pub depth: u64,
     pub waiting: svet_render::InViewWaiting,
     pub samples_per_s: f64,
     pub rule_missed: Option<svet_render::RuleMissed>,
     pub rule_audit: Option<svet_render::RuleAudit>,
+    pub rule_hashes: Option<std::sync::Arc<svet_render::RuleHashes>>,
 }
 
 impl QueueDrain {
@@ -45,6 +48,10 @@ impl QueueDrain {
         }
         if let Some(a) = &self.rule_audit {
             t.push_str(&rule_audit_text(a));
+        }
+        if let Some(h) = &self.rule_hashes {
+            t.push_str("; ");
+            t.push_str(&rule_hash_text(h));
         }
         t
     }
@@ -117,6 +124,9 @@ impl QueueDrain {
                 first.join(", "),
             );
         }
+        if let Some(h) = &self.rule_hashes {
+            write_rule_hashes(o, h);
+        }
         o.push('}');
     }
 }
@@ -145,6 +155,41 @@ pub fn rule_audit_text(a: &svet_render::RuleAudit) -> String {
         );
     }
     t
+}
+
+/// The rule hashes' text ([`svet_render::RuleHashes`]): `rule hashes zeroed 3589 chunks
+/// 0123456789abcdef (unplaced 0), store 7989 blocks fedcba9876543210, at step 1681`.
+pub fn rule_hash_text(h: &svet_render::RuleHashes) -> String {
+    format!(
+        "rule hashes zeroed {} chunks {:016x} (unplaced {}), store {} blocks {:016x}, at step {}",
+        h.chunks.len(),
+        h.zeroed,
+        h.unplaced,
+        h.blocks,
+        h.store,
+        h.step,
+    )
+}
+
+/// `run.json`'s `queue.rule_hashes`: the counts, the two hashes and each zeroed chunk's
+/// coordinate and block hash, the hashes as 16 hex digits in a string (a JSON number holds
+/// 53 bits).
+fn write_rule_hashes(o: &mut String, h: &svet_render::RuleHashes) {
+    let _ = write!(
+        o,
+        ", \"rule_hashes\": {{\"step\": {}, \"zeroed_chunks\": {}, \"unplaced\": {}, \"zeroed\": \"{:016x}\", \"blocks\": {}, \"store\": \"{:016x}\", \"chunks\": [",
+        h.step,
+        h.chunks.len(),
+        h.unplaced,
+        h.zeroed,
+        h.blocks,
+        h.store,
+    );
+    for (i, (c, b)) in h.chunks.iter().enumerate() {
+        let sep = if i == 0 { "" } else { ", " };
+        let _ = write!(o, "{sep}[{}, {}, {}, \"{b:016x}\"]", c[0], c[1], c[2]);
+    }
+    o.push_str("]}");
 }
 
 /// The rule reading's text on the `bake queue:` line: the jobs (and samples) the rule would

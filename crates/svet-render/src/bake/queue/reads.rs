@@ -53,6 +53,19 @@ impl QueueRead<'_> {
         }
     }
 
+    /// The hashes of the zeroed chunks' blocks and of the store's ([`RuleHashes`]): in lockstep
+    /// read now from the books and the store's copy (`asked` `u64::MAX`); with the bake thread
+    /// on, the newest a step read on request ([`BakeQueue::ask_rule_hashes`]), `None` before
+    /// the first. A reading: it hashes every block.
+    pub fn rule_hashes(&self) -> Option<std::sync::Arc<RuleHashes>> {
+        match self.src {
+            Source::Live { queue, store } => {
+                Some(std::sync::Arc::new(queue.rule_hashes_of(store, u64::MAX)))
+            }
+            Source::Books(b) => b.rule_hashes.clone(),
+        }
+    }
+
     /// Whether the books are the bake thread's snapshot.
     pub fn threaded(&self) -> bool {
         matches!(self.src, Source::Books(_))

@@ -374,3 +374,80 @@ fn a_ruled_chunk_lists_its_border_faces_when_the_neighbour_arrives() {
     assert!(rig.queue.zeroed.contains(&D), "D still zeroed");
     assert_eq!(rig.store.words.get(&D), Some(&d), "D not listed again");
 }
+
+/// Plan 0101 Phase 4 (c), the hash line's reading ([`RuleHashes`]). `C` is ruled on the rule's
+/// rig: the zeroed chunks' hashes name `C` alone, its hash FNV-1a 64 over its block's words but
+/// the landing word, the set's over its coordinate and that hash; a landing word changed moves no
+/// hash, a record word changed moves `C`'s, the set's and the store's. The bake thread's answer
+/// is read once per newer request.
+#[test]
+fn the_rule_hashes_name_each_zeroed_block_and_skip_its_landing_word() {
+    use svet_world::hash::Fnv1a;
+    let mut rig = rule_rig(3);
+    settle(&mut rig, "C ruled");
+    assert_eq!(jobs(&rig), 0, "C ruled with no job");
+    assert!(rig.queue.zeroed.contains(&C));
+    let words = rig.store.words.get(&C).expect("C's block").clone();
+    let landed = LANDED_AT as usize;
+    let mut f = Fnv1a::default();
+    for (i, w) in words.iter().enumerate() {
+        if i != landed {
+            f.write(&w.to_le_bytes());
+        }
+    }
+    let mut set = Fnv1a::default();
+    for v in C {
+        set.write(&v.to_le_bytes());
+    }
+    set.write(&f.finish().to_le_bytes());
+
+    let h = rig.queue.rule_hashes_of(&rig.store, 7);
+    assert_eq!(h.asked, 7);
+    assert_eq!(h.unplaced, 0);
+    assert_eq!(
+        h.chunks,
+        vec![(C, f.finish())],
+        "C alone, its words but the landing word"
+    );
+    assert_eq!(h.zeroed, set.finish());
+    assert_eq!(h.blocks, 1, "only C has faces");
+    assert_eq!(h.store, h.zeroed, "the store holds C's block alone");
+
+    rig.store.landed(C, words[landed] ^ 0x5a5a);
+    assert_ne!(
+        rig.store.words.get(&C).map(|w| w[landed]),
+        Some(words[landed])
+    );
+    assert_eq!(
+        rig.queue.rule_hashes_of(&rig.store, 7),
+        h,
+        "the landing word is not hashed"
+    );
+    let last = words.len() - 1;
+    assert_ne!(last, landed);
+    rig.store.words.get_mut(&C).expect("C's block")[last] ^= 1;
+    let moved = rig.queue.rule_hashes_of(&rig.store, 7);
+    assert_ne!(moved.chunks[0].1, h.chunks[0].1, "a record word is hashed");
+    assert_ne!(moved.zeroed, h.zeroed);
+    assert_ne!(moved.store, h.store);
+
+    rig.queue.answer_rule_hashes(&rig.store);
+    assert!(
+        rig.queue.rule_hashes.is_none(),
+        "nothing asked, nothing read"
+    );
+    rig.queue.ask_rule_hashes(1);
+    rig.queue.answer_rule_hashes(&rig.store);
+    let first = rig.queue.rule_hashes.clone().expect("request 1 answered");
+    assert_eq!((first.asked, &first.chunks), (1, &moved.chunks));
+    rig.queue.ask_rule_hashes(1);
+    rig.queue.answer_rule_hashes(&rig.store);
+    let again = rig.queue.rule_hashes.clone().expect("held");
+    assert!(
+        std::sync::Arc::ptr_eq(&first, &again),
+        "an answered request is not read again"
+    );
+    rig.queue.ask_rule_hashes(2);
+    rig.queue.answer_rule_hashes(&rig.store);
+    assert_eq!(rig.queue.rule_hashes.as_ref().map(|h| h.asked), Some(2));
+}

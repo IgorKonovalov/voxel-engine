@@ -545,6 +545,98 @@ fn tier_words(block: &[u32], record: usize) -> std::collections::HashSet<usize> 
     out
 }
 
+/// The hashes of the store's blocks a reading compares across runs ([`BakeQueue::rule_hashes`],
+/// [`QueueRead::rule_hashes`]). A block's hash is FNV-1a 64 over its words as little-endian
+/// `u32`, the landing word ([`LANDED_AT`], the frame the chunk's first block landed in) left
+/// out; a set's is FNV-1a 64 over its chunks ascending, each as its coordinate (three
+/// little-endian `i32`) then its block's hash (little-endian `u64`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RuleHashes {
+    /// The request this answers ([`BakeQueue::ask_rule_hashes`]); `u64::MAX` for a read made
+    /// on the spot in lockstep.
+    pub asked: u64,
+    /// The queue's steps when it was read.
+    pub step: u64,
+    /// The zeroed chunks (the rule's records) holding a block, ascending, with their blocks'
+    /// hashes.
+    pub chunks: Vec<([i32; 3], u64)>,
+    /// Zeroed chunks whose block the store does not hold yet (pushed, placed at the submit).
+    pub unplaced: u64,
+    /// The zeroed set's hash over `chunks`.
+    pub zeroed: u64,
+    /// The whole store's: every block, and its count. A job's record on a partial reach casts
+    /// from what was resident (ADR-0080 rule 4), so this one depends on the camera's start.
+    pub store: u64,
+    pub blocks: u64,
+}
+
+/// A block's hash ([`RuleHashes`]): its words but the landing word.
+pub(crate) fn block_hash(words: &[u32]) -> u64 {
+    let mut h = svet_world::hash::Fnv1a::default();
+    for (i, w) in words.iter().enumerate() {
+        if i != LANDED_AT as usize {
+            h.write(&w.to_le_bytes());
+        }
+    }
+    h.finish()
+}
+
+/// Folds `(chunk, block hash)` pairs, in the order given, into a set's hash ([`RuleHashes`]).
+fn set_hash<'a>(pairs: impl Iterator<Item = &'a ([i32; 3], u64)>) -> u64 {
+    let mut h = svet_world::hash::Fnv1a::default();
+    for (c, b) in pairs {
+        for v in c {
+            h.write(&v.to_le_bytes());
+        }
+        h.write(&b.to_le_bytes());
+    }
+    h.finish()
+}
+
+impl BakeQueue {
+    /// The hashes of the zeroed chunks' blocks and of the whole store's in `store`'s copy, read
+    /// now ([`RuleHashes`]; `asked` names the request). A reading: it hashes every block.
+    pub(crate) fn rule_hashes_of(&self, store: &Store, asked: u64) -> RuleHashes {
+        let all: Vec<([i32; 3], u64)> = store
+            .words
+            .iter()
+            .map(|(&c, w)| (c, block_hash(w)))
+            .collect();
+        let chunks: Vec<([i32; 3], u64)> = all
+            .iter()
+            .filter(|(c, _)| self.zeroed.contains(c))
+            .copied()
+            .collect();
+        RuleHashes {
+            asked,
+            step: self.steps,
+            unplaced: self.zeroed.len() as u64 - chunks.len() as u64,
+            zeroed: set_hash(chunks.iter()),
+            chunks,
+            store: set_hash(all.iter()),
+            blocks: all.len() as u64,
+        }
+    }
+
+    /// Asks the bake thread for [`RuleHashes`]: the first step after the message that carries
+    /// request `n` reads them ([`BakeQueue::answer_rule_hashes`]), and the books it publishes
+    /// carry them from then on. Requests are numbered upward; an older one is answered by a newer.
+    pub fn ask_rule_hashes(&mut self, n: u64) {
+        self.rule_hash_asked = self.rule_hash_asked.max(n);
+    }
+
+    /// Reads [`RuleHashes`] after a bake thread's step when a request newer than the last
+    /// answer waits.
+    pub(crate) fn answer_rule_hashes(&mut self, store: &Store) {
+        let answered = self.rule_hashes.as_ref().map_or(0, |h| h.asked);
+        if self.rule_hash_asked > answered {
+            self.rule_hashes = Some(std::sync::Arc::new(
+                self.rule_hashes_of(store, self.rule_hash_asked),
+            ));
+        }
+    }
+}
+
 /// [`QueueStats::landings`]: a block over its chunk's block of the same layout, faded from
 /// what that showed.
 pub const LANDED_REFADED: usize = 0;

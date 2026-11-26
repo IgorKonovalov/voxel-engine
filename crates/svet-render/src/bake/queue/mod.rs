@@ -30,7 +30,7 @@ pub use self::reads::QueueRead;
 pub(crate) use self::reads::Source as ReadSource;
 pub(crate) use self::shadow::{LightNote, Shadow, notes};
 pub(crate) use self::stats::{AUDIT_CLASS1, AUDIT_FULL, AUDIT_PARTIAL, AUDIT_PROVISIONAL};
-pub use self::stats::{AuditDiffer, RuleAudit};
+pub use self::stats::{AuditDiffer, RuleAudit, RuleHashes};
 pub use self::stats::{
     BakeRoundTrip, Band, Bands, CycleLine, DigTrace, DigTraceJob, InViewWaiting, LANDED_BARE,
     LANDED_FALLBACK, LANDED_REFADED, LANDED_UNFADED, LANDING_DIRECTIONS, LANDING_KEY,
@@ -470,6 +470,10 @@ pub struct BakeQueue {
     /// hold full (its listing read it as rock): bit `f` for the neighbour across face `f`.
     /// Listed again when one of them is held full ([`BakeQueue::relist_zeroed`]).
     pub(super) zeroed_open: std::collections::HashMap<[i32; 3], u8>,
+    /// The newest request for [`RuleHashes`] ([`BakeQueue::ask_rule_hashes`]), and the newest
+    /// answer read after a bake thread's step, which its books carry.
+    pub(super) rule_hash_asked: u64,
+    pub(super) rule_hashes: Option<std::sync::Arc<RuleHashes>>,
     /// Chunks the opening's checks found answered by the rule, read when listed.
     pub(super) ruled_checked: ChunkSet,
     /// Ruled chunks listed this step, their place and faces: their zero blocks are placed at
@@ -684,6 +688,8 @@ impl BakeQueue {
             sealed: Default::default(),
             zeroed: Default::default(),
             zeroed_open: Default::default(),
+            rule_hash_asked: 0,
+            rule_hashes: None,
             ruled_checked: Default::default(),
             ruled: Vec::new(),
             tiers: DEFAULT_TIERS,
