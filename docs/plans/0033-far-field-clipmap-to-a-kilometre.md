@@ -1036,6 +1036,15 @@ pub trait WorldSource {
 - **Overlay:** `ChunkCoord -> Arc<ChunkMips>` built under the residency's rule, kept while the
   chunk has a persistence entry or is resident and edited.
 
+## Amended 2026-11-26 (owner, the re-read's four questions)
+
+"All recommended on outdoor questions, start 0033 world briefs" (owner, 2026-11-26), so the recommended option of each question of the section "Re-read 2026-11-26 (architect)" stands:
+
+1. **Key light over the far field:** the column horizon over the levels, no ray; far overhangs and canopies shadow as columns. Phase 6 as rewritten in the re-read is the phase.
+2. **Far canopies at level 1:** the envelope as solid `leaf` there too, the half rule kept as an arm; brief 7 reads both.
+3. **The backlog's "distant trees" stand-in:** no raster or cached stand-in in this plan; the arm is Phase 9's flight at `r_full` 10.
+4. **The world-side briefs start now:** 1a, 2a and 2b run beside the open lanes; brief 3 waits for Plan 0107's merge and briefs 1b onward for Plan 0081's.
+
 ## What Plans 0034 to 0037 may rely on
 
 - A primary hit beyond the near sphere is an ordinary hit record: `t` up to the far limit

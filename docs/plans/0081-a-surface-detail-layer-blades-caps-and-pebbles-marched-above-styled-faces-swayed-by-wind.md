@@ -642,6 +642,17 @@ degrees, 5.2; at 60, 1.7.
      driver and commit; `docs/nfr/03-memory.md` the style buffer's bytes (`Frame::frame_bytes`
      at the base and the tip).
 
+## Amended 2026-11-26 (owner, the re-read's four questions)
+
+"All recommended on outdoor questions" (owner, 2026-11-26), so the recommended option of each question of the section "Re-read 2026-11-26 (architect)" stands:
+
+1. **Light at a detail hit:** the face's light, no ray from the element.
+2. **Fade candidates:** `[6, 12]` and `[4, 8]`; `[2, 4]` stays reachable as a setting value, unread.
+3. **Silhouette probes:** as written, default 0; the window picks.
+4. **Plan 0090 before this plan:** no wait.
+
+The lane starts with the batch, after Plans 0108 and 0107 (owner, the same day).
+
 ## Data shapes
 
 ```rust
