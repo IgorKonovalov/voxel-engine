@@ -286,6 +286,7 @@ fn settle(args: &mut Args, given: &Given) -> Result<(), String> {
     args.audio.mix.check()?;
     check_path(args, given.path_mode)?;
     args.still.check(args.headless, args.frames)?;
+    args.loading.check(args.headless)?;
     Ok(())
 }
 

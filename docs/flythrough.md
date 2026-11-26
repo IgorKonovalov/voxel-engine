@@ -554,6 +554,7 @@ from the next frame, and the profile row names the fields that wait for a restar
 |------|------|
 | `--load-slice MS` | The start-up step time a loading frame spends before it draws [25] |
 | `--quit-at-loading-frame N` | Act as `Esc` at loading frame `N`, a test's way to end a run while it loads |
+| `--pre-roll-stepped` | With `--headless` (refused without it): wait on the device before every light pre-roll step, with or without the loading screen, and end the pre-roll by its chunks only (no 5 s box, no 120 s cap), so its steps, chunks and samples do not depend on the machine's pace; off by default |
 
 ### Removed flags
 

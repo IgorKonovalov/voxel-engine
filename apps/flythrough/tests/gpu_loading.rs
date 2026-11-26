@@ -85,8 +85,14 @@ fn world_frames(stderr: &str) -> usize {
 /// frames on in the pre-roll's stages, none off, and exactly 3 world frames in both.
 #[test]
 fn a_sliced_pre_roll_bakes_what_an_unsliced_one_bakes() {
-    let off_run = room_spawn(&["--loading-screen", "off"]);
-    let on_run = room_spawn(&["--loading-screen", "on", "--load-slice", "0.05"]);
+    let off_run = room_spawn(&["--loading-screen", "off", "--pre-roll-stepped"]);
+    let on_run = room_spawn(&[
+        "--loading-screen",
+        "on",
+        "--load-slice",
+        "0.05",
+        "--pre-roll-stepped",
+    ]);
     // Each run's pipes drained on its own thread, so neither blocks on a full pipe.
     let on_done = std::thread::spawn(move || room_wait(on_run));
     let off_done = room_wait(off_run);

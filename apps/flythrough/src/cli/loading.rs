@@ -21,6 +21,9 @@ pub(crate) struct LoadingArgs {
     pub(crate) fade_ms: f64,
     /// `--quit-at-loading-frame N`: acts as `Esc` at loading frame `N`, for a test.
     pub(crate) quit_at: Option<u32>,
+    /// `--pre-roll-stepped`: the pre-roll waits on the device before each step and has no
+    /// box and no cap, so its outcome does not depend on the machine's pace. Headless only.
+    pub(crate) pre_roll_stepped: bool,
 }
 
 impl Default for LoadingArgs {
@@ -30,6 +33,7 @@ impl Default for LoadingArgs {
             slice_ms: LOAD_SLICE_MS,
             fade_ms: LOADING_FADE_MS,
             quit_at: None,
+            pre_roll_stepped: false,
         }
     }
 }
@@ -38,6 +42,19 @@ impl LoadingArgs {
     /// Whether start-up steps behind loading frames: as given, else in a window only.
     pub(crate) fn screen_on(&self, headless: bool) -> bool {
         self.screen.unwrap_or(!headless)
+    }
+
+    /// `--pre-roll-stepped` holds the start-up for the device at every pre-roll step, a
+    /// headless reading's mode: refused in a window.
+    pub(crate) fn check(&self, headless: bool) -> Result<(), String> {
+        if self.pre_roll_stepped && !headless {
+            return Err(
+                "--pre-roll-stepped steps a headless run's pre-roll by count; \
+                        it needs --headless"
+                    .to_owned(),
+            );
+        }
+        Ok(())
     }
 }
 
@@ -104,6 +121,11 @@ pub(crate) fn diagnostic_flags() -> Vec<Flag<Parsing>> {
                 Ok(())
             },
         ),
+        Flag::switch(
+            &["--pre-roll-stepped"],
+            "with --headless: wait on the device before every light pre-roll step and end the pre-roll by its chunks only (no 5 s box, no 120 s cap), so its outcome does not depend on the machine's pace",
+            |p: &mut Parsing| p.args.loading.pre_roll_stepped = true,
+        ),
     ]
 }
 
@@ -145,5 +167,20 @@ mod tests {
         assert_eq!(a.loading.slice_ms, 0.5);
         assert!(parse_args_from(argv(&["--load-slice", "0"])).is_err());
         assert!(parse_args_from(argv(&["--load-slice", "inf"])).is_err());
+    }
+
+    /// `--pre-roll-stepped` is off by default, parses with `--headless` and is refused
+    /// without it.
+    #[test]
+    fn the_stepped_pre_roll_is_headless_only_and_off_by_default() {
+        let a = parse_args_from(argv(&["--headless"])).expect("no flags parse");
+        assert!(!a.loading.pre_roll_stepped);
+        let a = parse_args_from(argv(&["--headless", "--pre-roll-stepped"]))
+            .expect("the flag parses headless");
+        assert!(a.loading.pre_roll_stepped);
+        let Err(e) = parse_args_from(argv(&["--pre-roll-stepped"])) else {
+            panic!("--pre-roll-stepped parsed in a window");
+        };
+        assert!(e.contains("--headless"), "{e}");
     }
 }

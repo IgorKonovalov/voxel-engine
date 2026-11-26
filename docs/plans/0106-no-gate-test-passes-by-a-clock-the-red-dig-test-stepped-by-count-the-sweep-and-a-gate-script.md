@@ -1,6 +1,6 @@
 # 0106: No gate test passes by a clock: the red dig test stepped by count, the sweep, and a gate script
 
-> **Status:** in-progress (2026-11-26): Phase 1, the fix for main's red CI, done and merged on its own. Phases 2 to 4 approved (owner, 2026-11-26), with the soak tier's sweep added as Phases 5 and 6.
+> **Status:** in-progress (2026-11-26): Phase 1, the fix for main's red CI, done and merged on its own. Phases 2 to 4 approved (owner, 2026-11-26), with the soak tier's sweep added as Phases 5 and 6. Phases 1 to 3 and 7 done.
 > **Created:** 2026-11-26
 > **Milestone:** none (harness; follows Plan 0099, `docs/roadmap.md` M9's bake thread)
 > **Related ADRs:** [ADR-0083](../adrs/0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md) (the bake thread; not changed)
@@ -254,7 +254,7 @@ impl Frame {
 | 4: the gate script | dev | not started | |
 | 5: the soak tier, the reading | dev | not started | |
 | 6: the soak tier, the fixes | dev | not started | |
-| 7: the pre-roll stepped by count | dev | not started | |
+| 7: the pre-roll stepped by count | dev | done; readings in [the log](logs/0106.md#phase-7-the-pre-roll-stepped-by-count). Taken before Phases 4 to 6; one quick tier ran beside runs 1 to 3 of the ten, not looped | committed with this row |
 | 8: the reset seed under each dig hold | dev | not started | |
 | 9: the reset seed's test under its hold | dev | not started | |
 | 10: where the source switch's 43 s went | dev | not started | |
@@ -266,6 +266,9 @@ impl Frame {
 - Phase 2: `a_source_switch_shows_the_loading_frames_before_the_new_world` takes `--load-slice 0.05`; it reads 66.5 s alone at the tip, 60.6 s at its base form, both over the 10 s line.
 - Phase 3: the three stage sums first stopped (their claim needed a span neither figure carried); after the architect's amendment they compare the stages with `StepStages::total_ms` (now the last lap's instant) and the new `SyncStats::span_us`. `gpu_world/mod.rs` and `bake/stages.rs` changed outside the phase's files (the new field, a doc line).
 - Phase 3: `split_tests/thread/fade.rs` changed (its `within`s and the held step's wait): it is the tail of `the_edits_frame_waits_for_its_list_and_no_other_frame_does`.
+- Phase 7: the refusal is `LoadingArgs::check` in `cli/loading.rs`, called from `cli/parse.rs`; `cli/mod.rs` unchanged.
+- Phase 7: "the fly-through's default golden (`gpu_golden`)" read as `primary_golden_shows_the_carve`; "the three other gate tests of `gpu_loading`" are two in the tree (the streamed load is soak-marked).
+- Phase 7: `gpu_loading.rs`'s doc comment of the pre-roll test does not name the flag (no other line of the test changed).
 - Phase 2: the soak test `a_reset_pixel_starts_from_its_record` (on `dig_run_with`, which now waits on the device each frame) fails at `with_record > 0`, at the tip and at the base form alike (one run each).
 
 ### Close triggers
