@@ -1023,7 +1023,8 @@ The Implementation log gains rows for Phases 2e and 2f.
 | 2: the manifest and the shoot script | dev | stopped: `--check` after the shoot over tolerance on `hero` (log) | `5bc46942` (wip) |
 | 2b: the settled start | dev | done; readings in [the log](logs/0093.md) | `66f3bd66` |
 | 2c: the check's quantity, read | dev | done: C 8, L 4; the hero 0.004; readings in [the log](logs/0093.md) | `f5f3632c` |
-| 2d: the check, the batches, the shoot | dev | stopped: `--check` after the shoot over tolerance on `spider-walk` (log) | committed with this row (wip) |
+| 2d: the check, the batches, the shoot | dev | stopped: `--check` after the shoot over tolerance on `spider-walk` (log) | `3ece99fb` (wip) |
+| 2e: the noise sets, read | dev | stopped: both loops' `--filter off` reads 0, under their noise; the hero 0.004 (log) | committed with this row |
 | 3: the image gate, fragments, CI | dev | not started | |
 | 4: candidates and contact sheets | dev | not started | |
 | 5: the owner picks | human | not started | |
@@ -1079,6 +1080,14 @@ each. Empty is fine.)_
 - Phase 2d: `--check` right after the shoot exits 1: spider-walk 0.002066 against 0, hero
   0.002478 against 0.004, walker-walk 0 (log). Not met; stopped for the architect. The second
   `--check` and the `--print hero` run were not run; the WebP files are not committed.
+- Phase 2e: `--filter off` in the `clip` example gives the same PNG frames as the spider's
+  noise renders 1, 3, 5, 6 and reads 0 against the walker's render 1; the smallest wrong share
+  of each loop is 0, under its noise (spider 0.002925, walker 0.000667). Stopped for the
+  architect; no other wrong render was made (log).
+- Phase 2e: the hero's 2c renders (n1 to n4) were made by `live/p2b-final/flythrough`, the
+  other four by the script's `target/release/flythrough` (a release build of 15:24; the two files differ).
+- Phase 2e: h7 and h8 differ from the six earlier hero renders in one patch of 6 cells by up
+  to 60 levels (not between each other); within the share (log). Not attributed.
 
 ### Close triggers
 
