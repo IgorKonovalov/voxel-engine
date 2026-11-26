@@ -575,6 +575,117 @@ image tests are Phase 7's.
 2. **If no flash at depth and the unchanged surface dig cannot both hold, neither is given up:** the phase stops and the architect looks for a form that keeps both.
 3. **The wide pit is read headless; the slope and the tunnel only in the window,** as written.
 
+## Amended 2026-11-26 (architect, the exposure check)
+
+After Phase 2's readings ([the log](logs/0105.md), readings 6 to 9 and "Done-when, as read";
+rig read at `d5160368`). **The dig's frames stay the eye's (auto exposure, as rendered); the
+settled frame they are measured against is the landed light at the exposure the eye had at
+D-1.** Phase 2 is closed as read, its readings stand as the before arm, no further reading
+phase is owed, and Phase 3 starts now with the rig change below. Earlier sections stand except
+the two clauses named here.
+
+### What Phase 2's failed check was
+
+"The exposure at D-1 within 1 % of D+60's" was the architect's stand-in for "the settled frame
+is seen by the same eye as the dig's frames". It cannot hold where the dig itself changes the
+view: at `side` 1 m the box before the dig is +14.8 levels over its settled state, and the
+auto exposure answers that over the next second (about 0.3 % a frame), as it does for any
+change of view. That motion is not a flash and is not the estimate's. The clause is
+**withdrawn as a wrong check**, not relaxed: it is replaced by a reference whose exposure is
+D-1's by construction.
+
+- **The dig's frames were never in doubt.** From D+0 to the landing the exposure stays within
+  1.2 % of D-1's at every read dig (the largest: `side` 1 m, 1.654e-1 to 1.635e-1 at D+1).
+  Those frames are what the owner sees.
+- **The reference was.** D+60 under auto is the same light seen by an eye one second on. At
+  `side` 1 m that reads, measured: the frames on the landed light at -1.9 levels under D+60
+  (the B3 column, both modes), with no light under its settled value. Elsewhere it is small,
+  derived from that ratio and not measured: 1.3 % at a settled luma of 5.6 to 7.2 is under
+  0.1 level.
+- **The stillness rule stays as Phase 2 wrote it** (under 1 % over 24 frames, cap 600; the
+  dev's option (c) is not taken: a stricter rule cannot remove the exposure's answer to the
+  dig). Option (a) (D-1 against D+0) is true and already read; it does not give a reference.
+  Option (b) (the exposure fixed from D-1 through the dig) takes the eye out of the dig's
+  frames; the form below fixes it only for the reference.
+
+### The bars restated: B1 to B3 against the settled frame at D-1's exposure
+
+The rig, per read dig, after the D+60 frame (auto exposure throughout, as Phase 2):
+
+1. sets `Exposure::Manual` at D+60's own exposure, steps 16 frames, reads the box: **the
+   check frame**. Its mean is within 0.5 level of D+60's, or the read is not valid;
+2. sets `Exposure::Manual` at D-1's exposure, steps 16 frames, reads the box: **the settled
+   frame `S`**;
+3. sets the auto exposure back; the next read dig's hold stills it as before. The dev states
+   in the log what the adapted level does across the switch.
+
+B1, B2 and B3 are read as written above with `S` in the place of D+60: the mean and the p95
+of each frame from D+0 to the first frame on the job's record, against `S`. The table keeps
+the D+60 column (the eye a second on) and the exposure at D-1, D+0, each frame to the landing
+and D+60, as readings.
+
+**Why it is the same claim, and not a looser one.** The owner's bar is "no frame from the dig
+to the landing shows the new faces brighter than their settled value by more than 4 levels".
+The frames are his frames; the settled value is the landed light as his eye, adapted as it
+was when he dug, sees it. At each of the six digs that failed the check the exposure rises
+after the dig, so D+60 is brighter than `S` and a frame reads higher over `S` than over
+D+60: the restated bar is the stricter of the two there (by about 2 levels at `side` 1 m),
+and equal where the exposure does not move (`down`, `wide` from 2 m). The 4 and the 8 do not
+change. The auto exposure stays in the bar where the eye meets it (the dig's frames) and in
+Phase 6's window, which runs it and holds nothing.
+
+B2's second clause (a frame under `depth` within 4 levels of the same frame under `surface`)
+compares two runs: the table prints both arms' exposure at D+0, and a depth where they differ
+by more than 2 % is not compared and stops the phase.
+
+### Phase 2's readings as the before arm
+
+They stand. Every `side` peak is +62 to +102 over D+60 against a bar of 4; against `S` the
+figures move by about 2 levels at 1 m and under 0.3 elsewhere (derived). Lockstep and the
+thread agree within 1.2 levels. `wide` reads +3 to +20 at an exposure that does not move from
+2 m. `down` under the hold is not owed apart: its exposure was one value in every frame of
+Phase 1, and Phase 3 reads it with the hold. **The before arm under `S` is Phase 3's
+`surface` arm**, which that phase prints beside `depth` anyway; no run is added for it.
+
+### The queue at D-1
+
+Not a condition of a valid read. The owner digs on a queue that is never quiet, and a rig
+that waits for a quiet queue did not get one in 600 frames at `side` (Phase 2's first
+attempt). What Phase 2 shows: the peaks agree in two modes whose holds were busy for
+different shares of their frames; every read walks held, four fades, the job's record; the
+frames on the job's record read +0.0 to +0.3 over D+60 where the exposure is still. What it
+does not show is where those fades are. A dig into a chunk that is itself fading is the
+backlog's switch with no fade ("A dig's landing"), which this plan does not fix and which
+could miss a bar for a reason that is not the estimate. So Phase 3's rig prints, per read
+dig, the fades at D-1 and whether one is on a chunk the dig's box touches (the queue's
+stats, or a reading-only accessor as the held trace's is; no behaviour change). A bar missed
+at such a dig stops the phase as any miss does, reported with that line; the architect
+separates the two. No hold is added to make the queue quiet.
+
+### Phase 3 and later, as changed
+
+Phase 3's text stands. Added to its done-when, and to Phases 4 and 5 by the bars:
+
+- The rig change above, in `apps/flythrough/tests/gpu_outdoor/dig_depth.rs` only.
+- **The runs:** `down` and `side`, lockstep and the thread, `surface` and `depth`: eight
+  holds of the perf lock, one site, mode and arm each, the lock released between. The first
+  is `side`, lockstep, `surface`; its time projects the rest (Phase 2: 278 to 698 s a hold,
+  plus 32 frames a read dig). A hold projected over 20 minutes is not started: stop.
+- **The rig's own check, on that first run:** each depth's peak mean against D+60 is within
+  3 levels of reading 6's, and B3 at 1 m against `S` reads within 1 level of 0 (it read -1.9
+  against D+60). Else stop: the rig, not the light, moved.
+- **Stops added:** the check frame over 0.5 level from D+60 at a read dig; the two arms'
+  exposure at D+0 over 2 % apart at a depth; the manual switch needing a change outside the
+  rig's file.
+
+### Question for the owner (does not block)
+
+**The headless bars measure a dig's frames against the settled light as the eye saw it when
+it dug, not as it sees it a second later once the exposure has followed the new view.**
+Recommended: (a) as ruled, and the window judges the slow change after a dig with the
+exposure live; (b) the slow change after a dig gets its own bar (a later amendment names
+it).
+
 ## Data shapes
 
 ```rust
