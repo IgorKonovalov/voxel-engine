@@ -273,6 +273,22 @@ fn the_headless_flythrough_exits_through_every_teardown_stage_within_bound() {
     assert_teardown_within_bound(&err);
 }
 
+/// [`the_headless_flythrough_exits_through_every_teardown_stage_within_bound`] with the live
+/// queue's sliced steps on the bake thread (`--bake-thread on`): the frame's drop joins it
+/// inside the same stages and bound.
+#[test]
+#[ignore = "soak"]
+fn the_headless_flythrough_with_the_bake_thread_exits_within_bound() {
+    let Some((status, err)) = headless_run(&["--bake-thread", "on"]) else {
+        return;
+    };
+    assert!(
+        status.success(),
+        "the fly-through failed: {status}; stderr:\n{err}"
+    );
+    assert_teardown_within_bound(&err);
+}
+
 /// `--quit-at-loading-frame 2` with the screen on acts as `Esc` at the third loading frame,
 /// before the pre-roll's end: the run exits 0 through the same traced teardown, its stages
 /// in the same order and together under `DROP_BOUND`.

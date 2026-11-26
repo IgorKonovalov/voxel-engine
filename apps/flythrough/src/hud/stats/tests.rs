@@ -360,27 +360,27 @@ fn the_queue_row_counts_the_view() {
     st.in_view.chunks = [[3, 1], [2, 2], [2, 2]];
     st.in_view.samples = 60_000_000;
     assert_eq!(
-        queue_row(&st, 1.5e7, 1.254, ""),
-        "in view: 12 waiting (5 coarse), drain 4.0 s, withdrawn 0, step 1.25 ms"
+        queue_row(&st, 1.5e7, [1.254, 0.404, 0.85], ""),
+        "in view: 12 waiting (5 coarse), drain 4.0 s, withdrawn 0, step 1.25 ms (render 0.40, movable 0.85)"
     );
     assert_eq!(
-        queue_row(&st, 0.0, 1.254, ""),
-        "in view: 12 waiting (5 coarse), drain n/a, withdrawn 0, step 1.25 ms"
+        queue_row(&st, 0.0, [1.254, 0.404, 0.85], ""),
+        "in view: 12 waiting (5 coarse), drain n/a, withdrawn 0, step 1.25 ms (render 0.40, movable 0.85)"
     );
     let keyed = svet_render::QueueStats { keys: 40, ..st };
     assert_eq!(
-        queue_row(&keyed, 1.5e7, 1.254, ""),
-        "in view: 12 waiting (5 coarse), drain 4.0 s, withdrawn 0, step 1.25 ms, key 40"
+        queue_row(&keyed, 1.5e7, [1.254, 0.404, 0.85], ""),
+        "in view: 12 waiting (5 coarse), drain 4.0 s, withdrawn 0, step 1.25 ms (render 0.40, movable 0.85), key 40"
     );
     let (mut out, mut colours) = (String::new(), Vec::new());
     let mut s = HudStats::fixed();
     s.write_rows(&mut out, &mut colours);
     assert!(!out.contains("in view:"), "{out}");
-    s.queue = Some(queue_row(&st, 1.5e7, 1.254, ""));
+    s.queue = Some(queue_row(&st, 1.5e7, [1.254, 0.404, 0.85], ""));
     s.write_rows(&mut out, &mut colours);
     assert!(
         out.lines()
-            .any(|l| l == "in view: 12 waiting (5 coarse), drain 4.0 s, withdrawn 0, step 1.25 ms"),
+            .any(|l| l == "in view: 12 waiting (5 coarse), drain 4.0 s, withdrawn 0, step 1.25 ms (render 0.40, movable 0.85)"),
         "{out}"
     );
     assert_eq!(out.lines().count(), colours.len());

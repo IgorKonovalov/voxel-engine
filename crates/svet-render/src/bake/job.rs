@@ -146,16 +146,13 @@ impl FaceState {
     }
 }
 
-/// Everything the job loop needs of the frame.
+/// What the bake half reads of the frame (ADR-0083): no device; the render half's reads are
+/// [`GpuRun`]'s.
 pub(crate) struct BakeRun<'a> {
-    pub device: &'a wgpu::Device,
-    pub queue: &'a wgpu::Queue,
-    pub gpu: &'a GpuWorld,
+    /// The bake half's shadow of the mirror (ADR-0083): every mirror read the queue's books
+    /// make.
+    pub mirror: &'a crate::bake::Shadow,
     pub world: &'a World,
-    pub pipeline: &'a BakePipeline,
-    pub world_bind: &'a wgpu::BindGroup,
-    pub params_buffer: &'a wgpu::Buffer,
-    pub params: Params,
     /// The bake's sky rays (ADR-0070): 0 with no sky set, else [`BAKE_SKY_ON`] with the frame's
     /// coarse-shadow and shadow-style bits ([`BAKE_SKY_COARSE`], [`BAKE_SKY_STYLES`]).
     pub sky: u32,
@@ -192,6 +189,23 @@ pub(crate) struct Job {
     /// The record's tier bits ([`TIER_SHIFT`]): 0 at the settings' count (the near tier),
     /// [`TIER_MID`] or [`TIER_FAR`] at the live queue's lesser counts (ADR-0080).
     pub tier: u8,
+    /// What the job re-bakes, for the live queue's price of a submit.
+    pub class: JobClass,
+}
+
+/// What a job re-bakes, for the live queue's price of a submit (Plan 0099 Phase 2d): a sample
+/// costs by whose it is, so a read-back's samples drawn are counted by the class of their job
+/// ([`crate::bake::SubmitDone::dig_drawn`]) and a dig's cap is priced by its class's figure
+/// ([`DigCost`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum JobClass {
+    /// Any job that is not a dig's.
+    #[default]
+    Other,
+    /// A dig job holding ring-1 bricks (its chunk's ring 1, or both its rings in one job).
+    Ring1,
+    /// Any other dig job (a split chunk's ring 2, a ring chunk the box did not touch).
+    Dig,
 }
 
 /// The entry's `face` word's flag (`BakeFace.face` in `bake.wgsl`): a key-only job's face,
@@ -232,6 +246,7 @@ pub(super) fn list_extent(
 /// Bakes `extent`'s chunks into `store`, emptied first.
 pub(crate) fn run(
     run: &BakeRun<'_>,
+    gpu: &GpuRun<'_>,
     store: &mut Store,
     extent: ChunkExtent,
     settings: &BakeSettings,
@@ -244,20 +259,20 @@ pub(crate) fn run(
         listed.reverse();
     }
     let record = record_words(settings.cell);
-    let window = run.gpu.window();
+    let window = gpu.gpu.window();
     let parents = ParentTable::of(window);
     let needed_words = parents.first
         + parents.words()
         + listed.iter().map(|(_, f)| layout(f, record).1).sum::<u64>();
-    let capacity = store.pool.size();
+    let capacity = store.capacity;
     if needed_words * 4 > capacity {
         return Err(BakeError::PoolFull {
             needed: needed_words * 4,
             capacity,
         });
     }
-    store.reset(run.queue, window);
-    store.set_cell(run.queue, settings.cell);
+    store.reset(window);
+    store.set_cell(settings.cell);
     // The blocks lie in the jobs' order, whatever order the jobs end in.
     let mut at = store.head_words;
     let jobs: Vec<Job> = listed
@@ -273,12 +288,13 @@ pub(crate) fn run(
                 brick_samples: None,
                 key_only: false,
                 tier: 0,
+                class: JobClass::Other,
             };
             at += words;
             job
         })
         .collect();
-    let report = run_jobs(run, store, jobs, settings, progress)?;
+    let report = run_jobs(run, gpu, store, jobs, settings, progress)?;
     store.piece = Some(extent);
     Ok(report)
 }
@@ -342,6 +358,7 @@ pub struct DigReport {
 /// its block.
 pub(crate) fn rebake(
     run: &BakeRun<'_>,
+    gpu: &GpuRun<'_>,
     store: &mut Store,
     boxes: &[[[i32; 3]; 2]],
     settings: &BakeSettings,
@@ -360,7 +377,7 @@ pub(crate) fn rebake(
         let coord = ChunkCoord(*c);
         let faces = list_world_chunk(run.world, coord, &classes).unwrap_or_default();
         if faces.faces() == 0 {
-            store.remove(run.queue, coord);
+            store.remove(coord);
             continue;
         }
         let record = record_words(store.cell);
@@ -382,15 +399,17 @@ pub(crate) fn rebake(
             brick_samples: None,
             key_only: false,
             tier: 0,
+            class: JobClass::Other,
         });
     }
-    let bake = run_jobs(run, store, jobs, settings, progress)?;
+    let bake = run_jobs(run, gpu, store, jobs, settings, progress)?;
     Ok(DigReport { bricks, bake })
 }
 
 /// Bakes `jobs` into `store`, each block written at its `first_word` as its job ends.
 pub(super) fn run_jobs(
     run: &BakeRun<'_>,
+    gpu: &GpuRun<'_>,
     store: &mut Store,
     jobs: Vec<Job>,
     settings: &BakeSettings,
@@ -398,19 +417,31 @@ pub(super) fn run_jobs(
 ) -> Result<BakeReport, BakeError> {
     let open_cap = if settings.jobs_alone { 1 } else { LOOP_SLOTS };
     let mut lp = JobLoop::new(jobs, 0..open_cap);
-    let bind = run.pipeline.bind();
+    let (mut issuer, mut lists) = (Issuer::default(), Lists::default());
+    let mut half = GpuHalf {
+        run: gpu,
+        issuer: &mut issuer,
+        lists: &mut lists,
+    };
     // The frame's parameters, once: the bake reads no view but the LOD walk's camera chunk,
     // which it takes from the face's job.
-    run.queue
-        .write_buffer(run.params_buffer, 0, bytemuck::bytes_of(&run.params));
-    let queue = run.queue;
-    let mut sink = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>| {
-        store.put(queue, coord, first, block);
+    gpu.queue
+        .write_buffer(gpu.params_buffer, 0, bytemuck::bytes_of(&gpu.params));
+    let mut sink = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>, _: u64| {
+        store.put(coord, first, block);
     };
     while lp
-        .submit(run, bind, store, settings, u64::MAX, &mut sink, progress)
+        .submit(
+            run,
+            &mut half,
+            store,
+            settings,
+            u64::MAX,
+            &mut sink,
+            progress,
+        )
         .is_some()
     {}
-    run.queue.submit([]);
+    gpu.queue.submit([]);
     Ok(lp.report)
 }

@@ -558,7 +558,7 @@ fn a_dig_is_never_withdrawn() {
     };
     // No extra slice for digs: the dig's job draws the cap's floor a step, so it is still in
     // the loop at the step after the move.
-    q.frame.bake_queue_mut().expect("the queue started").edit_ms = 0.0;
+    q.frame.set_bake_queue(|q| q.edit_ms = 0.0);
     let one = ChunkCoord([1, 0, 0]);
     let mut n = 0;
     while q.frame.store().block(one).is_none() {
@@ -776,13 +776,7 @@ fn a_still_camera_drains_and_withdraws_nothing() {
 /// one-shot bake of the same world at the same counts, whose order is the job list's.
 #[test]
 fn images_are_unchanged_by_the_incremental_order() {
-    let world = world_of([5, 5, 5], AIR);
-    fill(&world, [0, 0, 0], [319, 319, 70], ROCK);
-    for (x, y) in [(60, 60), (60, 250), (250, 60), (250, 250)] {
-        fill(&world, [x, y, 71], [x + 12, y + 12, 260], ROCK);
-    }
-    fill(&world, [60, 60, 200], [262, 72, 212], ORE);
-    let eye = [160.5, 160.5, 140.5];
+    let (world, eye) = pillars();
     let Some(mut q) = rig(world, &Setup::at(eye)) else {
         return;
     };
@@ -805,6 +799,110 @@ fn images_are_unchanged_by_the_incremental_order() {
     let fresh = q.fresh();
     assert_eq!(got.len(), fresh.len());
     for (c, b) in &got {
+        assert_eq!(Some(b), fresh.get(c), "{c:?} against a one-shot bake");
+    }
+}
+
+/// The 5 x 5 x 5 world of [`images_are_unchanged_by_the_incremental_order`]: a floor, four
+/// pillars and an ore beam, and its eye.
+fn pillars() -> (svet_world::World, [f32; 3]) {
+    let world = world_of([5, 5, 5], AIR);
+    fill(&world, [0, 0, 0], [319, 319, 70], ROCK);
+    for (x, y) in [(60, 60), (60, 250), (250, 60), (250, 250)] {
+        fill(&world, [x, y, 71], [x + 12, y + 12, 260], ROCK);
+    }
+    fill(&world, [60, 60, 200], [262, 72, 212], ORE);
+    (world, [160.5, 160.5, 140.5])
+}
+
+/// Frames a threaded drain may take: the render side's frames return while the bake thread
+/// works, so a drain takes more of them than lockstep's steps.
+const THREAD_FRAMES: usize = 20_000;
+
+/// Plan 0099 Phase 3a (4) and (12)'s frame half (ADR-0083). [`pillars`] drained through the
+/// frame's own step with the bake thread on, the camera turning a quarter every 8 frames: once
+/// the books read empty for 8 frames running the thread is turned off, which joins it and
+/// applies what it made. Every block is then bit-identical to the same world drained in
+/// lockstep and to a one-shot bake, with no lockstep step between the join and the read. On the
+/// way, with the thread running, `bake_queue_mut` is `None`, and a knob set
+/// (`set_bake_digs`) reaches the books only through the next message: joined before a step
+/// reads it, the books hold the old value until that step.
+#[test]
+#[ignore = "soak"]
+fn the_threaded_queue_drains_to_the_lockstep_store() {
+    let (world, eye) = pillars();
+    let Some(mut lock) = rig(world, &Setup::at(eye)) else {
+        return;
+    };
+    let lockstep = {
+        lock.settle();
+        lock.blocks()
+    };
+    drop(lock);
+    let (world, eye) = pillars();
+    let mut q = rig(world, &Setup::at(eye)).expect("the device opened once");
+    q.frame.share_bake_world(q.world.clone());
+    q.frame.set_bake_thread(&q.queue, true);
+    // (12)'s frame half: the thread starts at the first sliced step; a knob set while it runs
+    // waits in the message until a step reads it.
+    q.step();
+    assert!(q.frame.bake_thread_running(), "the thread runs");
+    assert!(q.frame.bake_queue_mut().is_none(), "no direct write");
+    let old = q.frame.bake_knobs().edit_ms;
+    q.frame.set_bake_digs(old + 5.0, true);
+    q.frame.set_bake_thread(&q.queue, false);
+    assert_eq!(
+        q.frame.bake_queue_mut().expect("lockstep").edit_ms,
+        old,
+        "joined before a step read the message: the books hold the old value"
+    );
+    q.step();
+    assert_eq!(
+        q.frame.bake_queue_mut().expect("lockstep").edit_ms,
+        old + 5.0,
+        "the next step reads the knob set"
+    );
+    q.frame.set_bake_digs(old, true);
+    q.frame.set_bake_thread(&q.queue, true);
+    let mut quiet = 0;
+    let mut frames = 0;
+    for n in 0..THREAD_FRAMES {
+        q.camera.yaw = ((n / 8) % 4) as f32 * std::f32::consts::FRAC_PI_2;
+        q.step();
+        frames = n + 1;
+        assert!(
+            q.frame.bake_thread_running(),
+            "the thread runs at frame {n}"
+        );
+        quiet = if n > 32 && q.q().empty() {
+            quiet + 1
+        } else {
+            0
+        };
+        if quiet >= 8 {
+            break;
+        }
+    }
+    println!("threaded drain: {frames} frames");
+    assert!(quiet >= 8, "the threaded queue drains: {:?}", q.q().stats());
+    q.frame.set_bake_thread(&q.queue, false);
+    assert!(!q.frame.bake_thread_running(), "off joins");
+    assert!(
+        q.q().empty(),
+        "the joined books are empty: {:?}",
+        q.q().stats()
+    );
+    let got = q.blocks();
+    let fresh = q.fresh();
+    assert!(
+        got.len() >= 25,
+        "the floor's chunks hold blocks: {}",
+        got.len()
+    );
+    assert_eq!(got.len(), lockstep.len());
+    assert_eq!(got.len(), fresh.len());
+    for (c, b) in &got {
+        assert_eq!(Some(b), lockstep.get(c), "{c:?} against the lockstep store");
         assert_eq!(Some(b), fresh.get(c), "{c:?} against a one-shot bake");
     }
 }
@@ -842,7 +940,7 @@ fn a_turn_onto_unbaked_chunks_drains_without_a_census_request() {
         drain_ms: 0.2,
         line_ms: 0.1,
     };
-    q.frame.bake_queue_mut().expect("the queue started").drain = Some(drain);
+    q.frame.set_bake_queue(move |q| q.drain = Some(drain));
     let unbaked_behind = |q: &Q| {
         (0..8)
             .filter(|&x| q.target([x, 0, 0]).is_none())
@@ -922,32 +1020,7 @@ fn in_ring1(b: [i32; 3], lo: [i64; 3], hi: [i64; 3]) -> bool {
 /// stale flag). Settled, chunk 0 is bit-identical to a one-shot bake of the edited world.
 #[test]
 fn a_dig_jumps_every_open_job_and_withdraws_its_stale_one() {
-    let world = world_of([8, 6, 1], AIR);
-    for x in 0..8i64 {
-        for y in 0..6i64 {
-            if (x, y) != (0, 0) {
-                fill(
-                    &world,
-                    [x * 64 + 24, y * 64 + 24, 24],
-                    [x * 64 + 32, y * 64 + 32, 32],
-                    ROCK,
-                );
-            }
-        }
-    }
-    fill(&world, [0, 0, 24], [64, 64, 32], ROCK);
-    let Some(mut q) = rig(
-        world,
-        &Setup {
-            near: 0,
-            slice_ms: 1e-6,
-            counts: BakeSettings {
-                brick_samples: 4096,
-                ..counts()
-            },
-            ..Setup::at([32.5, 32.5, 50.5])
-        },
-    ) else {
+    let Some(mut q) = dig_rig() else {
         return;
     };
     let zero = ChunkCoord([0, 0, 0]);
@@ -1044,4 +1117,197 @@ fn a_dig_jumps_every_open_job_and_withdraws_its_stale_one() {
         q.fresh().get(&zero.0),
         "chunk 0 against a one-shot bake of the edited world"
     );
+}
+
+/// The dig rig of [`a_dig_jumps_every_open_job_and_withdraws_its_stale_one`]: forty-seven chunks
+/// of an 8^3 cube each and a 64 x 64 x 8 slab in chunk 0 (the camera's), at 4096 samples a brick
+/// direction, no coarse pass, near 0, the smallest slice.
+fn dig_rig() -> Option<Q> {
+    let world = world_of([8, 6, 1], AIR);
+    for x in 0..8i64 {
+        for y in 0..6i64 {
+            if (x, y) != (0, 0) {
+                fill(
+                    &world,
+                    [x * 64 + 24, y * 64 + 24, 24],
+                    [x * 64 + 32, y * 64 + 32, 32],
+                    ROCK,
+                );
+            }
+        }
+    }
+    fill(&world, [0, 0, 24], [64, 64, 32], ROCK);
+    rig(
+        world,
+        &Setup {
+            near: 0,
+            slice_ms: 1e-6,
+            counts: BakeSettings {
+                brick_samples: 4096,
+                ..counts()
+            },
+            ..Setup::at([32.5, 32.5, 50.5])
+        },
+    )
+}
+
+/// Three carves in [`dig_rig`]'s slab, apart.
+const DIG_BOXES: [([i64; 3], [i64; 3]); 3] = [
+    ([8, 8, 28], [11, 11, 31]),
+    ([40, 40, 28], [43, 43, 31]),
+    ([8, 40, 28], [11, 43, 31]),
+];
+
+/// What [`dig_reads`] read of one dig: chunk 0's ring-1 records in the pool after the edit and
+/// before any step read its box (`pre`) and after the edit's own frame (`held`), by slot, and the
+/// frames from the edit's frame (0) to the first whose pool holds ring 1's re-bake
+/// ([`support::queue::ring1_landed`]), each paced (see [`dig_reads`]).
+struct DigRead {
+    pre: std::collections::BTreeMap<usize, Vec<u32>>,
+    held: std::collections::BTreeMap<usize, Vec<u32>>,
+    ring1: usize,
+    /// The wall from the edit's frame's start to ring 1 applied, ms.
+    ms: f64,
+}
+
+/// A window's frame at 60 Hz, the shortest frame [`dig_reads`] paces to.
+const FRAME: std::time::Duration = std::time::Duration::from_micros(16_667);
+
+/// The wall clock of [`dig_reads`]' pacing.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the rig paces its frames to a window's"
+)]
+fn clock() -> std::time::Instant {
+    std::time::Instant::now()
+}
+
+/// Chunk 0's ring-1 records of the box `lo ..= hi` in the pool, by slot.
+fn ring1_pool(q: &Q, lo: [i64; 3], hi: [i64; 3]) -> std::collections::BTreeMap<usize, Vec<u32>> {
+    slot_records(&q.shown([0, 0, 0]).expect("chunk 0's block"))
+        .into_iter()
+        .filter(|(slot, _)| {
+            let b = [slot % 8, slot / 8 % 8, slot / 64].map(|v| v as i32 * 8);
+            in_ring1(b, lo, hi)
+        })
+        .collect()
+}
+
+/// [`dig_rig`] with its sliced steps on the bake thread (`thread`) or in lockstep: chunk 0
+/// baked at a pre-roll's sample count (every other chunk's jobs still behind it), then sliced;
+/// before each of [`DIG_BOXES`] chunk 0 settled (its block at the full count, no dig waiting,
+/// then 16 more frames, so every fade has ended and the records are the same in either mode),
+/// the carve, the pool read before a step, the edit's frame, and frames until ring 1 is applied.
+/// From the edit's frame on each frame is padded to `frame[k]` for dig `k` (lockstep's own frame
+/// wall can be longer, as its frames run the step). With the thread on a frame runs no step:
+/// unpaced it costs about 0.1 ms here, and 10 to 36 of them passed inside one bake step on
+/// lavapipe, so the count read the rig's loop and not a frame's. The test paces the threaded
+/// frames to lockstep's on the same dig, which holds under a loaded lavapipe as lockstep slows
+/// with it.
+fn dig_reads(thread: bool, frame: [std::time::Duration; 3]) -> Option<Vec<DigRead>> {
+    let mut q = dig_rig()?;
+    let zero = ChunkCoord([0, 0, 0]);
+    if thread {
+        q.frame.share_bake_world(q.world.clone());
+        q.frame.set_bake_thread(&q.queue, true);
+    }
+    q.samples = Some(1 << 20);
+    for n in 0.. {
+        q.step();
+        if q.shown(zero.0).is_some() {
+            break;
+        }
+        assert!(n < MAX_STEPS, "chunk 0 bakes");
+    }
+    q.samples = None;
+    let mut out = Vec::new();
+    for ((lo, hi), frame) in DIG_BOXES.into_iter().zip(frame) {
+        for n in 0.. {
+            q.step();
+            if q.q().settled(zero, false) && q.q().digs_settled() {
+                break;
+            }
+            assert!(n < MAX_STEPS, "chunk 0 settles before the dig");
+        }
+        for _ in 0..16 {
+            q.step();
+        }
+        assert_eq!(q.frame.bake_thread_running(), thread);
+        q.edit(&box_op(lo, [hi[0] + 1, hi[1] + 1, hi[2] + 1], Mode::Carve));
+        let pre = ring1_pool(&q, lo, hi);
+        let t0 = clock();
+        let paced = |q: &mut Q, n: u32| {
+            q.step();
+            if let Some(rest) = (frame * n).checked_sub(clock().duration_since(t0)) {
+                std::thread::sleep(rest);
+            }
+        };
+        paced(&mut q, 1);
+        let held = ring1_pool(&q, lo, hi);
+        let mut ring1 = 0;
+        while !ring1_landed(&held, &ring1_pool(&q, lo, hi)) {
+            ring1 += 1;
+            paced(&mut q, ring1 as u32 + 1);
+            assert!(ring1 < MAX_STEPS, "ring 1 lands");
+        }
+        let ms = clock().duration_since(t0).as_secs_f64() * 1e3;
+        out.push(DigRead {
+            pre,
+            held,
+            ring1,
+            ms,
+        });
+    }
+    Some(out)
+}
+
+/// Plan 0099 Phase 3b, done-whens (4) and (5) (ADR-0083's one wait). [`dig_reads`] in lockstep
+/// and with the bake thread on, three digs each: the pool read back after the edit's own frame
+/// holds the dig's block over every ring-1 brick ([`support::queue::dig_held`]: each record the
+/// step's, stale or held, and changed from the pool's before the step) in lockstep, where the
+/// dig's step runs in the frame, and with the thread on, bit-identical to lockstep's; and ring 1
+/// is applied within lockstep's frame count plus 2, each threaded frame as long as lockstep's
+/// mean frame from its edit's frame to ring 1 on the same dig (and at least [`FRAME`]).
+#[test]
+fn the_edits_frame_holds_the_dig_and_ring_1_lands_in_either_mode() {
+    let Some(lock) = dig_reads(false, [FRAME; 3]) else {
+        return;
+    };
+    let frame = std::array::from_fn(|k| {
+        let l = &lock[k];
+        FRAME.max(std::time::Duration::from_secs_f64(
+            l.ms / 1e3 / (l.ring1 + 1) as f64,
+        ))
+    });
+    let thread = dig_reads(true, frame).expect("the device opened once");
+    for (k, (l, t)) in lock.iter().zip(&thread).enumerate() {
+        println!(
+            "dig {}: ring-1 records {}, ring 1 applied D+{} ({:.1} ms) lockstep, D+{} ({:.1} ms) thread",
+            k + 1,
+            l.held.len(),
+            l.ring1,
+            l.ms,
+            t.ring1,
+            t.ms
+        );
+        assert!(!l.held.is_empty(), "dig {k}: chunk 0 holds ring-1 bricks");
+        assert!(
+            dig_held(&l.pre, &l.held),
+            "dig {k}: lockstep's edit frame holds the held records"
+        );
+        assert!(
+            dig_held(&t.pre, &t.held),
+            "dig {k}: the edit's frame with the thread on holds the held records"
+        );
+        assert_eq!(
+            t.held, l.held,
+            "dig {k}: the edit's frame with the thread on holds lockstep's held records"
+        );
+        assert!(
+            t.ring1 <= l.ring1 + 2,
+            "dig {k}: ring 1 applied at D+{} with the thread, D+{} in lockstep",
+            t.ring1,
+            l.ring1
+        );
+    }
 }

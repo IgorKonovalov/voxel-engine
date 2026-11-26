@@ -71,7 +71,7 @@ pub fn streamed_with(
 ) -> Vec<StreamedRead> {
     use super::SyncNow;
     use svet_render::{GpuWorld, MirrorConfig, QueueView, Window};
-    use svet_world::{ChunkCoord, PersistConfig, Residency, StreamConfig, Streamer, Tier, World};
+    use svet_world::{PersistConfig, Residency, StreamConfig, Streamer, World};
     let mut out = Vec::new();
     let r = s.r;
     let residency = Residency {
@@ -123,11 +123,10 @@ pub fn streamed_with(
         let mut enc = device.create_command_encoder(&Default::default());
         gpu.sync(&world, &queue, &mut enc).expect("the mirror fits");
         queue.submit([enc.finish()]);
-        let resident_fn = |c: ChunkCoord| streamer.tier(c) == Some(Tier::Full);
         let view = QueueView {
             eye: camera.position.to_array(),
             forward: camera.basis().0.to_array(),
-            resident: Some(&resident_fn),
+            resident: Some(svet_render::Residency::of_chunks(streamer.full_chunks())),
             samples: None,
             interval_s: 1.0 / 60.0,
             hold: Some(residency.r_full + gpu.light_radius() + 1),
@@ -292,7 +291,7 @@ impl svet_world::WorldSource for DynSource {
 fn held_report(
     gpu: &svet_render::GpuWorld,
     frame: &svet_render::Frame,
-    view: &svet_render::QueueView<'_>,
+    view: &svet_render::QueueView,
     eye: svet_world::VoxelCoord,
     r_full: i32,
 ) {
@@ -350,7 +349,7 @@ fn held_hits(
     queue: &svet_render::wgpu::Queue,
     gpu: &svet_render::GpuWorld,
     frame: &svet_render::Frame,
-    view: &svet_render::QueueView<'_>,
+    view: &svet_render::QueueView,
     tier: &dyn Fn(svet_world::ChunkCoord) -> Option<svet_world::Tier>,
 ) {
     let hits = svet_render::debug::read_rgba32f(device, queue, frame.light_hit_positions());

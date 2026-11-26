@@ -1214,3 +1214,73 @@ Plan 0098's "Amendment at window 98d"). The arm it replaced (12 near rays a pixe
 held, removed at `d6c58a04`) read 4.45 to 9.71 ms of temporal pass on the RENOIR and put its
 Portable frame over the 33.3 ms line at window 98d (temporal 19.63 ms, GPU 36.5 ms). The bake
 step's main-thread time on a dig's frame is in `04-edits.md` ("An edit's light").
+
+**The bake step off the render thread (Plan 0099 Phases 4d and 6b, 2026-11-26, release
+`flythrough` at `cde2e966` (frozen as `live/bin/p4d`), headless, `--source outdoor`, the forest
+`--spawn forest --trees forest --time 15:00` and the hills `--time 17:00` from the spawn; RTX
+3080 Laptop at `--adapter RTX --profile floor --render 1920x1080 --frames 7200`, RADV RENOIR at
+`--adapter RENOIR --profile portable --render 1280x720 --frames 6000`; `--bake-thread on
+--bake-depth 3 --bake-slots 16`; exclusive perf lock per run, each run waiting in it for a
+1-minute load under 1.5; every row in `docs/plans/logs/0099.md`, Phases 4d and 6b).** Section
+2's table "The bake step off the render thread" pins them. Per run, over the frames while in
+view waits (fed / submits a frame / drawn a submit; the bake step and the pick-up-to-pick-up
+cycle p50 against the frame's wall p50; in view landed / in view with no block landed / the
+residency empty, seconds after the first world frame; the render thread's share p50 / p99; the
+wall p50): RTX forest 0.611 / 0.714 / 0.856, 8.99 and 10.45 against 8.27 ms, 17.9 / 7.5 / 26.2
+s, 0.784 / 1.247, 8.28 ms; again 0.599 / 0.686 / 0.874, 9.58 and 11.06 against 8.34, 19.0 /
+8.1 / 29.1, 0.758 / 1.215, 8.35; RTX hills 0.589 / 0.842 / 0.700, 9.04 and 10.47 against 9.94,
+6.5 / 5.9 / 23.2, 0.797 / 1.287, 9.94; again 0.582 / 0.879 / 0.662, 8.76 and 10.33 against
+9.93, 6.6 / 6.0 / 23.5, 0.791 / 1.290, 9.92; RENOIR forest 1.000 / 1.000 / 1.000, 6.09 and
+24.09 against 24.22 (the thread waits 17.7 ms a cycle for a message), 12.7 / 12.7 / not empty
+in the run's 6 000 frames, 0.303 / 0.587, 24.15; the same at 10 000 frames 0.999, 12.7 / 12.7 /
+124.9, 0.322 / 0.527, 23.94; RENOIR hills 0.996 / 1.000 / 0.996, 3.70 and 28.33 against 28.40,
+11.5 / 11.5 / 92.6, 0.312 / 0.537, 28.40. The RTX forest's 31 coarse blocks in view waited from
+the in-view-with-no-block landing to the in-view landing (10.4 and 10.9 s).
+
+Beside them, one run each (Phase 6b, quiet):
+- **The per-second budget** (`--bake-budget second:150,0.25 --bake-drain off`, Plan 0096's F2
+  rig, on the RTX forest with the thread on; load 0.17 at the lock): the slice the budget
+  grants a frame reads p50 1.18 ms (0.99 to 1.67) at a wall p50 of 7.30 ms; the submits' drawn
+  p50 over the granted slice, per `bake queue slice:` line while the queue held work, p50
+  **1.03** (0.65 to 1.29, 55 lines, 37 of them while in view waits). In view landed at 18.8 s,
+  the residency empty at 26.4 s; plans stopped at the cap 2 099 times and out of rounds 713
+  (696 with every row held). Plan 0096's F2 reading, 0.60 to 0.69, was lockstep at 40 to 60 ms
+  frames, a slice of 6.3 to 8.9 ms a frame, loaded; at the thread's frame rate the per-second
+  slice is about 1.2 ms a frame and is drawn whole. The `queue fed:` line reads no frame here:
+  with the drain off no step's stats read `draining`.
+- **The `taskset` arm** (`taskset -c 0-7`: cores 0 to 3 with their siblings, 4 cores and 8
+  logical CPUs, **the dev box's stand-in for the floor's CPU, not the floor**; load 1.44 at
+  the lock), against an unpinned companion run (load 1.49) taken beside it: fed 0.523 against
+  0.616 (submits a frame 0.615 against 0.708, drawn a submit 0.850 against 0.870); the bake step
+  p50 11.99 against 9.17 ms, the cycle 13.31 against 10.68, the frame's wall 8.63 against 8.31;
+  the render thread's share p50 / p99 0.750 / 1.713 against 0.775 / 1.220; the wall p50 while
+  in view waits 8.64 against 8.31 ms. Not like for like in its drain: on 4 cores the pre-roll's
+  5 s coarse box ended with 4 328 chunks resident against 17 077, so the pinned queue baked
+  9 612 chunks against 13 312, and its in view landed at 9.0 s (18.1 unpinned) and its
+  residency emptied at 23.2 s (26.8). The process's threads, sampled from `/proc` every 0.1 s
+  (16 pinned, 24 unpinned): runnable p50 / p90 / max while in view waits 6 / 8 / 10 of 8 logical
+  CPUs pinned (over 8 in 4 % of the samples) and 2 / 10 / 14 of 16 unpinned (over 8 in 28 %);
+  the bake thread busy 0.98 of a core pinned and 0.96 unpinned while in view waits, 0.75 and
+  0.21 once the queue is empty.
+- **The RENOIR's drained B dig, lockstep** (`gpu_outdoor`'s `dig_line::reading::dig_timeline`
+  from the test archive of `cde2e966`, `SVET_LINE=portable/drained/B/default/30000/wait/1.5/lock`,
+  six digs eight frames apart, the ring-1 stretch 1.5; load 1.43 at the lock): ring 1 at D+1 in
+  six of six digs. The samples read into nothing (a read-back's drawn samples less those kept,
+  from the rows; the `dig_withdrawn_samples` counter is not printed by the rig): 960 948 of
+  12 268 104 drawn from the first dig to the run's end (**0.078**); over each dig's D+0 to D+7,
+  0 for dig 1 and 0.119 to 0.127 for digs 2 to 6, each one whole read-back of 0 at D+0 (the
+  submit in flight when the dig withdrew its jobs, 182 000 to 203 000 samples). Under a half,
+  so the ruling's candidate (a ring-2 job waiting some frames after the last box) is not
+  called for. The GPU ms of D+1 to D+7: the read-backs 2.86 to 4.82 ms against the dig's 4.0
+  ms grant, but dig 1's D+1 to D+3 at 6.05, 7.23 and 6.06 (a session's first dig has no dig
+  read-back to price its cap by, a named limit); the frame's GPU 16.9 to 18.9 ms
+  against 15.23 before the first dig.
+- **Not read: the ten steps after the view drains** (each submit's GPU ms against the line, both
+  adapters, the first drain and one after a move). Nothing at `cde2e966` prints a submit's GPU
+  ms a step in the fly-through: the `bake queue:` line's `slice p50 / max` is over the 40 to 60
+  submits since the last line, and the line that spans the drain's end mixes drain and line
+  submits (RTX forest p50 1.45, max 3.87 ms, then 1.03 and 3.34 on the first line wholly after
+  it; the steady line's own lines read max 2.2 to 2.8 ms, so the max does not isolate the
+  edge). The dig rig records from 240 settling frames after its drain, so its two rows before
+  the first dig are not the first steps after it, and no headless rig at `cde2e966` moves the
+  camera to refill the view. Reading it needs a line or a rig changed and a rebuild.

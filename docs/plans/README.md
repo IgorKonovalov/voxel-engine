@@ -7,9 +7,9 @@ The engine was `voxel-engine`, with crates `vxe-*`, variables `VXE_*` and the WI
 `vxe:logic`, until Plan 0087 renamed it `svet` (v0.73.0); records from before keep those names,
 and `vxe-<x>` reads as `svet-<x>`.
 
-**Next free number: 0105** (0104 the wobble anchored to the owner's eye, approved 2026-11-25; 0101 the record by rule at every opening, approved 2026-11-24; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
+**Next free number: 0106** (0105 the dig's flash at depth, drafted 2026-11-26; 0104 the wobble anchored to the owner's eye, approved 2026-11-25; 0101 the record by rule at every opening, approved 2026-11-24; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
 the sky around the camera; 0098 the calm light by default, closed 2026-11-24; 0099 the bake
-step off the main thread, drafted 2026-11-22; 0100 a sun fixed in the world, closed 2026-11-25; ADRs are a separate sequence, see `../adrs/README.md` for its next
+step off the main thread, closed 2026-11-26; 0100 a sun fixed in the world, closed 2026-11-25; ADRs are a separate sequence, see `../adrs/README.md` for its next
 free number). Plan 0095, the motion wobble (a calm key light in motion), closed 2026-11-21,
 v0.69.0. Plan 0097, the exposure's anchor by the sky around the camera, closed 2026-11-23,
 v0.70.0. Plan 0096, the bake queue's drain, closed 2026-11-23, v0.71.0. Plan 0098, the calm light
@@ -17,7 +17,8 @@ by default, closed 2026-11-24, v0.72.0. Plan 0087, the rename to `svet`, closed 
 v0.73.0 (the GitHub rename and the manual release run are owed: the backlog's "The rename's two
 owed steps"). Plan 0102, the removal of `own` (FSR 2 is the only upscaler), closed
 2026-11-25, v0.74.0. Plan 0100, a sun fixed in the world, closed 2026-11-25, v0.75.0, with the
-wobble it was written for still there; its follow-on is Plan 0104 (approved 2026-11-25).
+wobble it was written for still there; its follow-on is Plan 0104 (approved 2026-11-25). Plan 0099, the bake step off the main thread, closed
+2026-11-26, v0.76.0 (ADR-0083 accepted); the dig's flash at depth it left is Plan 0105's.
 
 ## Active roster
 
@@ -41,10 +42,10 @@ wobble it was written for still there; its follow-on is Plan 0104 (approved 2026
 | [0091](0091-the-frame-profiler-scopes-across-threads-a-gpu-lane-a-dump-for-agents-and-a-hud-ticker.md) | The frame profiler: scopes across the threads, a GPU lane, a dump the agent ranks, budget scopes, a HUD ticker | approved | M7, ADR-0077. After 0087 and 0089, before 0090 (owner). |
 | [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
 | [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs, no ADR. After 0087 merges, beside 0089, before 0091. |
-| [0099](0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) | The bake step off the main thread: a bake thread, write lists, the in-view drain | approved 11-22 | ADR-0083 (proposed). After 0087; 0098 closed. Re-read owed (the dig). |
 | [0101](0101-the-record-by-rule-at-every-opening-an-audit-on-the-real-scenes-first-then-the-three-exclusions-lifted.md) | The record by rule at every opening: an audit first, then the exclusions lifted | approved 11-24 | ADR-0085 (proposed). After 0100 P2 and 0099's close. |
 | [0103](0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md) | A pipeline cache for the renderer: the driver's cache through wgpu in an engine envelope, bytes the consumer keeps | draft, parked 11-24 | ADR-0087 (proposed). Parked: the driver's cache already warms a second start (logs/0103.md). |
 | [0104](0104-the-wobble-anchored-to-the-owners-eye-clips-he-ranks-a-measure-that-ranks-them-then-the-remedy.md) | The wobble anchored to the owner's eye: clips he ranks, a measure, then the remedy | closing 11-26 | Follows 0100. Owner: close, no remedy. P6a-c, then the review. |
+| [0105](0105-the-digs-flash-at-depth-a-held-estimate-that-follows-the-holes-own-light.md) | The dig's flash at depth: a held estimate that follows the hole's own light | draft 11-26 | After 0099. P1 reads the blink at depth; the fix is a setting until the window. |
 <!-- roster:end -->
 
 ## Sequence
@@ -242,15 +243,16 @@ a dig's landing and the staged-records delay (the backlog), the noon terraces, t
 wobble and the sun under cover (Plan 0100), the bake step on the main thread, a dig's frame at
 14 to 26 ms of step on the RTX (Plan 0099), the distant trees (the backlog, Plan 0033).
 
-**Plan 0099** (the bake step off the main thread, ADR-0083 proposed, extending ADR-0017: the
-live queue's books and per-job CPU work on one bake thread, the render thread applying write
-lists under a byte cap and issuing the submits, the same code in lockstep as a setting; from
-Plan 0096's Phase 8 window, the RTX at about 30 fps while the forest's queue drains, the step
-28.0 / 51.1 ms p50/p99; it takes 0096's step line, the in-view drain's line and the opening's
-candidate cap; six phases, a split reading first, one owner window): **approved 2026-11-22**;
-its lane runs after Plan 0087 (Plans 0096 and 0098 are closed; owner, 2026-11-22). **A re-read
-against Plan 0098's dig is owed before its lane starts** (the plan's section "Inherited from
-Plan 0098", added at that close).
+**Plan 0099** (closed 2026-11-26, v0.76.0, ADR-0083 accepted with an Outcome, extending
+ADR-0017: the live queue's books and per-job CPU work on one bake thread, the render thread
+applying write lists in the order made and issuing the submits, an edit's frame waiting for its
+step's lists, the same code in lockstep as a setting; on in a window, off under `--headless`
+and in every profile). The owner at its window: "with thread it got so much better, this is
+the way!". The render thread's bake share reads 0.76 to 0.80 ms p50 on the RTX and the frame
+while the view bakes 8.3 ms against 21.9. Missed and disclosed: the RTX feeds 0.58 to 0.61 of
+its drain slice against 0.85 and its forest's view is final at 17.9 and 19.0 s against 10 (the
+backlog's "The bake thread's feed on the RTX"). The dig's flash at depth he named after the
+window is the same with the thread off and is Plan 0105's (drafted 2026-11-26).
 
 **Plan 0100** (closed 2026-11-25, v0.75.0, ADR-0084 accepted, superseding two clauses of
 ADR-0079: no default changed but the bake's key ray at its cap; `key cover`, `key at` and `key
@@ -288,6 +290,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0099](done/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) | The bake step off the main thread: a bake thread, write lists, lockstep as a setting; the feed and the RTX forest's in-view line missed, disclosed; ADR-0083 accepted | 2026-11-26, v0.76.0 |
 | [0100](done/0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md) | A sun fixed in the world: closed on the bake's key ray at its cap and three settings, off; no default changed; the wobble stays, to a follow-on plan; ADR-0084 accepted | 2026-11-25, v0.75.0 |
 | [0102](done/0102-remove-own-the-engines-own-upscaler-fsr-2-is-the-only-one.md) | Remove `own`, the engine's own upscaler: FSR 2 is the only one, `Off` renders at the output size; ADR-0086 accepted | 2026-11-25, v0.74.0 |
 | [0087](done/0087-the-rename-to-svet-crates-env-vars-wit-package-archives-docs-and-the-repository.md) | The rename to `svet`: crates, `SVET_*`, `svet:logic`, `svet-tester` and its archive, the live docs, the harness; the GitHub rename and the manual release run owed | 2026-11-24, v0.73.0 |

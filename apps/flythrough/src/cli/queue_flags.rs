@@ -1,4 +1,5 @@
-//! The live queue's own rows: its order, its weights, the withdrawal and the reading switches.
+//! The live queue's own rows: its order, its weights, the withdrawal, the bake thread and the
+//! reading switches.
 
 use super::flags::Parsing;
 use super::table::Flag;
@@ -48,6 +49,43 @@ pub(super) fn queue_flags() -> Vec<Flag<Parsing>> {
             "withdraw the jobs of chunks the camera passed",
             |p: &mut Parsing, v| {
                 p.args.bake.queue_withdraw = v.on_off()?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--bake-thread"],
+            "on|off",
+            "run the live queue's sliced steps on the bake thread",
+            |p: &mut Parsing, v| {
+                p.args.bake.thread = Some(v.on_off()?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--bake-depth"],
+            "N",
+            "the bake thread's submits in flight, 1 to 8",
+            |p: &mut Parsing, v| {
+                p.args.bake.depth = v
+                    .text
+                    .parse()
+                    .ok()
+                    .filter(|d| (1..=8).contains(d))
+                    .ok_or_else(|| v.takes("1 to 8"))?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--bake-slots"],
+            "N",
+            "the bake thread's table slots, 16 to 64",
+            |p: &mut Parsing, v| {
+                p.args.bake.slots = v
+                    .text
+                    .parse()
+                    .ok()
+                    .filter(|d| (16..=64).contains(d))
+                    .ok_or_else(|| v.takes("16 to 64"))?;
                 Ok(())
             },
         ),

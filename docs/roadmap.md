@@ -763,7 +763,7 @@ a cheap query.
   positional voice as an audio source through M4's occlusion.
 - **ADRs expected:** transport; voice codec.
 
-### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0; Plan 0094 closed 2026-11-20, v0.68.0; Plan 0095 closed 2026-11-21, v0.69.0; Plan 0097 closed 2026-11-23, v0.70.0; Plan 0096 closed 2026-11-23, v0.71.0; Plan 0098 closed 2026-11-24, v0.72.0; Plan 0100 closed 2026-11-25, v0.75.0)
+### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0; Plan 0094 closed 2026-11-20, v0.68.0; Plan 0095 closed 2026-11-21, v0.69.0; Plan 0097 closed 2026-11-23, v0.70.0; Plan 0096 closed 2026-11-23, v0.71.0; Plan 0098 closed 2026-11-24, v0.72.0; Plan 0100 closed 2026-11-25, v0.75.0; Plan 0099 closed 2026-11-26, v0.76.0)
 
 The open-sky half of the "Floor, profiles and scene scale" decision, as general engine
 mechanisms: the first consumer is underground, so nothing here is on its P0 list, and terrain
@@ -861,7 +861,7 @@ against the baked store: no probe or store term takes sun or sky light.
   with the first two still open, see the next entry); the
   distant trees under FSR 2 (the backlog, Plan 0033's re-read); the slight colour change at a
   dig's landing and the staged-records delay (the backlog); the bake step on the main thread
-  (Plan 0099).
+  (Plan 0099, closed 2026-11-26).
 - **A sun fixed in the world** ([Plan 0100](plans/done/0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md),
   closed 2026-11-25, v0.75.0; ADR-0084 accepted with an Outcome, superseding two clauses of
   ADR-0079). **The wobble it was written to remove is still there**, on sunlit faces, and no
@@ -877,6 +877,21 @@ against the baked store: no probe or store term takes sun or sky light.
   owner judges, then a measure that ranks what he ranked. **Drafted 2026-11-25 as
   [Plan 0104](plans/0104-the-wobble-anchored-to-the-owners-eye-clips-he-ranks-a-measure-that-ranks-them-then-the-remedy.md)**,
   which awaits the owner's go: no remedy is built or picked before a clip is anchored.
+- **The bake step off the render thread** ([Plan 0099](plans/done/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md),
+  closed 2026-11-26, v0.76.0; ADR-0083 accepted with an Outcome, extending ADR-0017): the live
+  bake queue's books and per-job CPU work run on one bake thread; the render thread applies
+  its write lists in the order made (a block's words and its table word always in one list)
+  and issues its submits, one a frame; an edit's frame waits for its step's lists, so a dug
+  hole holds its record in the frame of the dig; the same code runs in lockstep as a setting
+  (`bake_thread`, on in a window, off under `--headless` and in every profile, so tests and
+  goldens are unchanged). The owner at its window: "with thread it got so much better, this
+  is the way!". On the RTX 3080 Laptop at Floor the frame while the forest's view bakes is
+  8.3 ms against 21.9, the render thread's bake share 0.76 to 0.80 ms p50; the RENOIR at
+  Portable 24 ms against 33.7. **Missed and disclosed:** one thread feeds 0.58 to 0.61 of the
+  RTX's drain slice against 0.85, and the RTX forest's view is final at 17.9 and 19.0 s
+  against 10 (every chunk in view has some light at about 8 s; the hills meet at 6.5 s).
+  Left open: the feed's levers and the readings not taken (the backlog), and a flash when
+  digging deeper than 2 to 3 m, the same with the thread off (Plan 0105, drafted).
 - **A surface detail layer** ([Plan 0081](plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
   drafted 2026-11-16, awaits the owner's go; ADR-0063 proposed): grass, moss, strands,
   fungus caps, flowers, pebbles and snow tufts as a procedural shell marched in the hit pass

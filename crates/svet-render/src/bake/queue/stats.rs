@@ -22,6 +22,9 @@ pub struct QueueStats {
     /// (submit to readback where there are none).
     pub samples: u64,
     pub ms: f64,
+    /// The submits read back in the last step whose GPU time is in `ms` (0 where none was
+    /// timed).
+    pub read_submits: u64,
     /// The last sliced step's slice in milliseconds, from the budget ([`Budget::slice_ms`]),
     /// before a dig's growth.
     pub slice_ms: f64,
@@ -37,9 +40,20 @@ pub struct QueueStats {
     pub waiting_max_ms: f64,
     /// Since the queue started: the submits' plans that stopped at the sample cap, at the
     /// entries' batch, and out of rounds to plan; and the steps that sent no submit because
-    /// [`crate::bake::IN_FLIGHT`] were unread.
+    /// the loop's bound were unread ([`crate::bake::IN_FLIGHT`] in lockstep, the bake thread's
+    /// depth with it on); and of the plans out of rounds, those that found no table slot free.
     pub plan_stops: [u64; 3],
     pub in_flight_full: u64,
+    pub slotless_stops: u64,
+    /// Steps since the queue started that sent no submit with a submit slot free (neither
+    /// blocked nor sent), and the jobs open after the last step's submit (0 where it sent none).
+    pub idle_steps: u64,
+    pub open_at_draw: u64,
+    /// Steps since the queue started.
+    pub steps: u64,
+    /// The loop's samples read back: kept, and read into nothing (rounds past a face's stop,
+    /// withdrawn jobs' rounds, maps that failed).
+    pub read_back: [u64; 2],
     /// Samples since the queue started.
     pub total_samples: u64,
     /// Chunks whose block is the coarse pass, waiting for their refinement.
@@ -47,8 +61,20 @@ pub struct QueueStats {
     /// Of the depth, the chunks with no block yet, but those whose reach or lights were not ready
     /// at a recent check.
     pub unbaked: u64,
-    /// The ns a sample the slice is sized by.
+    /// The mean ns a sample of the submits read back.
     pub ns_per_sample: f64,
+    /// The price the cap is sized by: a dispatch's fixed ms (0 until the submits' sizes first
+    /// spread) and the ns a sample beyond it ([`SampleCost`]).
+    pub fixed_ms: f64,
+    pub cost_ns: f64,
+    /// The samples the last step's read-backs drew, kept or not (`samples` counts those kept),
+    /// and their rays' mean length in voxels (0 where none was read).
+    pub drawn: u64,
+    pub ray_len: f64,
+    /// A dig's price by its first job's class: the ns a sample all in of ring-1 dig work and
+    /// of other dig work, 0 until first read ([`DigCost`]).
+    pub ring1_ns: f64,
+    pub dig_ns: f64,
     /// Chunks with dig bricks waiting or in a job, and chunks waiting to re-bake whole (ring 3).
     pub digs: u64,
     pub reach: u64,
@@ -64,6 +90,12 @@ pub struct QueueStats {
     /// passes the cap by less than one entry's round.
     pub cap: u64,
     pub submitted: u64,
+    /// The submits the last step planned, 0 or 1 (summed over the steps a frame of the bake
+    /// thread took, as `submitted` is).
+    pub submits: u64,
+    /// Whether the last step's cap was stretched to its ring-1 dig jobs' samples left
+    /// ([`BakeQueue::ring1_stretch`](crate::bake::BakeQueue::ring1_stretch)).
+    pub stretched: bool,
     /// The stream workers' results taken since the queue started, and their time on the
     /// workers in total and at most, in nanoseconds ([`FacePrep`]).
     pub hook_chunks: u64,
@@ -178,6 +210,13 @@ pub struct QueueStats {
     /// having broken the rule.
     pub zeroed: u64,
     pub zero_relisted: u64,
+    /// With the bake thread's listing pool (Plan 0099 Phase 4b): the projection (the loop's
+    /// samples left and the pool's estimates) over the cap at the last step's draw, 0 where
+    /// the step drew nothing; the two fills of the listing bounds, listed from the world and
+    /// from prepared masks; and the openings the pool's guard of 64 candidates stopped.
+    pub projected: f64,
+    pub fill: [f64; 2],
+    pub pool_guard: u64,
     /// The jobs the rule would have answered, while [`BakeQueue::rule_reading`] is on.
     pub rule_missed: RuleMissed,
     /// Blocks whose band changed as the camera's chunk changed (their candidacy read again),
@@ -470,7 +509,7 @@ impl BakeQueue {
             .map(|(c, d)| (*c, d.near, d.slots.len(), in_job.contains(c)))
             .collect();
         let watched = |c: &[i32; 3]| {
-            self.digs.contains_key(c) || self.dig_open.contains_key(c) || self.stale.contains(c)
+            self.digs.contains_key(c) || self.dig_open.contains_key(c) || self.stale.contains_key(c)
         };
         let mut t = DigTrace {
             waiting,
@@ -512,7 +551,7 @@ impl BakeQueue {
                 open: true,
                 at,
                 dig: self.dig_open.contains_key(&c),
-                stale: self.stale.contains(&c),
+                stale: self.stale.contains_key(&c),
                 bricks,
             });
         }
@@ -548,10 +587,188 @@ impl BakeQueue {
                 open: false,
                 at,
                 dig: self.dig_open.contains_key(&c),
-                stale: self.stale.contains(&c),
+                stale: self.stale.contains_key(&c),
                 bricks,
             });
         }
         t
+    }
+}
+
+/// The bake thread's submits on the render side (a reading, ADR-0083): each submit's round trip
+/// in frames, from the frame that issued it to the frame whose message carried its read-back;
+/// the submits issued; the frames that carried a submit past them (a frame issues at most one);
+/// and the most readback buffers the issuer held at once.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BakeRoundTrip {
+    /// Read-backs by their round trip in frames: index `k` counts those of `k` frames, the
+    /// last index those of that many or more.
+    pub frames: Vec<u64>,
+    pub issued: u64,
+    pub carried: u64,
+    pub peak_buffers: usize,
+}
+
+impl BakeRoundTrip {
+    /// The longest round trip [`BakeRoundTrip::frames`] tells apart.
+    pub const FRAMES: usize = 64;
+
+    /// Counts a read-back of `frames` frames.
+    pub(crate) fn count(&mut self, frames: u64) {
+        if self.frames.is_empty() {
+            self.frames = vec![0; Self::FRAMES + 1];
+        }
+        self.frames[(frames as usize).min(Self::FRAMES)] += 1;
+    }
+
+    /// `other`'s counts added to `self`'s; the peak is the larger.
+    pub(crate) fn merge(&mut self, other: &BakeRoundTrip) {
+        if self.frames.is_empty() {
+            self.frames = vec![0; Self::FRAMES + 1];
+        }
+        for (k, n) in other.frames.iter().enumerate() {
+            self.frames[k] += n;
+        }
+        self.issued += other.issued;
+        self.carried += other.carried;
+        self.peak_buffers = self.peak_buffers.max(other.peak_buffers);
+    }
+
+    /// The round trip at percentile `p` (0 to 100), in frames; 0 with none read.
+    pub fn percentile(&self, p: f64) -> u64 {
+        let n: u64 = self.frames.iter().sum();
+        if n == 0 {
+            return 0;
+        }
+        let rank = ((p / 100.0) * n as f64).ceil().max(1.0) as u64;
+        let mut seen = 0;
+        for (k, c) in self.frames.iter().enumerate() {
+            seen += c;
+            if seen >= rank {
+                return k as u64;
+            }
+        }
+        Self::FRAMES as u64
+    }
+}
+
+/// How well the frames fed the slice (a reading, the teardown's `queue fed:` line): over the
+/// frames pushed, the samples the steps planned into submits over the caps granted, a frame
+/// with no step counting the newest cap ([`QueueStats::idle`] keeps it). Its two factors are
+/// the submits a frame and the drawn share a submit (the samples a submit planned over the
+/// mean cap), whose product it is.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct QueueFed {
+    pub frames: u64,
+    pub caps: u64,
+    pub planned: u64,
+    pub submits: u64,
+}
+
+impl QueueFed {
+    /// Counts a frame whose stats (the steps it took, summed) are `st`.
+    pub fn push(&mut self, st: &QueueStats) {
+        self.frames += 1;
+        self.caps += st.cap;
+        self.planned += st.submitted;
+        self.submits += st.submits;
+    }
+
+    /// The samples planned over the caps granted.
+    pub fn fed(&self) -> f64 {
+        self.planned as f64 / self.caps.max(1) as f64
+    }
+
+    /// The submits planned a frame.
+    pub fn submits_a_frame(&self) -> f64 {
+        self.submits as f64 / self.frames.max(1) as f64
+    }
+
+    /// The samples a submit planned over the mean cap granted a frame.
+    pub fn drawn_a_submit(&self) -> f64 {
+        let cap = self.caps as f64 / self.frames.max(1) as f64;
+        self.planned as f64 / (self.submits.max(1) as f64 * cap.max(1.0))
+    }
+
+    /// The line's text after `queue fed: `; `None` with no frame pushed.
+    pub fn line(&self) -> Option<String> {
+        (self.frames > 0).then(|| {
+            format!(
+                "{} frames, fed {:.3} ({:.4e} samples planned into submits over {:.4e} granted), submits a frame {:.3}, drawn a submit {:.3}",
+                self.frames,
+                self.fed(),
+                self.planned as f64,
+                self.caps as f64,
+                self.submits_a_frame(),
+                self.drawn_a_submit(),
+            )
+        })
+    }
+}
+
+/// The bake thread's cycle by its parts, in ms, over the steps pushed (a reading, the
+/// teardown's `bake thread cycle:` line): the wait for a message, the step, the books'
+/// snapshot, the hand-over (the step's results and the books put in the outbox), and their sum,
+/// the time from one step's pick-up to the next's; beside them the wall of the frames pushed.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CycleLine {
+    pub parts: Vec<[f64; 4]>,
+    pub walls: Vec<f64>,
+}
+
+impl CycleLine {
+    /// The line's text after `bake thread cycle: `; `None` with no step pushed.
+    pub fn line(&self) -> Option<String> {
+        if self.parts.is_empty() {
+            return None;
+        }
+        let p50_mean = |mut v: Vec<f64>| {
+            v.sort_by(f64::total_cmp);
+            let mean = v.iter().sum::<f64>() / v.len().max(1) as f64;
+            let p50 = v.get(v.len() / 2).copied().unwrap_or(f64::NAN);
+            format!("{p50:.3}/{mean:.3}")
+        };
+        let part = |k: usize| p50_mean(self.parts.iter().map(|p| p[k]).collect());
+        let sum = p50_mean(self.parts.iter().map(|p| p.iter().sum()).collect());
+        Some(format!(
+            "{} steps over {} frames ({:.3} a frame), p50/mean ms: wait {}, step {}, snapshot {}, hand-over {}, sum {} against the frame's wall {}",
+            self.parts.len(),
+            self.walls.len(),
+            self.parts.len() as f64 / self.walls.len().max(1) as f64,
+            part(0),
+            part(1),
+            part(2),
+            part(3),
+            sum,
+            p50_mean(self.walls.clone()),
+        ))
+    }
+}
+
+#[cfg(test)]
+mod fed_tests {
+    use super::*;
+
+    /// Done when (1) of Plan 0099 Phase 4d. Ten frames at a cap of 1 000, six of them with a
+    /// submit of 900 samples and four with none: fed 0.54, submits a frame 0.60, drawn a
+    /// submit 0.90.
+    #[test]
+    fn the_fed_line_is_the_samples_planned_over_the_caps_granted() {
+        let mut fed = QueueFed::default();
+        for k in 0..10 {
+            let sent = k % 5 < 3;
+            fed.push(&QueueStats {
+                cap: 1_000,
+                submitted: if sent { 900 } else { 0 },
+                submits: u64::from(sent),
+                ..QueueStats::default()
+            });
+        }
+        let line = fed.line().expect("ten frames");
+        println!("queue fed: {line}");
+        assert_eq!((fed.frames, fed.submits), (10, 6), "{line}");
+        for want in ["fed 0.540", "submits a frame 0.600", "drawn a submit 0.900"] {
+            assert!(line.contains(want), "{want} in {line}");
+        }
     }
 }

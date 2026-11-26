@@ -111,7 +111,7 @@ impl PreRoll {
         queue: &wgpu::Queue,
         mirror: &mut GpuWorld,
         world: &World,
-        view: &QueueView<'_>,
+        view: &QueueView,
         work_ms: f64,
     ) -> Result<PreRollState, PreRollError> {
         if self.done() {
@@ -127,7 +127,7 @@ impl PreRoll {
         let view = QueueView {
             eye: view.eye,
             forward: view.forward,
-            resident: view.resident,
+            resident: view.resident.clone(),
             samples: Some(self.cfg.samples),
             interval_s: view.interval_s,
             hold: view.hold,

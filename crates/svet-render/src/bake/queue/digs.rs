@@ -59,20 +59,20 @@ impl BakeQueue {
         for (c, slots) in ring {
             // The ring's visibilities predate the edit: the light pass casts the sky rays at
             // their faces until the re-bake lands.
-            store.mark_sky_stale(run.queue, ChunkCoord(c), &slots, record);
+            store.mark_sky_stale(ChunkCoord(c), &slots, record);
             let near: Vec<u16> = slots.iter().copied().filter(|&s| touches(c, s)).collect();
             if !lit && let Some(block) = store.words.get(&c) {
                 lit = near.iter().any(|&s| brick_lit(block, s, record));
             }
             if in_job.contains(&c) {
-                self.stale.insert(c);
+                self.stale.insert(c, self.lp.stamp);
             }
             if !store.blocks.contains_key(&c) {
                 // A chunk the box touched that holds no block (air before a stamp) is a whole
                 // dig: it opens in the digs' order instead of waiting in the pool. A ring chunk
                 // the box does not touch keeps the pool's path.
                 let coord = ChunkCoord(c);
-                if !near.is_empty() && run.gpu.is_mirrored(coord) && !run.gpu.is_lod(coord) {
+                if !near.is_empty() && run.mirror.is_mirrored(coord) && !run.mirror.is_lod(coord) {
                     self.stats.digs_whole += 1;
                     let e = self.digs.entry(c).or_default();
                     e.whole = true;
@@ -107,7 +107,7 @@ impl BakeQueue {
             };
             if faces.faces() == 0 {
                 self.fades.remove(&c);
-                store.remove(run.queue, coord);
+                store.remove(coord);
                 self.block_count.remove(&c);
                 self.faceless.insert(c);
                 self.touched.insert(c);
@@ -136,13 +136,13 @@ impl BakeQueue {
                 }
             };
             self.fades.remove(&c);
-            store.put(run.queue, coord, at, block);
+            store.put(coord, at, block);
             self.listed.insert(c, faces);
         }
         if !(lit && self.reach_ring) {
             return Ok(());
         }
-        let lr = run.gpu.light_radius();
+        let lr = run.mirror.light_radius();
         for [min, max] in &boxes {
             let lo = min.map(|v| (v - 1).div_euclid(64));
             let hi = max.map(|v| (v + 1).div_euclid(64));
@@ -217,8 +217,10 @@ impl BakeQueue {
     /// ring's hold shows); its other dig bricks wait in `digs` until it is placed, then open as
     /// a second job. Every ring-1 job opens in this step, outside the two slices, into a table
     /// slot (where none is free, the last open job that is not a dig's is withdrawn to the
-    /// candidates), and the submit plans its rounds first. The rest open in a step that opened
-    /// no ring-1 job, while the loop holds under two slices of `cap` samples (one at least).
+    /// candidates), and the submit plans its rounds first. The rest are made in a step that
+    /// opened no ring-1 job, while the loop holds under two slices of `cap` samples (one at
+    /// least), and open into the free slots in that step, ahead of every other job's rounds
+    /// (ADR-0046, ADR-0048); with no slot free one stays first of the pending ones.
     /// Each chunk is listed again on this thread (a split chunk's second job reuses its first's
     /// listing) and keeps every brick record outside its job's bricks (a whole dig, which held
     /// no block, keeps none and bakes every listed brick) and bakes them at the near tier's
@@ -239,7 +241,7 @@ impl BakeQueue {
         // start a new fade from the shown values, so the records the running one moves would
         // leave their linear ramp of `DIG_FADE` frames for a slower one (ADR-0076 rule 3, one
         // fade a switch). Ring 1 never waits: a new edit's provisional block ends the fade.
-        let fading = |c: &[i32; 3]| self.fades.get(c).is_some_and(|f| f.frames == DIG_FADE);
+        let fading = |c: &[i32; 3]| fade_clock::dig_fading(&self.fades, c);
         let mut order: Vec<(bool, i64, [i32; 3])> = self
             .digs
             .iter()
@@ -318,7 +320,7 @@ impl BakeQueue {
                 self.prepared_bytes -= m.masks.bytes();
             }
             if faces.faces() == 0 {
-                store.remove(run.queue, coord);
+                store.remove(coord);
                 self.block_count.remove(&c);
                 self.fades.remove(&c);
                 self.faceless.insert(c);
@@ -369,31 +371,54 @@ impl BakeQueue {
                 brick_samples: own_count,
                 key_only: false,
                 tier: 0,
+                class: if d.near {
+                    JobClass::Ring1
+                } else {
+                    JobClass::Dig
+                },
             });
             self.dig_open.insert(c, d);
         }
+        self.open_pushed(run, store, jobs, first);
+        Ok(())
+    }
+
+    /// Puts the dig jobs [`BakeQueue::open_digs`] made (in its order, the `first` ring-1 jobs
+    /// ahead) at the front of the pending ones and opens every one of them into a table slot
+    /// in this step ([`BakeQueue::open_now`]; only ring 1 withdraws for a slot), then orders
+    /// the open jobs digs first, ring 1 ahead: the submit plans a dig's rounds ahead of every
+    /// other job's, whatever that job has left to draw.
+    pub(super) fn open_pushed(
+        &mut self,
+        run: &BakeRun<'_>,
+        store: &mut Store,
+        jobs: Vec<Job>,
+        first: usize,
+    ) {
+        let n = jobs.len();
         // Pushed at the front in reverse, so the pending jobs start in `order`.
         for job in jobs.into_iter().rev() {
             self.lp.push_front(job);
         }
-        self.open_now(run, store, first);
+        self.open_now(run, store, n, first);
         let dig_open = &self.dig_open;
         self.lp.promote(|c| dig_open.contains_key(&c.0));
         self.lp
             .promote(|c| dig_open.get(&c.0).is_some_and(|d| d.near));
-        Ok(())
     }
 
-    /// Opens the first `n` pending jobs (the ring-1 jobs [`BakeQueue::open_digs`] pushed) into
-    /// table slots now: where too few are free, the last open jobs that are neither a dig's nor
-    /// key-only are withdrawn to the candidates, those with no rounds in flight first (a job's
-    /// slot with rounds in flight frees once they are read back). A job not opened for want of
-    /// a slot stays at the front of the pending ones, which the next submit opens first.
-    fn open_now(&mut self, run: &BakeRun<'_>, store: &mut Store, n: usize) {
+    /// Opens the first `n` pending jobs (the dig jobs [`BakeQueue::open_digs`] pushed, the
+    /// `withdraw_for` ring-1 jobs first) into table slots now. Where fewer than `withdraw_for`
+    /// are free, the last open jobs that are neither a dig's nor key-only are withdrawn to the
+    /// candidates, those with no rounds in flight first (a job's slot with rounds in flight
+    /// frees once they are read back); a ring-2 job takes a free slot and withdraws nothing. A
+    /// job not opened for want of a slot stays at the front of the pending ones, which the
+    /// next submit opens first once a slot frees.
+    fn open_now(&mut self, run: &BakeRun<'_>, store: &mut Store, n: usize, withdraw_for: usize) {
         if n == 0 {
             return;
         }
-        let want = n.saturating_sub(self.lp.free.len());
+        let want = withdraw_for.saturating_sub(self.lp.free.len());
         if want > 0 {
             let (dig_open, keys) = (&self.dig_open, &self.keys.open);
             let mut out: Vec<(bool, usize, [i32; 3])> = self
@@ -431,6 +456,7 @@ impl BakeQueue {
                 break;
             };
             // A job with no live face closes in this step's submit, its block to the sink.
+            self.lp.new_tables.push((slot, job.coord));
             self.lp.open.push(ctx.open(job, slot));
         }
     }
@@ -487,16 +513,12 @@ impl BakeQueue {
     /// Moves every fade a frame on: each record's direction values at
     /// `frame / FADE` of the way from what it showed to the store's copy; the last frame writes
     /// the copy itself.
-    pub(in crate::bake) fn advance_fades(
-        &mut self,
-        queue: &wgpu::Queue,
-        store: &mut Store,
-        record: usize,
-    ) {
+    pub(in crate::bake) fn advance_fades(&mut self, store: &mut Store, record: usize) {
         let mut ended = Vec::new();
         let mut shown = std::mem::take(&mut self.fade_scratch);
+        let now = self.frame;
         for (c, f) in &mut self.fades {
-            f.frame += 1;
+            f.advance(now);
             let Some(to) = store.words.get(c) else {
                 ended.push(*c);
                 continue;
@@ -518,13 +540,13 @@ impl BakeQueue {
             if f.frame >= f.frames {
                 shown.clear();
                 shown.extend_from_slice(to);
-                store.show(queue, ChunkCoord(*c), f.first, &mut shown);
+                store.show(ChunkCoord(*c), f.first, &mut shown);
                 ended.push(*c);
                 continue;
             }
             let t = f.frame as f32 / f.frames as f32;
             fade_mix(&mut shown, &f.from, to, t, record, f.vis);
-            store.show(queue, ChunkCoord(*c), f.first, &mut shown);
+            store.show(ChunkCoord(*c), f.first, &mut shown);
         }
         self.fade_scratch = shown;
         for c in ended {

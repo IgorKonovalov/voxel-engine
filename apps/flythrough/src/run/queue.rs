@@ -10,6 +10,9 @@ use svet_app::Gpu;
 use svet_render::wgpu;
 use svet_world::ChunkCoord;
 
+mod dig_lines;
+pub(crate) use dig_lines::{dig_call_lines, dig_wait_lines};
+
 /// Samples a step of the live queue's pre-roll draws: about one chunk's brick level at 4096, so
 /// the jobs it opens stay near the camera.
 pub(crate) const PRE_ROLL_SAMPLES: u64 = 2_000_000;
@@ -115,6 +118,11 @@ pub(crate) struct QueueRun {
     pub(crate) line_prepared: u64,
     /// The submits' ms since the last line.
     pub(crate) slices: Vec<f64>,
+    /// The projection over the cap at each draw since the last line, with the bake thread's
+    /// listing pool (`QueueStats::projected`).
+    pub(crate) projected: Vec<f64>,
+    /// The jobs open at each draw since the last line (`QueueStats::open_at_draw`).
+    pub(crate) open_at_draw: Vec<f64>,
     pub(crate) emptied: bool,
     pub(crate) stats: Option<svet_render::QueueStats>,
     pub(crate) failed: bool,
@@ -135,6 +143,8 @@ pub(crate) struct QueueRun {
     /// [`svet_render::QueueStats::starved_openings`] at the last line.
     pub(crate) line_starved: u64,
     pub(crate) line_step_p50: f64,
+    /// The last line's `render` and `movable` p50s (the HUD's).
+    pub(crate) line_split_p50: [f64; 2],
     /// The samples by view class and passed at the last line.
     pub(crate) line_view: [u64; 3],
     pub(crate) line_passed: u64,
@@ -147,6 +157,127 @@ pub(crate) struct QueueRun {
     /// Whether the next step prints `--queue-census`'s listing census (set once at the hand-
     /// over to the live queue).
     pub(crate) listing_due: bool,
+    /// The frames' wall and CPU ms, by whether the last step left chunks in view waiting for
+    /// their tier (the drain, `[0]`) or none (`[1]`): the `frames: queue split` line.
+    pub(crate) split_frames: [[Vec<f64>; 2]; 2],
+    /// The edit's frames of the live queue, in either mode (the teardown's `bake dig call` and
+    /// `bake thread dig wait` lines).
+    pub(crate) dig_frames: Vec<DigFrame>,
+    /// While chunks in view wait for their tier: the samples the frames' steps planned over
+    /// the caps granted (the `frames: queue fed` line), and the bake thread's cycles by their
+    /// parts beside the frames' wall (the `frames: bake thread cycle` line).
+    pub(crate) fed: svet_render::QueueFed,
+    pub(crate) cycles: svet_render::CycleLine,
+}
+
+/// One edit's frame of the live queue (a reading).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DigFrame {
+    /// Whether the step ran on the bake thread.
+    pub(crate) thread: bool,
+    /// Whether the step before it left chunks in view waiting for their tier.
+    pub(crate) waiting: bool,
+    /// The bake call's ms on the render thread: lockstep's step, or the thread's frame call
+    /// with its wait (`QueueStats::stages`' `total_ms`).
+    pub(crate) call_ms: f64,
+    /// With the bake thread on, the wait, its parts in ms
+    /// ([`svet_render::Frame::bake_frame_wait_parts`]: rest, pick-up, boxes, the step's rest,
+    /// snapshot, hand-back), the span they sum to and the frame's issue lap; NaN in lockstep.
+    pub(crate) wait: f64,
+    pub(crate) parts: [f64; 6],
+    pub(crate) span: f64,
+    pub(crate) issue_ms: f64,
+    /// The frame's apply in ms, the bytes it applied over its cap and the submits it issued.
+    pub(crate) apply_ms: f64,
+    pub(crate) over: usize,
+    pub(crate) submits: u64,
+}
+
+impl DigFrame {
+    /// The edit's frame `frame` just stepped, its stats `st`, `waiting` its state.
+    fn of(frame: &svet_render::Frame, st: &svet_render::QueueStats, waiting: bool) -> Self {
+        let thread = frame.bake_thread_running();
+        let (wait, submits) = frame.bake_frame_issue();
+        let (apply_ms, over) = frame.bake_frame_apply();
+        let (parts, issue_ms) = frame
+            .bake_frame_wait_parts()
+            .unwrap_or(([f64::NAN; 6], f64::NAN));
+        let span = frame.bake_frame_wait_span().unwrap_or(f64::NAN);
+        Self {
+            thread,
+            waiting,
+            call_ms: st.stages.total_ms,
+            wait: if thread { wait } else { f64::NAN },
+            parts,
+            span,
+            issue_ms,
+            apply_ms,
+            over,
+            submits,
+        }
+    }
+}
+
+impl QueueRun {
+    /// A step's figures the per-second lines and the teardown read: the slice drawn, the
+    /// projection and the jobs open at the draw, the stages.
+    fn note_step(&mut self, st: &svet_render::QueueStats) {
+        if st.samples > 0 {
+            self.slices.push(st.ms);
+        }
+        if st.projected > 0.0 {
+            self.projected.push(st.projected);
+        }
+        if st.open_at_draw > 0 {
+            self.open_at_draw.push(st.open_at_draw as f64);
+        }
+        self.line_stages.push(st.stages);
+        self.tally.push(st.stages);
+    }
+
+    /// Files frame `frame`'s wall (`dt` s, not on the first frame, whose delta spans the
+    /// start-up) and CPU ms under the queue's state at its last step; nothing before the live
+    /// queue's first step.
+    pub(crate) fn push_frame(&mut self, frame: u32, dt: f32, cpu_ms: f64) {
+        let Some(st) = &self.stats else {
+            return;
+        };
+        let k = usize::from(!st.draining);
+        if frame > 0 {
+            self.split_frames[k][0].push(f64::from(dt) * 1e3);
+        }
+        self.split_frames[k][1].push(cpu_ms);
+    }
+
+    /// The `frames: queue split` line: the frames' wall and CPU p50/p99 while chunks in view
+    /// wait for their tier and after.
+    pub(crate) fn split_line(&self) -> Option<String> {
+        self.stats?;
+        let part = |k: usize| {
+            let pick = |v: &[f64], p: f64| {
+                let mut v = v.to_vec();
+                if v.is_empty() {
+                    0.0
+                } else {
+                    percentile(&mut v, p)
+                }
+            };
+            let [w, c] = &self.split_frames[k];
+            format!(
+                "{} frames, wall p50/p99 {:.2}/{:.2} ms, frame CPU p50/p99 {:.2}/{:.2} ms",
+                c.len(),
+                pick(w, 50.0),
+                pick(w, 99.0),
+                pick(c, 50.0),
+                pick(c, 99.0)
+            )
+        };
+        Some(format!(
+            "queue split: while in view waits {}; after {}",
+            part(0),
+            part(1)
+        ))
+    }
 }
 
 /// Prints `--queue-census`'s listing census of the live queue under `view` when `q` has one
@@ -154,7 +285,7 @@ pub(crate) struct QueueRun {
 fn print_listing_census(
     gfx: &mut crate::run::Gfx,
     world: &svet_world::World,
-    view: &svet_render::QueueView<'_>,
+    view: &svet_render::QueueView,
     q: &mut QueueRun,
 ) {
     if !std::mem::take(&mut q.listing_due) {
@@ -245,7 +376,7 @@ pub(crate) fn queue_step_line(
     reach: svet_render::ReachMode,
 ) -> String {
     use std::fmt::Write as _;
-    use svet_render::{debug::Regime, debug::STEP_STAGES, internals::VIEW_IN};
+    use svet_render::{debug::Regime, debug::STEP_STAGES, debug::StepStages, internals::VIEW_IN};
     let samples = st.total_samples - q.line_samples;
     let baked = st.baked - q.line_baked;
     let regime = Regime::of(samples, baked);
@@ -264,10 +395,22 @@ pub(crate) fn queue_step_line(
         }
     };
     q.line_step_p50 = p50(None);
+    q.line_split_p50 = [
+        StepStages::render as fn(&StepStages) -> f64,
+        StepStages::movable,
+    ]
+    .map(|f| {
+        let mut v: Vec<f64> = steps.iter().map(f).collect();
+        if v.is_empty() {
+            0.0
+        } else {
+            percentile(&mut v, 50.0)
+        }
+    });
     let opened = steps.iter().filter(|s| s.opened).count();
     let [blank, coarse] = st.view_waiting[VIEW_IN];
     let mut line = format!(
-        "bake queue step: at {at_s:.1} s, regime {} ({} samples a baked chunk, +{baked} chunks in {secs:.1} s, jobs {}, coarse {}), bake {bake_ms_per_s:.1} ms/s, opened {opened} of {} steps ({} since the start, {} starved), step p50 {:.3} ms (open {:.3}, not {:.3}), reach-bound {} near (waiting), {} mid/far (partial) of {} in view waiting, reach {} ({} partial, {} opened partial, {} re-queued); stage means ms:",
+        "bake queue step: at {at_s:.1} s, regime {} ({} samples a baked chunk, +{baked} chunks in {secs:.1} s, jobs {}, coarse {}), bake {bake_ms_per_s:.1} ms/s, opened {opened} of {} steps ({} since the start, {} starved), step p50 {:.3} ms (open {:.3}, not {:.3}), reach-bound {} near (waiting), {} mid/far (partial) of {} in view waiting, reach {} ({} partial, {} opened partial, {} re-queued); {}; stage means ms (render share):",
         regime.map_or("idle", Regime::name),
         if baked > 0 {
             format!("{:.3e}", samples as f64 / baked as f64)
@@ -289,13 +432,15 @@ pub(crate) fn queue_step_line(
         st.partial,
         st.partial_opened,
         st.partial_requeued,
+        StepStages::split_text(&steps),
     );
     q.line_openings = st.openings;
     q.line_starved = st.starved_openings;
     let n = steps.len().max(1) as f64;
     for (k, stage) in STEP_STAGES.iter().enumerate() {
         let mean = steps.iter().map(|s| s.ms[k]).sum::<f64>() / n;
-        let _ = write!(line, " {stage} {mean:.3}");
+        let render = steps.iter().map(|s| s.render_ms[k]).sum::<f64>() / n;
+        let _ = write!(line, " {stage} {mean:.3} ({render:.3})");
     }
     let _ = write!(
         line,
@@ -456,12 +601,7 @@ impl Run {
         };
         let (forward, _, _) = self.fly.camera.basis();
         let stream = self.stream.as_ref();
-        let resident_fn = |c: ChunkCoord| {
-            stream.is_some_and(|s| s.streamer.tier(c) == Some(svet_world::Tier::Full))
-        };
-        let resident: Option<&dyn Fn(ChunkCoord) -> bool> = stream
-            .is_some()
-            .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool);
+        let resident = stream.map(|s| svet_render::Residency::of_chunks(s.streamer.full_chunks()));
         let (half_angle, frustum, focal) =
             queue_view_angles(self.fly.camera.vfov, gfx.frame.output_size());
         let t_step = ms_since(self.start);
@@ -507,6 +647,7 @@ impl Run {
                 from,
             });
         }
+        let waiting_before = self.queue.stats.is_some_and(|s| s.draining);
         let t_cpu = now();
         let stepped =
             gfx.frame
@@ -517,11 +658,23 @@ impl Run {
         print_listing_census(gfx, &self.world, &view, &mut self.queue);
         match stepped {
             Some(Ok(st)) => {
-                if st.samples > 0 {
-                    self.queue.slices.push(st.ms);
+                self.queue.note_step(&st);
+                if st.draining {
+                    self.queue.fed.push(&st);
+                    let c = &mut self.queue.cycles;
+                    c.parts.extend(gfx.frame.bake_thread_cycles());
+                    c.walls.extend(dt);
                 }
-                self.queue.line_stages.push(st.stages);
-                self.queue.tally.push(st.stages);
+                // With the bake thread on, the mailbox holds the box until the books of the
+                // edit's step are taken, a frame or more after the edit's: the edit's frame is
+                // the one that waited.
+                let edits_frame =
+                    !gfx.frame.bake_thread_running() || gfx.frame.bake_frame_wait_parts().is_some();
+                if new_box && edits_frame {
+                    self.queue
+                        .dig_frames
+                        .push(DigFrame::of(&gfx.frame, &st, waiting_before));
+                }
                 if let Some(w) = self.queue.dig.as_mut() {
                     w.frames += 1;
                     if let Some(dt) = dt {
@@ -568,12 +721,7 @@ impl Run {
                     }
                 }
                 self.queue.stats = Some(st);
-                if !self.queue.emptied
-                    && gfx
-                        .frame
-                        .bake_queue()
-                        .is_some_and(svet_render::BakeQueue::empty)
-                {
+                if !self.queue.emptied && gfx.frame.bake_queue().is_some_and(|q| q.empty()) {
                     self.queue.emptied = true;
                     println!(
                         "bake queue: empty after {:.1} s since the start ({} chunks baked, {:.3e} samples)",
@@ -765,7 +913,7 @@ impl Run {
             );
             self.queue.line_class = (st.class_samples, st.class_ms);
             println!(
-                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample, fading {}, coarse {} chunks, {}, eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms, provisional {} (opened {}, catch-ups {}), key {} (landed {}), zero by rule {} (re-listed {}), sealed by the workers {} ({} shells, {} B), {}, {}",
+                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample (price {:.2} ms a dispatch + {:.1} ns), fading {}, coarse {} chunks, {}, eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms, provisional {} (opened {}, catch-ups {}), key {} (landed {}), zero by rule {} (re-listed {}), sealed by the workers {} ({} shells, {} B), {}, {}",
                 t / 1e3,
                 self.frame,
                 st.depth,
@@ -781,6 +929,8 @@ impl Run {
                 max,
                 sl.len(),
                 st.ns_per_sample,
+                st.fixed_ms,
+                st.cost_ns,
                 st.fading,
                 st.coarse,
                 reads,
@@ -802,15 +952,18 @@ impl Run {
                 self.queue.drain_of(&st).text(),
                 class_ns,
             );
-            print_slice_line(t, &st, p50);
+            let mut projected = std::mem::take(&mut self.queue.projected);
+            let mut open = std::mem::take(&mut self.queue.open_at_draw);
+            let open = [percentile(&mut open, 50.0), percentile(&mut open, 100.0)];
+            print_slice_line(t, &st, p50, percentile(&mut projected, 50.0), open);
+            // The next second's line and the HUD's row read the next opening's census: asked
+            // through the frame's message, so the bake thread's queue takes it too.
+            gfx.frame
+                .set_bake_queue(svet_render::BakeQueue::request_census);
             let needs = gfx
                 .frame
                 .bake_queue_mut()
-                .map(|q| {
-                    // The next second's line and the HUD's row read the next opening's census.
-                    q.request_census();
-                    q.take_angle_needs()
-                })
+                .map(svet_render::BakeQueue::take_angle_needs)
                 .unwrap_or_default();
             let (first, full) = gfx
                 .frame
@@ -865,10 +1018,20 @@ impl Run {
 
 /// The per-second `bake queue slice:` line: the slice granted and whether it was the drain's
 /// value (ADR-0080 rule 3), the chunks in view still waiting for their tier, the slices drawn,
-/// why the submits' plans stopped, and the reads of the in-view set with their mean and longest cost.
-fn print_slice_line(t: f64, st: &svet_render::QueueStats, p50: f64) {
+/// why the submits' plans stopped, and the reads of the in-view set with their mean and longest
+/// cost; with the bake thread's listing pool, the projection over the cap at the draws (p50),
+/// the listing bounds' two fills (from the world, from prepared masks) and the openings the
+/// pool's guard stopped; the steps that neither were blocked nor sent a submit, and the jobs
+/// open at the draws since the last line (p50 and max).
+fn print_slice_line(
+    t: f64,
+    st: &svet_render::QueueStats,
+    p50: f64,
+    projected: f64,
+    open_at_draw: [f64; 2],
+) {
     println!(
-        "bake queue slice: at {:.1} s, granted {:.2} ms ({}, {} in view waiting for their tier), drawn p50 {:.2} ms, plans stopped at the cap {} at the batch {} out of rounds {}, steps with every submit slot unread {}, the in-view set read {} times, mean {:.3} ms, max {:.3} ms",
+        "bake queue slice: at {:.1} s, granted {:.2} ms ({}, {} in view waiting for their tier), drawn p50 {:.2} ms, plans stopped at the cap {} at the batch {} out of rounds {} ({} with no table slot free), steps with every submit slot unread {} of {}, steps neither blocked nor sent {}, jobs open at the draw p50 {:.0} max {:.0}, the in-view set read {} times, mean {:.3} ms, max {:.3} ms, projected at the draw p50 {:.2} caps, fill world {:.3} masks {:.3}, pool guard {}, wasted samples {} of {} drawn",
         t / 1e3,
         st.slice_ms,
         if st.draining { "drain" } else { "line" },
@@ -877,9 +1040,96 @@ fn print_slice_line(t: f64, st: &svet_render::QueueStats, p50: f64) {
         st.plan_stops[0],
         st.plan_stops[1],
         st.plan_stops[2],
+        st.slotless_stops,
         st.in_flight_full,
+        st.steps,
+        st.idle_steps,
+        open_at_draw[0],
+        open_at_draw[1],
         st.waiting_reads,
         st.waiting_ms / st.waiting_reads.max(1) as f64,
         st.waiting_max_ms,
+        projected,
+        st.fill[0],
+        st.fill[1],
+        st.pool_guard,
+        st.read_back[1],
+        st.read_back[0] + st.read_back[1],
     );
+}
+
+/// The bake thread's submits on the render side (a reading, the teardown's `bake round trip:`
+/// line): the submits issued, their round trip in frames from the issue to the message that
+/// carried the read-back (p50 / p99 / max), the frames that carried a submit past them, and the
+/// issuer's peak readback buffers. `None` when no submit was issued on the thread.
+pub(crate) fn round_trip_line(r: &svet_render::BakeRoundTrip) -> Option<String> {
+    if r.issued == 0 {
+        return None;
+    }
+    let read: u64 = r.frames.iter().sum();
+    let max = r.frames.iter().rposition(|n| *n > 0).unwrap_or(0);
+    Some(format!(
+        "bake round trip: {} submits issued, {read} read, frames p50 {} p99 {} max {max}, frames that carried a submit {}, issuer peak buffers {}",
+        r.issued,
+        r.percentile(50.0),
+        r.percentile(99.0),
+        r.carried,
+        r.peak_buffers,
+    ))
+}
+
+/// The render thread's laps in the bake thread's frames (a reading, the teardown's
+/// `bake thread render laps:` line): each lap's p50 / p99 / max, then the frames whose whole
+/// call took over 4.0 ms with the lap that was largest in each and each lap's mean over them.
+pub(crate) fn render_laps_line(laps: &[[f32; 8]]) -> Option<String> {
+    const NAMES: [&str; 8] = [
+        "build", "take", "issue", "apply", "collect", "send", "wait", "total",
+    ];
+    const TOTAL: usize = NAMES.len() - 1;
+    if laps.is_empty() {
+        return None;
+    }
+    let mut out = format!("bake thread render laps: {} frames;", laps.len());
+    for (k, name) in NAMES.iter().enumerate() {
+        let mut v: Vec<f64> = laps.iter().map(|l| f64::from(l[k])).collect();
+        let p50 = crate::report::percentile(&mut v, 50.0);
+        let p99 = crate::report::percentile(&mut v, 99.0);
+        let max = v.last().copied().unwrap_or(0.0);
+        out += &format!(" {name} {p50:.3}/{p99:.3}/{max:.3}");
+    }
+    let over: Vec<&[f32; 8]> = laps.iter().filter(|l| l[TOTAL] > 4.0).collect();
+    out += &format!("; over 4.0 ms {} frames, largest lap", over.len());
+    for (k, name) in NAMES[..TOTAL].iter().enumerate() {
+        let n = over
+            .iter()
+            .filter(|l| (0..TOTAL).all(|j| l[k] >= l[j]))
+            .count();
+        let mean = over.iter().map(|l| f64::from(l[k])).sum::<f64>() / over.len().max(1) as f64;
+        out += &format!(" {name} {n} (mean {mean:.3})");
+    }
+    Some(out)
+}
+
+/// The books' snapshots the bake thread made after its steps (a reading, on the teardown's
+/// `bake thread snapshot:` line): their count and ms p50 / p99 / max.
+pub(crate) fn snapshot_ms_text(ms: &[f32]) -> String {
+    let v = p50_p99_max(ms.iter().map(|m| f64::from(*m)));
+    format!(
+        "{} steps' books, snapshot p50 {:.3} p99 {:.3} max {:.3} ms",
+        ms.len(),
+        v[0],
+        v[1],
+        v[2]
+    )
+}
+
+/// p50 / p99 / max of `v`, the NaNs left out.
+fn p50_p99_max(v: impl Iterator<Item = f64>) -> [f64; 3] {
+    let mut v: Vec<f64> = v.filter(|x| !x.is_nan()).collect();
+    if v.is_empty() {
+        return [f64::NAN; 3];
+    }
+    let p50 = crate::report::percentile(&mut v, 50.0);
+    let p99 = crate::report::percentile(&mut v, 99.0);
+    [p50, p99, v.last().copied().unwrap_or(f64::NAN)]
 }

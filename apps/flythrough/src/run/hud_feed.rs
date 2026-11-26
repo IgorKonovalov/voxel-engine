@@ -430,14 +430,32 @@ pub(crate) fn write_queue_banner_row(out: &mut String, args: &Args, words: &str)
     }
     let _ = write!(
         out,
-        ", full-first {}, budget {}, missing light {}, reach {}, digs +{} ms, ring 3 {}; {words} (Tab: the light queue page)",
+        ", full-first {}, budget {}, missing light {}, reach {}, digs +{} ms{}, ring 3 {}, bake thread {}; {words} (Tab: the light queue page)",
         FullFirstWords(args.full_first()),
         args.bake.budget,
         args.bake.missing_light.name(),
         args.bake.reach.name(),
         args.bake.edit_ms,
+        StretchWords(args.bake.ring1_stretch, ", "),
         if args.bake.dig_reach { "on" } else { "off" },
+        if args.bake_thread() { "on" } else { "off" },
     );
+}
+
+/// The ring-1 stretch as the HUD and the banner name it: `stretch 1.0` after `sep` whenever
+/// it is not the default ([`svet_render::DEFAULT_RING1_STRETCH`], `--bake-ring1-stretch`),
+/// nothing at the default.
+struct StretchWords(f64, &'static str);
+
+impl std::fmt::Display for StretchWords {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0 == svet_render::DEFAULT_RING1_STRETCH {
+            Ok(())
+        } else {
+            // `{:?}` keeps the point: `stretch 1.0`, `stretch 1.25`.
+            write!(f, "{}stretch {:?}", self.1, self.0)
+        }
+    }
 }
 
 /// Appends the HUD store row's queue part to `out`: `, queue depth N, coarse C, jobs J, slice
@@ -576,8 +594,18 @@ impl Run {
             queue,
             &self.queue.stats.unwrap_or_default(),
             self.queue.line_rate,
-            self.queue.line_step_p50,
+            [
+                self.queue.line_step_p50,
+                self.queue.line_split_p50[0],
+                self.queue.line_split_p50[1],
+            ],
         );
+        queue.push_str(if args.bake_thread() {
+            "; bake thread on"
+        } else {
+            "; bake thread off"
+        });
+        let _ = write!(queue, "{}", StretchWords(args.bake.ring1_stretch, "; "));
         queue.push_str("; ");
         queue.push_str(words);
         match args.full_first() {

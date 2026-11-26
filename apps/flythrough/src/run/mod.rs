@@ -471,6 +471,45 @@ impl Drop for Run {
         for line in self.queue.tally.summary() {
             println!("frames: {line}");
         }
+        if let Some(line) = self.queue.split_line() {
+            println!("frames: {line}");
+        }
+        if let Some(line) = self.queue.fed.line() {
+            println!("frames: queue fed: while in view waits {line}");
+        }
+        if let Some(line) = self.queue.cycles.line() {
+            println!("frames: bake thread cycle: while in view waits {line}");
+        }
+        if let Some(g) = self.gfx.as_ref()
+            && let [n, past, lost, run] = g.frame.bake_snapshot_reach()
+            && n > 0
+        {
+            println!(
+                "frames: bake thread snapshot: {n} frames, eye past its reach {past} (longest run {run}), sky over the floor lost {lost}; {}",
+                queue::snapshot_ms_text(g.frame.bake_snapshot_ms())
+            );
+        }
+        if let Some(g) = self.gfx.as_ref() {
+            if let Some(line) = queue::render_laps_line(g.frame.bake_render_laps()) {
+                println!("frames: {line}");
+            }
+            for line in queue::dig_wait_lines(&self.queue.dig_frames)
+                .into_iter()
+                .chain(queue::dig_call_lines(&self.queue.dig_frames))
+            {
+                println!("frames: {line}");
+            }
+            let [fading, stepped] = g.frame.bake_fade_frames();
+            if fading > 0 {
+                println!(
+                    "frames: fade steps: {stepped} of {fading} frames while a block faded ({:.4})",
+                    stepped as f64 / fading as f64
+                );
+            }
+            if let Some(line) = queue::round_trip_line(&g.frame.bake_round_trip()) {
+                println!("frames: {line}");
+            }
+        }
         if let Some(line) = self.hud.run.line() {
             println!("{line}");
         }

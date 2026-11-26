@@ -35,7 +35,7 @@ pub mod test_support;
 /// tests that measure the renderer; the API it reads may change with what is measured.
 pub mod debug {
     pub use crate::bake::{
-        LightSummaries, ParentTable, Regime, STEP_STAGES, StepStages, StepTally,
+        LightSummaries, ParentTable, Regime, STEP_STAGES, StepStages, StepTally, WRITE_KINDS,
     };
     pub use crate::gpu_util::{compute_pipelines_created, pipeline_cache_data, set_pipeline_cache};
     pub use crate::probes::ProbeRead;
@@ -89,16 +89,17 @@ pub mod internals {
 }
 
 pub use bake::{
-    AROUND_REACH, AroundSource, BakeError, BakeProgress, BakeQueue, BakeReport, BakeSettings, Band,
-    Bands, Budget, DEFAULT_BAKE_EDIT_MS, DEFAULT_BAKE_SLICE_MS, DEFAULT_COARSE_SAMPLES,
-    DEFAULT_DRAIN, DEFAULT_NEAR, DEFAULT_TIERS, DigReport, DigTrace, DigTraceJob, Drain,
-    FaceOutcome, InViewWaiting, LANDED_BARE, LANDED_FALLBACK, LANDED_REFADED, LANDED_UNFADED,
-    LANDING_DIRECTIONS, LANDING_KEY, LANDING_KEY_FLAG, LANDING_RECORDS, LANDING_TAIL, LANDING_VIS,
-    LANDING_VIS_FLAG, ListingCensus, MissingLight, PreRoll, PreRollConfig, PreRollError,
-    PreRollState, PreRollSummary, QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT,
-    QueueOrder, QueueStats, QueueView, ReachMode, Refine, RuleMissed, Store, StoreStats,
-    chunk_nearest, finality_blockers, in_view_census, queue_settings, reach_crosses,
-    sky_over_floor,
+    AROUND_REACH, AroundSource, BakeError, BakeProgress, BakeQueue, BakeReport, BakeRoundTrip,
+    BakeSettings, Band, Bands, Budget, CycleLine, DEFAULT_BAKE_EDIT_MS, DEFAULT_BAKE_SLICE_MS,
+    DEFAULT_COARSE_SAMPLES, DEFAULT_DRAIN, DEFAULT_NEAR, DEFAULT_RING1_STRETCH, DEFAULT_TIERS,
+    DigReport, DigTrace, DigTraceJob, Drain, FaceOutcome, InViewWaiting, LANDED_BARE,
+    LANDED_FALLBACK, LANDED_REFADED, LANDED_UNFADED, LANDING_DIRECTIONS, LANDING_KEY,
+    LANDING_KEY_FLAG, LANDING_RECORDS, LANDING_TAIL, LANDING_VIS, LANDING_VIS_FLAG, ListingCensus,
+    MissingLight, PreRoll, PreRollConfig, PreRollError, PreRollState, PreRollSummary,
+    QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT, QueueFed, QueueOrder, QueueRead,
+    QueueStats, QueueView, RING1_STRETCH_RANGE, ReachMode, Refine, Residency, RuleMissed, Store,
+    StoreStats, THREAD_DEPTH, THREAD_SLOTS, chunk_nearest, finality_blockers, in_view_census,
+    queue_settings, reach_crosses, sky_over_floor,
 };
 pub use camera::{Camera, View};
 pub use entities::{

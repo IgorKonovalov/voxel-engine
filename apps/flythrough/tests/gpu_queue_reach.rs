@@ -433,7 +433,7 @@ fn an_evicted_chunk_frees_its_block_and_its_bookkeeping() {
         let used = store.stats(0, 0, 0).bytes / 4;
         assert_eq!(
             used + store.free_words(),
-            store.pool().size() / 4,
+            store.capacity() / 4,
             "every pool word is the header's, a block's or free"
         );
     };

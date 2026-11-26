@@ -185,8 +185,10 @@ pub(super) fn hold(a: &mut crate::cli::Args, s: &RenderSettings) {
     b.reach = s.bake.reach;
     b.edit_ms = s.bake.edit_ms;
     b.dig_reach = s.bake.dig_reach;
+    b.ring1_stretch = s.bake.ring1_stretch;
     b.tiers = s.bake.tiers;
     b.drain = s.bake.drain;
+    b.thread = Some(s.bake_thread);
     b.missing_light = s.missing_light;
     a.mirror_budget = Some(s.build.mirror_budget_bytes);
     a.sync_budget = s.build.sync_budget_bytes;
@@ -327,4 +329,110 @@ fn every_entry_that_changes_the_settings_moves_the_hud() {
         "entries the HUD does not follow: {silent:?}"
     );
     assert!(moved > 10, "{moved} entries changed the settings");
+}
+
+/// `--bake-thread off` and `on` parse to the mode they name, and the HUD's queue row and the
+/// banner's queue row name it; unset it reads `on` in a window and `off` under `--headless`; a
+/// profile picked in the menu leaves the mode as it was; every profile's is `off` (Plan 0099
+/// Phase 3b, done-when 6, as Phase 3's (6) was first written).
+#[test]
+fn the_flag_and_the_row_name_the_mode() {
+    let parse = |extra: &[&str]| {
+        let mut v = vec!["--level", "--sky", "on"];
+        v.extend_from_slice(extra);
+        crate::cli::parse_args_from(argv(&v)).expect("parses")
+    };
+    for (extra, on) in [
+        (&["--bake-thread", "off"][..], false),
+        (&["--bake-thread", "on"][..], true),
+        (&[][..], true),
+        (&["--headless"][..], false),
+        (&["--headless", "--bake-thread", "on"][..], true),
+    ] {
+        let args = parse(extra);
+        assert_eq!(args.bake_thread(), on, "{extra:?}");
+        assert_eq!(args.render_settings().bake_thread, on, "{extra:?}");
+        let word = if on { "on" } else { "off" };
+        let mut banner = String::new();
+        crate::run::hud_feed::write_queue_banner_row(&mut banner, &args, "");
+        assert!(
+            banner.contains(&format!(", bake thread {word};")),
+            "{extra:?}: {banner}"
+        );
+        let mut run = run_of(args);
+        let hud = hud_text(&mut run);
+        assert!(
+            hud.contains(&format!("; bake thread {word}")),
+            "{extra:?}: {hud}"
+        );
+        // The menu's profile entry, through every profile: the mode stays.
+        for _ in svet_render::Profile::ALL {
+            run.cycle_profile();
+            assert_eq!(
+                run.args.bake_thread(),
+                on,
+                "{extra:?} after a profile switch"
+            );
+            assert!(
+                !run.modes.profile.contains("bake_thread"),
+                "{extra:?}: {}",
+                run.modes.profile
+            );
+            let hud = hud_text(&mut run);
+            assert!(
+                hud.contains(&format!("; bake thread {word}")),
+                "{extra:?} after a profile switch: {hud}"
+            );
+        }
+    }
+    for p in svet_render::Profile::ALL {
+        assert!(
+            !svet_render::RenderSettings::profile(p).bake_thread,
+            "{p:?}: lockstep in every profile"
+        );
+    }
+    assert!(crate::cli::parse_args_from(argv(&["--bake-thread", "maybe"])).is_err());
+}
+
+/// `--bake-ring1-stretch 1.0` parses to the setting, and the HUD's queue row and the banner's
+/// queue row name it as `stretch 1.0`; unset or at the default 1.5 neither holds the word; a
+/// value outside 1.0 to 2.0 is refused (Plan 0099 Phase 2e, done-when 2, restated at Phase 3b's
+/// default, done-when 7).
+#[test]
+fn the_stretch_is_named_on_the_row_when_not_one() {
+    let parse = |extra: &[&str]| {
+        let mut v = vec!["--level", "--sky", "on"];
+        v.extend_from_slice(extra);
+        crate::cli::parse_args_from(argv(&v)).expect("parses")
+    };
+    assert_eq!(svet_render::DEFAULT_RING1_STRETCH, 1.5);
+    for (extra, stretch) in [
+        (&["--bake-ring1-stretch", "1.0"][..], 1.0),
+        (&[][..], 1.5),
+        (&["--bake-ring1-stretch", "1.5"][..], 1.5),
+    ] {
+        let args = parse(extra);
+        assert_eq!(args.bake.ring1_stretch, stretch, "{extra:?}");
+        assert_eq!(
+            args.render_settings().bake.ring1_stretch,
+            stretch,
+            "{extra:?}"
+        );
+        let mut banner = String::new();
+        crate::run::hud_feed::write_queue_banner_row(&mut banner, &args, "");
+        let hud = hud_text(&mut run_of(args));
+        if stretch == 1.5 {
+            assert!(!banner.contains("stretch"), "{extra:?}: {banner}");
+            assert!(!hud.contains("stretch"), "{extra:?}: {hud}");
+        } else {
+            assert!(banner.contains(", stretch 1.0,"), "{extra:?}: {banner}");
+            assert!(hud.contains("; stretch 1.0"), "{extra:?}: {hud}");
+        }
+    }
+    for bad in ["0.5", "2.5", "x"] {
+        assert!(
+            crate::cli::parse_args_from(argv(&["--bake-ring1-stretch", bad])).is_err(),
+            "{bad}"
+        );
+    }
 }

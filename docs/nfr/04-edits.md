@@ -222,8 +222,9 @@ component tick 1.007 µs; `Bench` 1.8380 against 1.7269 ms, **1.064×**. Both li
 
 ## An edit's light
 
-No budget line in `../nfr.md` yet: Plan 0099 sets it ("the dig's near ring within the base's
-frames plus 2") from the readings below, which are its base.
+The lines are in `../nfr.md` section 4 ("An edit's light"), set by Plan 0099 and pinned at its
+Phase 6d with the bake thread on; the readings below the first two paragraphs are their base,
+the last two the pins.
 
 **Ring 1's landing (Plan 0098 Phases 16 and 17 and its fix pass, 2026-11-24; ADR-0082's
 Outcome).** Frames from a dig's frame to the step that places its ring-1 job (the bricks the
@@ -254,3 +255,37 @@ change; the stage it did change (`digs`) reads under 0.5 ms on both trees but on
 the held estimate's stage (`boxes`) 2.2 to 2.4 ms on both. A dig's frame on the RTX is over the
 16.6 ms frame by the step alone: a disclosed miss, Plan 0099's (the step off the main thread),
 which reads this figure again in its Phase 1 with at least eight alternated runs a tree.
+
+**The bake thread's dig (Plan 0099, ADR-0083; Phases 3f and 6d, 2026-11-26).** The bake thread
+on, 16 table rows, depth 3; each run its own hold of the exclusive perf lock, waiting in it for a
+1-minute load under 1.5; every row in `docs/plans/logs/0099.md` ("Phase 3f", "Phase 6d").
+
+- *The edit's wait*, the fly-through headless `--dig-at` (six digs while chunks in view wait for
+  their tier, six after), the forest at 15:00, release `flythrough` at `cde2e966`, two runs a
+  side: the `frames: bake thread dig wait:` line's `less rest` p50 (per dig frame, its wait less
+  the rest of the step in progress at its send) against lockstep's `frames: bake dig call:` p50.
+  RTX 3080 Laptop, Floor 1080p: in view waits 14.513 and 21.763 ms against 24.290 and 23.601;
+  after 5.825 and 6.326 against 7.696 and 12.717. RADV RENOIR, Portable 720p: in view waits
+  10.550 and 12.555 against 10.931 and 9.345; after 4.479 and 4.157 against 5.633 and 5.281. The
+  rest part's p50 on the RENOIR is 0 in every state (no step in progress at the send). The
+  ruling after Plan 0099 Phase 3f (1) reads a pooled p50 over the runs; the line prints each
+  run's, which bracket the pooled one, so the RENOIR's in-view state is not resolved between
+  equal and missed. Loads at the lock 0.29 to 1.47; two runs ended loaded (RTX on 1 at 2.01,
+  RENOIR on 1 at 3.77).
+- *Ring 1*, the dig rig (`dig_line::reading::dig_timeline`, release `gpu_outdoor` at
+  `0c88a0c3`), thread on, two runs a rig, in ms from the edit's frame against lockstep's ms plus
+  two of its frames on the same dig: no dig over it; at the p50 under it by 69.1 ms (RTX waiting
+  A), 82.9 (RTX waiting B) and 71.9 (RENOIR drained B). The held block told at D+0 in 30 of 30
+  digs. RTX waiting B digs 5 and 6 land at 133 to 144 ms in three of four readings, against 78 to
+  118 where the dig's jobs open in its step: every row held with rounds in flight, so ring 1
+  waits a round trip for a row (the ruling after Phase 3f (2)). RENOIR drained B: D+2 in every
+  dig (lockstep D+1), 134 to 146 ms.
+- *A dig's frame and the light at the dig* (a reading), the `dig settled:` rows of the same
+  fly-through runs, pooled medians of twelve digs a state: RTX in view waits the longest frame
+  from the dig 42.0 ms on (24.2 to 59.0) against 45.8 off (40.2 to 70.8), rings 1 and 2 landed
+  163 against 243 ms; after 18.1 (10.6 to 21.8) against 28.3 (19.1 to 47.9), 91.5 against 125.5
+  ms. RENOIR in view waits 48.8 against 44.4 ms, 260 against 250.5; after 27.2 against 33.6,
+  179 against 158.5. Phase 3f's runs at `1b744e32` (the figures told the owner at the window)
+  read 43.9 against 45.0, 19.5 against 31.8, about 170 against 230 and 95 against 127 on the
+  RTX; RENOIR 47.6 against 42.5, 27.7 against 34.4. The frames around a dig while in view waits:
+  wall p50 8.3 to 8.5 ms on, 20.5 to 22.0 off (RTX).

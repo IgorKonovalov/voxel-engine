@@ -146,7 +146,9 @@
 //! HUD's queue row and the `bake queue step:` line name it); a dig re-bakes its rings in the queue, ahead of
 //! every other job, the slice growing by `--edit-ms MS` (default 3) while they wait, and
 //! `--dig-reach off` turns off ring 3 (the chunks within the light radius of a dig that touched
-//! lit bricks); a `dig settled:` line when a dig's rings are baked; `--light`, `--cut`, `--show`,
+//! lit bricks); `--bake-thread on|off` runs the live queue's sliced steps on the bake thread or in
+//! lockstep (default `on` in a window, `off` under `--headless`; the banner's queue row and the
+//! HUD's queue row name it); a `dig settled:` line when a dig's rings are baked; `--light`, `--cut`, `--show`,
 //! `--reference`, `--bake-file`, `--queue-file`, `--bake-radius`, `--blend`, `--preload` and
 //! `--preload-claim` are refused, naming Plan 0059; `--glide V` moves the
 //! camera along its heading at `V` voxels a second (`--pose vein-flight` starts the settle rig's
@@ -615,6 +617,23 @@ pub struct BakeArgs {
     /// `--dig-reach on|off`: whether a dig that touched lit bricks re-bakes the chunks within the
     /// light radius (ring 3; on by default).
     pub(crate) dig_reach: bool,
+    /// `--bake-ring1-stretch X`: a dig's ring 1 goes whole in a submit while its samples are
+    /// within `X` times the priced cap, 1.0 to 2.0 (`svet_render::Frame::set_bake_ring1_stretch`;
+    /// default `svet_render::DEFAULT_RING1_STRETCH`, 1.5; 1.0 is the cap alone).
+    pub(crate) ring1_stretch: f64,
+    /// `--bake-thread on|off`: whether the live queue's sliced steps run on the bake thread
+    /// (`svet_render::Frame::set_bake_thread`, ADR-0083); `None` unset, which is on in a window
+    /// and off, lockstep, under `--headless` ([`Args::bake_thread`]). A profile does not set
+    /// it: every profile's is off, the mode a headless consumer and the tests start from.
+    pub(crate) thread: Option<bool>,
+    /// `--bake-depth N`: the submits the bake thread's steps hold unread at most, 1 to 8
+    /// (`svet_render::Frame::set_bake_depth`; default `svet_render::THREAD_DEPTH`); lockstep
+    /// holds two whatever it is.
+    pub(crate) depth: usize,
+    /// `--bake-slots N`: the live queue's table slots the bake thread's steps open jobs into,
+    /// 16 to 64 (`svet_render::Frame::set_bake_slots`; default `svet_render::THREAD_SLOTS`);
+    /// lockstep keeps 16 whatever it is.
+    pub(crate) slots: usize,
     /// `--read-missing`: while a dig's rings 1 and 2 wait, the store's no-value count is read back
     /// each frame (blocking) for the `dig settled:` line.
     pub(crate) read_missing: bool,
@@ -816,6 +835,13 @@ impl Args {
     /// Whether the run reads a gamepad: `--pad on` in a window, without the autopilot.
     pub(crate) fn wants_pad(&self) -> bool {
         self.pad && !self.headless && !self.autopilot
+    }
+
+    /// Whether the live queue's sliced steps run on the bake thread: `--bake-thread` or a
+    /// settings row where given, else on in a window and off (lockstep) under `--headless`
+    /// (ADR-0083: a window defaults to the thread).
+    pub(crate) fn bake_thread(&self) -> bool {
+        self.bake.thread.unwrap_or(!self.headless)
     }
 
     /// The auto exposure of `--adaptation`, `--adapt` and `--metering`, with the outdoor

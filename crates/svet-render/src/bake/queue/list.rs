@@ -15,9 +15,15 @@ impl BakeQueue {
         dirs * u64::from(brick_samples)
     }
 
+    /// Whether a box waits for the bake thread in a message its step has not taken
+    /// ([`BoxSignal`]); never in lockstep.
+    pub(in crate::bake) fn box_waits(&self) -> bool {
+        self.box_signal.as_ref().is_some_and(BoxSignal::waits)
+    }
+
     /// Lists `batch`'s chunks (across scoped threads when there are several) and pushes their
-    /// jobs in the batch's order ([`BakeQueue::push_listed`]); a chunk the pool refuses waits.
-    /// Empties `batch`.
+    /// jobs in the batch's order ([`BakeQueue::push_listed`]); a chunk the pool refuses waits,
+    /// and once a box waits ([`BakeQueue::box_waits`]) the rest wait. Empties `batch`.
     pub(in crate::bake) fn push_batch(
         &mut self,
         run: &BakeRun<'_>,
@@ -53,8 +59,16 @@ impl BakeQueue {
         };
         let mut out = Pushed::default();
         for ((class, c), l) in batch.drain(..).zip(listed) {
+            // A box waiting: the candidates listed and not pushed stay in the pool.
+            if self.box_waits() {
+                break;
+            }
             match self.push_listed(store, eye, class, ChunkCoord(c), l) {
                 Ok(samples) => {
+                    #[cfg(test)]
+                    if let Some(hook) = self.listed_hook.as_mut() {
+                        hook();
+                    }
                     out.samples += samples;
                     out.full_blank |= class == 0
                         && samples > 0
@@ -81,7 +95,7 @@ impl BakeQueue {
     pub(in crate::bake) fn note_starved(
         &mut self,
         run: &BakeRun<'_>,
-        view: &QueueView<'_>,
+        view: &QueueView,
         eye: [i32; 3],
         mut next: usize,
         checks: usize,
@@ -89,7 +103,7 @@ impl BakeQueue {
         if self.coarse_samples == 0 || self.full_first.is_none() {
             return;
         }
-        let lr = run.gpu.light_radius();
+        let lr = run.mirror.light_radius();
         let steps = self.steps;
         let mut looked = 0;
         while let Some(Cand {
@@ -113,7 +127,7 @@ impl BakeQueue {
             looked += 1;
             let coord = ChunkCoord(c);
             if self.bakeable(run, coord, lr, view, eye).is_some()
-                && run.gpu.lights_ready_near(coord, lr)
+                && run.mirror.lights_ready_near(coord, lr)
             {
                 self.stats.starved_openings += 1;
                 return;
@@ -216,6 +230,7 @@ impl BakeQueue {
             brick_samples: (count != self.settings.brick_samples).then_some(count),
             key_only: false,
             tier,
+            class: JobClass::Other,
         });
         self.job_coarse.insert(c, coarse);
         self.job_count.insert(c, count);
@@ -242,24 +257,57 @@ impl BakeQueue {
         coord: ChunkCoord,
         classes: &[u8],
     ) -> (ChunkFaces, bool) {
-        let Some(own) = self.prepared.get(&coord.0) else {
+        let (own, held) = self.listing_masks(coord);
+        list_chunk(world, coord, classes, own.as_deref(), &held)
+    }
+
+    /// `coord`'s own prepared masks and its six neighbours', where the stream workers' arrived:
+    /// what [`list_chunk`] reads beside the world.
+    pub(in crate::bake) fn listing_masks(
+        &self,
+        coord: ChunkCoord,
+    ) -> (Option<Arc<PreparedMasks>>, Held) {
+        let own = self.prepared.get(&coord.0).cloned();
+        let held = std::array::from_fn(|f| {
+            own.as_ref()
+                .and_then(|_| self.prepared.get(&neighbour(coord, f)).cloned())
+        });
+        (own, held)
+    }
+}
+
+/// A chunk's six neighbours' prepared masks, by face, where they arrived.
+pub(in crate::bake) type Held = [Option<Arc<PreparedMasks>>; 6];
+
+/// The chunk across `face` of `coord` (`face / 2` the axis, odd the positive side).
+fn neighbour(coord: ChunkCoord, face: usize) -> [i32; 3] {
+    let mut c = coord.0;
+    c[face / 2] += if face % 2 == 1 { 1 } else { -1 };
+    c
+}
+
+/// `coord`'s faces: from its prepared masks `own` and its neighbours' `held` where they are
+/// given, the rest decoded from the world's chunks under their read locks; and whether its own
+/// masks were prepared. A pure function of its inputs and the world, so the listing pool
+/// ([`super::lister::Lister`]) runs it off the bake loop.
+pub(in crate::bake) fn list_chunk(
+    world: &World,
+    coord: ChunkCoord,
+    classes: &[u8],
+    own: Option<&PreparedMasks>,
+    held: &Held,
+) -> (ChunkFaces, bool) {
+    {
+        let Some(own) = own else {
             return (
                 list_world_chunk(world, coord, classes).unwrap_or_default(),
                 false,
             );
         };
         let store = world.store();
-        let neighbour = |face: usize| {
-            let mut c = coord.0;
-            c[face / 2] += if face % 2 == 1 { 1 } else { -1 };
-            c
-        };
-        let held: [_; 6] = std::array::from_fn(|f| {
-            let c = neighbour(f);
-            match self.prepared.get(&c) {
-                Some(m) => Some(Err(m.clone())),
-                None => store.get(ChunkCoord(c)).map(Ok),
-            }
+        let held: [_; 6] = std::array::from_fn(|f| match &held[f] {
+            Some(m) => Some(Err(m.clone())),
+            None => store.get(ChunkCoord(neighbour(coord, f))).map(Ok),
         });
         let locks: Vec<_> = held
             .iter()

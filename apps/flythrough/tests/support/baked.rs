@@ -59,7 +59,7 @@ pub fn fly_through_knobs(f: &mut Frame) {
 
 /// The queue's view of `cam` as the fly-through gives it: the view's half angles (the frustum)
 /// and focal length, so the tiers by size on screen apply.
-pub fn view(f: &Frame, cam: &Camera, interval_s: f64) -> svet_render::QueueView<'static> {
+pub fn view(f: &Frame, cam: &Camera, interval_s: f64) -> svet_render::QueueView {
     let size = f.output_size();
     let aspect = size[0] as f32 / size[1] as f32;
     svet_render::QueueView {
@@ -163,7 +163,7 @@ pub fn census(rig: &Rig, f: &Frame, cam: &Camera) -> Census {
     Census {
         settled: chunks
             .iter()
-            .filter(|&&c| q.settled(store, svet_world::ChunkCoord(c), false))
+            .filter(|&&c| q.settled(svet_world::ChunkCoord(c), false))
             .count(),
         chunks: chunks.len(),
         coarse: chunks
@@ -215,7 +215,7 @@ pub fn tally(world: &svet_world::World, f: &Frame) -> Tally {
     };
     let store = f.store();
     for c in world.store().coords() {
-        let settled = q.settled(store, c, false);
+        let settled = q.settled(c, false);
         let words = store.block_words(c);
         let tier = match (words.is_some(), store.is_coarse(c)) {
             (false, _) => 0u32,

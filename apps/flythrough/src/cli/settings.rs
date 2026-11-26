@@ -212,6 +212,9 @@ impl Args {
     pub(crate) fn profile_edits(&self, now: &RenderSettings) -> Vec<&'static str> {
         let mut base = super::Args::defaults();
         base.seed_profile(self.profile);
+        // The bake thread's mode unset is the session's (a window's or a headless run's), not
+        // an edit.
+        base.headless = self.headless;
         // The hint is the profile's only under an explicit `--profile`; not an edit.
         base.output_hint = self.output_hint;
         base.render_settings().changed_fields(now)
@@ -272,9 +275,11 @@ impl Args {
                 reach: b.reach,
                 edit_ms: b.edit_ms,
                 dig_reach: b.dig_reach,
+                ring1_stretch: b.ring1_stretch,
                 tiers: b.tiers,
                 drain: b.drain,
             },
+            bake_thread: self.bake_thread(),
             build: BuildSettings {
                 mirror_budget_bytes: self
                     .mirror_budget
@@ -331,11 +336,12 @@ mod tests {
     }
 
     /// The fly-through's own values over a profile's: the records sized to the residency,
-    /// the key light's penumbra ([`crate::DEFAULT_PENUMBRA`]), and no output hint without
-    /// `--profile`.
+    /// the key light's penumbra ([`crate::DEFAULT_PENUMBRA`]), the bake thread on (a window's
+    /// default; every profile's is off), and no output hint without `--profile`.
     fn fly_through(p: Profile, hint: bool) -> RenderSettings {
         let mut s = RenderSettings::profile(p);
         s.lighting.penumbra = crate::DEFAULT_PENUMBRA;
+        s.bake_thread = true;
         s.build.record_chunks = Some(crate::stream_record_chunks(s.build.residency));
         if !hint {
             s.output_hint = None;

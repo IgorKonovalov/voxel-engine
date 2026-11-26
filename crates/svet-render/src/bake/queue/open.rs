@@ -1,19 +1,24 @@
 //! The queue's job opening, its view census and the withdrawal of passed faces.
 
+use super::lister::POOLED_LEVEL;
 use super::*;
 use crate::gpu_world::COLUMN_NONE;
 
 impl BakeQueue {
     /// Opens jobs in [`BakeQueue::order`] while the open ones hold under two slices of `cap`
-    /// samples: each a ready candidate's faces at the brick level.
+    /// samples: each a ready candidate's faces at the brick level. A pooled opening (the bake
+    /// thread's, [`BakeQueue::lists_off_the_loop`]) admits while the projection (the loop's
+    /// samples left and the pool's estimates, [`BakeQueue::projection`]) is under
+    /// [`POOLED_LEVEL`] caps, each candidate at its bound times the measured fill, and counts
+    /// only the candidates found not ready against its checks.
     pub(in crate::bake) fn open(
         &mut self,
         run: &BakeRun<'_>,
         store: &mut Store,
-        view: &QueueView<'_>,
+        view: &QueueView,
         cap: u64,
     ) -> Result<(), BakeError> {
-        let gpu = run.gpu;
+        let gpu = run.mirror;
         let eye = view.eye.map(|v| (v / 64.0).floor() as i32);
         let order = self.order;
         self.score_and_census(run, store, view, eye);
@@ -46,9 +51,17 @@ impl BakeQueue {
         // across threads; a sliced step lists them in batches and stops at two slices of
         // samples.
         let parallel = view.samples.is_some();
+        // A sliced opening on the bake thread hands its batches to the listing pool and does not
+        // wait for them: they count as open at their bounds until they are pushed.
+        let off_loop = !parallel && self.lists_off_the_loop();
+        let level = if off_loop {
+            POOLED_LEVEL * cap
+        } else {
+            2 * cap
+        };
         let mut ready: Vec<(u8, [i32; 3])> = Vec::new();
         // The loop's samples left, read once (it walks every open face) and then counted on.
-        let mut left = self.lp.samples_left();
+        let mut left = self.projection();
         let angle_needs = self.census_every_opening;
         let nearest_in_view = angle_needs
             .then(|| self.nearest_in_view(eye, view))
@@ -67,33 +80,36 @@ impl BakeQueue {
         let mut full_blank = false;
         let stops = |left: u64, checked: &[usize; 2], class: u8, ready0: usize| {
             if tiered {
-                left >= 2 * cap || checked[1] >= checks || (class == 1 && ready0 > 0)
+                left >= level || checked[1] >= checks || (class == 1 && ready0 > 0)
             } else {
-                left >= 2 * cap || checked[0] >= checks
+                left >= level || checked[0] >= checks
             }
         };
         while let Some(Cand {
             class, coarse, c, ..
         }) = self.walk_next(&mut lead, &mut next, tiered, checked[0] >= checks)
         {
+            if self.box_waits() {
+                break;
+            }
             // A kept candidate pushed, or listed faceless, since the order was scored has left
             // the pool; a class change re-scores the order before the walk.
-            if self.pool.get(&c) != Some(&(class, coarse)) {
+            if self.pool.get(&c) != Some(&(class, coarse)) || self.in_listing(c) {
                 continue;
             }
-            if stops(est, &checked, class, ready0) {
+            if stops(est, &checked, class, ready0) || self.pool_guard_full(off_loop, batch.len()) {
                 if batch.is_empty() {
                     next -= 1;
                     break;
                 }
                 self.laps.lap(S_CHECKS);
-                let pushed = self.push_batch(run, store, eye, &classes, &mut batch)?;
+                let pushed = self.list_batch(run, store, eye, &classes, &mut batch, off_loop)?;
                 self.laps.lap(S_LIST);
                 left += pushed.samples;
                 ready0 -= pushed.refused0;
                 full_blank |= pushed.full_blank;
                 est = left;
-                if stops(est, &checked, class, ready0) {
+                if stops(est, &checked, class, ready0) || self.pool_guard_full(off_loop, 0) {
                     next -= 1;
                     break;
                 }
@@ -121,29 +137,11 @@ impl BakeQueue {
                 continue;
             }
             self.blocked.remove(&c);
-            if partial {
-                self.partial_checked.insert(c);
-            } else {
-                self.partial_checked.remove(&c);
+            if off_loop {
+                // A pooled opening's checks count the candidates found not ready.
+                checked[if tiered { usize::from(class) } else { 0 }] -= 1;
             }
-            if provisional {
-                self.provisional_checked.insert(c);
-            } else {
-                self.provisional_checked.remove(&c);
-            }
-            if self.zero_rule
-                && class == 0
-                && !partial
-                && !provisional
-                && self.rule_holds(gpu, coord, lr)
-            {
-                self.ruled_checked.insert(c);
-            } else {
-                self.ruled_checked.remove(&c);
-                if self.rule_reading && self.zero_rule {
-                    self.note_rule_missed(gpu, view, eye, c, class, partial, provisional);
-                }
-            }
+            self.note_checked(gpu, view, eye, c, class, (partial, provisional));
             if class == 0 {
                 ready0 += 1;
             }
@@ -154,12 +152,17 @@ impl BakeQueue {
                 ready.push((class, c));
                 continue;
             }
-            est += self.listing_bound(c, class, eye);
+            est += if off_loop {
+                self.pooled_bound(c, class, eye)
+            } else {
+                self.listing_bound(c, class, eye)
+            };
             batch.push((class, c));
         }
         self.laps.lap(S_CHECKS);
+        self.stats.pool_guard += u64::from(self.pool_guard_full(off_loop, batch.len()));
         if !batch.is_empty() {
-            let pushed = self.push_batch(run, store, eye, &classes, &mut batch)?;
+            let pushed = self.list_batch(run, store, eye, &classes, &mut batch, off_loop)?;
             full_blank |= pushed.full_blank;
             self.laps.lap(S_LIST);
         }
@@ -179,6 +182,65 @@ impl BakeQueue {
         self.ruled_checked.clear();
         self.rule_missed_checked.clear();
         Ok(())
+    }
+
+    /// Notes what a ready candidate's checks found, for its listing: whether its place is
+    /// `partial` or `provisional`, and whether the rule answers it with a zero record.
+    fn note_checked(
+        &mut self,
+        gpu: &Shadow,
+        view: &QueueView,
+        eye: [i32; 3],
+        c: [i32; 3],
+        class: u8,
+        (partial, provisional): (bool, bool),
+    ) {
+        if partial {
+            self.partial_checked.insert(c);
+        } else {
+            self.partial_checked.remove(&c);
+        }
+        if provisional {
+            self.provisional_checked.insert(c);
+        } else {
+            self.provisional_checked.remove(&c);
+        }
+        let lr = gpu.light_radius();
+        if self.zero_rule
+            && class == 0
+            && !partial
+            && !provisional
+            && self.rule_holds(gpu, ChunkCoord(c), lr)
+        {
+            self.ruled_checked.insert(c);
+        } else {
+            self.ruled_checked.remove(&c);
+            if self.rule_reading && self.zero_rule {
+                self.note_rule_missed(gpu, view, eye, c, class, partial, provisional);
+            }
+        }
+    }
+
+    /// Lists `batch` in this step ([`BakeQueue::push_batch`]), or `off_loop` hands it to the
+    /// listing pool ([`BakeQueue::send_batch`]): the samples it adds to the open ones, at their
+    /// bounds while the pool holds them.
+    fn list_batch(
+        &mut self,
+        run: &BakeRun<'_>,
+        store: &mut Store,
+        eye: [i32; 3],
+        classes: &[u8],
+        batch: &mut Vec<(u8, [i32; 3])>,
+        off_loop: bool,
+    ) -> Result<Pushed, BakeError> {
+        if off_loop {
+            Ok(Pushed {
+                samples: self.send_batch(eye, classes, batch),
+                ..Pushed::default()
+            })
+        } else {
+            self.push_batch(run, store, eye, classes, batch)
+        }
     }
 
     /// The opening's next candidate in the kept order, `next` past it: lead `lead`'s, or once
@@ -207,7 +269,7 @@ impl BakeQueue {
     }
 
     /// The squared chunk distance of the nearest candidate in the view cone or the near shell.
-    fn nearest_in_view(&self, eye: [i32; 3], view: &QueueView<'_>) -> Option<i64> {
+    fn nearest_in_view(&self, eye: [i32; 3], view: &QueueView) -> Option<i64> {
         let (order, near) = (self.order, self.near);
         self.pool
             .iter()
@@ -224,10 +286,10 @@ impl BakeQueue {
         &mut self,
         run: &BakeRun<'_>,
         store: &mut Store,
-        view: &QueueView<'_>,
+        view: &QueueView,
         eye: [i32; 3],
     ) {
-        let gpu = run.gpu;
+        let gpu = run.mirror;
         let order = self.order;
         let near = self.near;
         self.sync_pool(run, store);
@@ -294,7 +356,7 @@ impl BakeQueue {
         &mut self,
         run: &BakeRun<'_>,
         eye: [i32; 3],
-        view: &QueueView<'_>,
+        view: &QueueView,
         cands: &[Cand],
     ) {
         if self.steps < self.reach_census_at + VIEW_REACH_EVERY && self.reach_census_at > 0 {
@@ -312,7 +374,7 @@ impl BakeQueue {
         in_view.sort_unstable();
         let n = in_view.len();
         let take = n.min(VIEW_REACH_SAMPLE);
-        let lr = run.gpu.light_radius();
+        let lr = run.mirror.light_radius();
         let mut not_ready = 0;
         for i in 0..take {
             let (_, c) = in_view[i * n / take.max(1)];
@@ -330,7 +392,7 @@ impl BakeQueue {
         &mut self,
         run: &BakeRun<'_>,
         store: &mut Store,
-        view: &QueueView<'_>,
+        view: &QueueView,
     ) {
         if !self.withdraw || view.samples.is_some() {
             return;
@@ -357,7 +419,7 @@ impl BakeQueue {
         if passed.is_empty() {
             return;
         }
-        let gpu = run.gpu;
+        let gpu = run.mirror;
         self.sync_pool(run, store);
         let mut seen: Vec<(i64, [i32; 3])> = self
             .pool
@@ -424,7 +486,7 @@ impl BakeQueue {
     pub(in crate::bake) fn view_census(
         &mut self,
         eye: [i32; 3],
-        view: &QueueView<'_>,
+        view: &QueueView,
         cands: &[Cand],
         jobs: &[([i32; 3], u8, bool)],
         lr: i32,
@@ -510,7 +572,7 @@ impl BakeQueue {
         &mut self,
         c: [i32; 3],
         eye: [i32; 3],
-        view: &QueueView<'_>,
+        view: &QueueView,
         nearest: Option<i64>,
     ) {
         let o = [0, 1, 2].map(|k| c[k] - eye[k]);
@@ -537,7 +599,7 @@ impl BakeQueue {
         &mut self,
         gpu: &GpuWorld,
         world: &World,
-        view: &QueueView<'_>,
+        view: &QueueView,
     ) -> ListingCensus {
         let t = stopwatch();
         let classes = self.classes(world.materials());
@@ -569,7 +631,7 @@ impl BakeQueue {
                 .collect()
         });
         let eye = view.eye.map(|v| (v / 64.0).floor() as i32);
-        let held = held_by_streamer(view.eye, view.lod_radius, view.resident);
+        let held = held_by_streamer(view.eye, view.lod_radius, view.resident_fn());
         let held = held.as_ref().map(|h| h as &dyn Fn(ChunkCoord) -> bool);
         let bands = view.focal_px.map(|focal_px| Bands {
             focal_px,
@@ -652,7 +714,7 @@ pub(in crate::bake) fn is_reach_bound(
 /// nothing and is skipped. The band is [`Bands::of_chunk`] at `view`'s focal length and
 /// `far_normal`; every chunk is near without a focal length.
 pub fn in_view_census(
-    view: &QueueView<'_>,
+    view: &QueueView,
     near: i32,
     far_normal: [f32; 2],
     chunks: impl IntoIterator<Item = ([i32; 3], u8, bool, u64)>,

@@ -2,13 +2,31 @@
 
 use super::*;
 
-/// Slots of the candidate tables a one-off bake's jobs take ([`run_jobs`]); the live queue's
-/// take the rest ([`QUEUE_SLOTS`]), so a dig's re-bake between two of its submits leaves its open
-/// jobs' tables.
-pub(super) const LOOP_SLOTS: usize = OPEN_JOBS - QUEUE_SLOTS;
+/// Slots of the candidate tables a one-off bake's jobs take ([`run_jobs`]), the first of
+/// [`OPEN_JOBS`]; the live queue's reserve is the rest ([`QUEUE_RESERVE`]), so a dig's re-bake
+/// between two of the queue's submits leaves its open jobs' tables.
+pub(super) const LOOP_SLOTS: usize = OPEN_JOBS - QUEUE_RESERVE;
 
-/// Slots the live queue's open jobs take, the last of [`OPEN_JOBS`].
+/// The live queue's reserve of slots, the last of [`OPEN_JOBS`]: the most its loop opens into
+/// ([`crate::THREAD_SLOTS`] and the `--bake-slots` reading take at most this many).
+pub(crate) const QUEUE_RESERVE: usize = 64;
+
+/// Slots the live queue's open jobs take in lockstep and the pre-roll, the last 16 of
+/// [`OPEN_JOBS`]; the bake thread's steps take [`crate::THREAD_SLOTS`] of the reserve
+/// ([`JobLoop::set_rows`]).
 pub(crate) const QUEUE_SLOTS: usize = 16;
+
+// The one-shot loop's slots and the queue's reserve do not meet, and both of the queue's
+// counts lie inside its reserve.
+const _: () = assert!(LOOP_SLOTS + QUEUE_RESERVE <= OPEN_JOBS);
+const _: () = assert!(LOOP_SLOTS == 192);
+const _: () = assert!(QUEUE_SLOTS <= QUEUE_RESERVE && crate::THREAD_SLOTS <= QUEUE_RESERVE);
+
+/// The last `n` slots of [`OPEN_JOBS`], `n` clamped to the queue's slots by mode
+/// ([`QUEUE_SLOTS`] to [`QUEUE_RESERVE`]).
+pub(crate) fn queue_rows(n: usize) -> std::ops::Range<usize> {
+    OPEN_JOBS - n.clamp(QUEUE_SLOTS, QUEUE_RESERVE)..OPEN_JOBS
+}
 
 /// What one submit of a [`JobLoop`] did.
 #[derive(Clone, Copy, Debug, Default)]
@@ -18,11 +36,65 @@ pub(crate) struct SubmitDone {
     pub seconds: f64,
     /// The dispatch's milliseconds on the GPU's timestamps, where the loop times its submits.
     pub gpu_ms: Option<f64>,
+    /// The submits read back whose time is in `gpu_ms`.
+    pub timed: u64,
     /// Of `samples`, those of jobs at the full count and those at a job's own count (the
     /// coarse pass), and `gpu_ms` split between them by those samples: an attribution of the
     /// dispatch's time by its share of the samples, not a measurement of each class.
     pub class_samples: [u64; 2],
     pub class_ms: [f64; 2],
+    /// The samples the submits timed in `gpu_ms` drew, kept or not (a withdrawn job's rounds,
+    /// a round past its face's stop): what that time paid for, where `samples` counts those
+    /// kept. Of them, those of ring-1 dig jobs and of other dig jobs ([`JobClass`]).
+    pub drawn: u64,
+    pub dig_drawn: [u64; 2],
+    /// The rays those samples traced and their lengths summed, in voxels.
+    pub rays: u64,
+    pub ray_len: f64,
+}
+
+impl SubmitDone {
+    /// Adds another collect's sums: the read-backs of both.
+    pub(crate) fn add(&mut self, w: &SubmitDone) {
+        self.samples += w.samples;
+        self.seconds += w.seconds;
+        if let Some(ms) = w.gpu_ms {
+            *self.gpu_ms.get_or_insert(0.0) += ms;
+        }
+        self.timed += w.timed;
+        for k in 0..2 {
+            self.class_samples[k] += w.class_samples[k];
+            self.class_ms[k] += w.class_ms[k];
+            self.dig_drawn[k] += w.dig_drawn[k];
+        }
+        self.drawn += w.drawn;
+        self.rays += w.rays;
+        self.ray_len += w.ray_len;
+    }
+}
+
+/// One read-back's rounds as drawn, kept or not ([`SubmitDone::drawn`]).
+#[derive(Default)]
+struct Drawn {
+    samples: u64,
+    dig: [u64; 2],
+    rays: u64,
+    ray_len: f64,
+}
+
+impl Drawn {
+    /// A round of a job of `class`, its entry's words as read back.
+    fn add(&mut self, class: JobClass, words: &[u32]) {
+        let samples = u64::from(words[5]);
+        self.samples += samples;
+        match class {
+            JobClass::Ring1 => self.dig[0] += samples,
+            JobClass::Dig => self.dig[1] += samples,
+            JobClass::Other => {}
+        }
+        self.rays += u64::from(words[15]);
+        self.ray_len += f64::from(f32::from_bits(words[16]));
+    }
 }
 
 /// Lanes of a workgroup that share an entry's samples (`BAKE_LANES` in bake.wgsl).
@@ -31,7 +103,8 @@ pub(crate) const BAKE_LANES: u32 = 64;
 /// Workgroups a dispatch row holds (`BAKE_ROW` in bake.wgsl): the entries span x then y.
 pub(crate) const BAKE_ROW: u32 = 32_768;
 
-/// Submits a loop holds unread at most ([`JobLoop::dispatch`]).
+/// Submits a loop holds unread at most ([`JobLoop::dispatch`]) in lockstep, the pre-roll and
+/// the one-shot bakes.
 pub(crate) const IN_FLIGHT: usize = 2;
 
 /// Bytes at the head of a submit's readback: its dispatch's two timestamps.
@@ -40,22 +113,10 @@ pub(super) const STAMP_BYTES: u64 = 16;
 /// A submit's entries: each `(job slot, face, rounds)`.
 pub(super) type Entries = Vec<(usize, usize, u32)>;
 
-/// A submit not read back yet: its entries in dispatch order (job slot, face, rounds) and the
-/// buffer its results are copied to, mapped when `ready` reads 1.
-pub(super) struct InFlight {
+/// A submit planned and not read back yet: its entries in dispatch order (job slot, face,
+/// rounds); the render half holds its buffers ([`Issuer`]).
+pub(super) struct Planned {
     pub(super) entries: Entries,
-    pub(super) count: u64,
-    pub(super) staging: wgpu::Buffer,
-    pub(super) ready: Arc<std::sync::atomic::AtomicU8>,
-    pub(super) timed: bool,
-    pub(super) t: Instant,
-}
-
-/// The loop's own timestamps, resolved into each submit's readback.
-pub(super) struct LoopTimer {
-    pub(super) queries: wgpu::QuerySet,
-    pub(super) resolve: wgpu::Buffer,
-    pub(super) period_ns: f32,
 }
 
 /// The job loop, resumable: jobs pending and open, the table slots free, and what it did. Each
@@ -68,19 +129,26 @@ pub(crate) struct JobLoop {
     /// nothing, each slot freed once its rounds are.
     pub(super) withdrawn: Vec<OpenJob>,
     pub(super) free: Vec<usize>,
-    pub(super) in_flight: VecDeque<InFlight>,
-    pub(super) staging: Vec<wgpu::Buffer>,
-    /// Whether the loop times its submits on its own timestamps, and the timer once made
-    /// (`Some(None)`: the device has no timestamps).
-    pub(super) timed: bool,
-    pub(super) timer: Option<Option<LoopTimer>>,
+    /// The slots a job may open into: a slot freed outside them is not free again
+    /// ([`JobLoop::set_rows`]).
+    pub(super) rows: std::ops::Range<usize>,
+    pub(super) in_flight: VecDeque<Planned>,
+    /// The jobs opened since the last submit went out, `(slot, chunk)`: the render half writes
+    /// their candidate tables ahead of it.
+    pub(super) new_tables: Vec<(usize, ChunkCoord)>,
+    /// The newest frame message the bake half has read: a job is stamped with it as it joins
+    /// the loop ([`JobLoop::stamps`]).
+    pub stamp: u64,
+    /// Each pending or open job's stamp, by chunk: a change in a later message stales its
+    /// result.
+    pub(super) stamps: std::collections::HashMap<[i32; 3], u64>,
     /// The samples the last [`JobLoop::dispatch`] planned: 0 when it dispatched nothing.
     pub last_samples: u64,
     /// The dispatches' plans that stopped at the sample cap, at the entries' batch, and out of
     /// rounds to plan, since the loop started.
     pub plan_stops: [u64; 3],
-    /// The light epoch the open jobs' tables were last written at ([`JobLoop::refresh_tables`]).
-    pub(super) tables_at: Option<u64>,
+    /// Of the plans out of rounds, those that found no table slot free.
+    pub slotless_stops: u64,
     /// Each ended job's chunk and the samples its faces drew, where the loop keeps them
     /// (`Some`); the owner drains it.
     pub ended: Option<Vec<(ChunkCoord, u64)>>,
@@ -105,23 +173,46 @@ impl JobLoop {
             pending: jobs.into(),
             open: Vec::new(),
             withdrawn: Vec::new(),
-            free: slots.rev().collect(),
+            free: slots.clone().rev().collect(),
+            rows: slots,
             in_flight: VecDeque::new(),
-            staging: Vec::new(),
-            timed: false,
-            timer: None,
+            new_tables: Vec::new(),
+            stamp: 0,
+            stamps: Default::default(),
             last_samples: 0,
             plan_stops: [0; 3],
-            tables_at: None,
+            slotless_stops: 0,
             ended: None,
         }
     }
 
-    /// The loop, timing each submit on its own GPU timestamps where the device has them
-    /// ([`SubmitDone::gpu_ms`]).
-    pub(crate) fn timed(mut self) -> Self {
-        self.timed = true;
-        self
+    /// Sets the slots jobs open into to `rows`: a free slot outside them leaves the free list, and
+    /// one inside that no job holds becomes free, taken after those free already. A job open in
+    /// a slot outside keeps it until it closes, and the slot is not free again.
+    pub(crate) fn set_rows(&mut self, rows: std::ops::Range<usize>) {
+        self.free.retain(|s| rows.contains(s));
+        let held: std::collections::HashSet<usize> = self
+            .open
+            .iter()
+            .chain(&self.withdrawn)
+            .map(|j| j.slot)
+            .chain(self.free.iter().copied())
+            .collect();
+        let new: Vec<usize> = rows.clone().filter(|s| !held.contains(s)).collect();
+        self.free.splice(0..0, new);
+        self.rows = rows;
+    }
+
+    /// The jobs open.
+    pub(crate) fn open_jobs(&self) -> usize {
+        self.open.len()
+    }
+
+    /// Frees `slot` where jobs open into it ([`JobLoop::set_rows`]).
+    fn release(free: &mut Vec<usize>, rows: &std::ops::Range<usize>, slot: usize) {
+        if rows.contains(&slot) {
+            free.push(slot);
+        }
     }
 
     /// Adds a job behind the pending ones.
@@ -129,6 +220,7 @@ impl JobLoop {
         self.report.chunks += 1;
         self.done.chunks += 1;
         self.done.faces += job.faces.faces() as u64;
+        self.stamps.insert(job.coord.0, self.stamp);
         self.pending.push_back(job);
     }
 
@@ -137,6 +229,7 @@ impl JobLoop {
         self.report.chunks += 1;
         self.done.chunks += 1;
         self.done.faces += job.faces.faces() as u64;
+        self.stamps.insert(job.coord.0, self.stamp);
         self.pending.push_front(job);
     }
 
@@ -183,6 +276,7 @@ impl JobLoop {
         let pending = std::mem::take(&mut self.pending);
         for job in pending {
             if pred(job.coord) {
+                self.stamps.remove(&job.coord.0);
                 out.push(Withdrawn {
                     coord: job.coord,
                     first_word: job.first_word,
@@ -200,6 +294,7 @@ impl JobLoop {
                 continue;
             }
             let job = self.open.remove(k);
+            self.stamps.remove(&job.coord.0);
             out.push(Withdrawn {
                 coord: job.coord,
                 first_word: job.first_word,
@@ -211,7 +306,7 @@ impl JobLoop {
                     .sum(),
             });
             if job.states.iter().all(|s| s.queued == 0) {
-                self.free.push(job.slot);
+                Self::release(&mut self.free, &self.rows, job.slot);
             } else {
                 self.withdrawn.push(job);
             }
@@ -249,6 +344,17 @@ impl JobLoop {
 
     /// [`JobLoop::samples_left`] of the jobs whose chunks `of` holds.
     pub(super) fn dig_samples_left(&self, of: impl Fn(&[i32; 3]) -> bool) -> u64 {
+        let pending: u64 = self
+            .pending
+            .iter()
+            .filter(|j| of(&j.coord.0))
+            .map(|j| j.samples)
+            .sum();
+        self.open_samples_left(&of) + pending
+    }
+
+    /// Samples the open jobs whose chunks `of` holds still have to plan.
+    pub(crate) fn open_samples_left(&self, of: impl Fn(&[i32; 3]) -> bool) -> u64 {
         let live = |s: &FaceState| {
             if s.done {
                 0
@@ -256,33 +362,16 @@ impl JobLoop {
                 u64::from(s.n_max.saturating_sub(s.n + s.queued))
             }
         };
-        let open: u64 = self
-            .open
+        self.open
             .iter()
             .filter(|j| of(&j.coord.0))
             .map(|j| j.states.iter().map(live).sum::<u64>())
-            .sum();
-        let pending: u64 = self
-            .pending
-            .iter()
-            .filter(|j| of(&j.coord.0))
-            .map(|j| j.samples)
-            .sum();
-        open + pending
+            .sum()
     }
 
-    /// Writes each open job's candidate table again from the ranges `run.gpu` holds now, when a
-    /// sync since the last write moved, wrote or dropped a range ([`GpuWorld::light_epoch`]). A
-    /// job opened since then wrote its own table from the same ranges.
-    pub(crate) fn refresh_tables(&mut self, run: &BakeRun<'_>) {
-        let epoch = run.gpu.light_epoch();
-        if self.tables_at == Some(epoch) {
-            return;
-        }
-        self.tables_at = Some(epoch);
-        for job in &self.open {
-            write_job_table(run, job.coord, job.slot);
-        }
+    /// The open jobs' slots and chunks, for the render half's table refresh.
+    pub(crate) fn open_tables(&self) -> Vec<(usize, ChunkCoord)> {
+        self.open.iter().map(|j| (j.slot, j.coord)).collect()
     }
 
     /// One submit of at most about `sample_cap` samples (and at least one entry), waited on and
@@ -295,25 +384,25 @@ impl JobLoop {
     pub(crate) fn submit(
         &mut self,
         run: &BakeRun<'_>,
-        bind: &wgpu::BindGroup,
+        half: &mut dyn RenderHalf,
         store: &mut Store,
         settings: &BakeSettings,
         sample_cap: u64,
         sink: &mut BlockSink<'_>,
         progress: &mut dyn FnMut(&BakeProgress),
     ) -> Option<SubmitDone> {
-        self.collect(run, store, settings, sink, progress, 0);
-        if !self.dispatch(run, bind, store, settings, sample_cap, sink, progress) {
+        self.collect(run, half, store, settings, sink, progress, 0);
+        if !self.dispatch(run, half, store, settings, sample_cap, sink, progress) {
             return None;
         }
-        Some(self.collect(run, store, settings, sink, progress, 0))
+        Some(self.collect(run, half, store, settings, sink, progress, 0))
     }
 
-    /// Plans and submits one dispatch of at most about `sample_cap` samples (and at least one
-    /// entry): open jobs first, then pending ones opened into free slots, each face's rounds
-    /// from the first sample no submit has drawn yet. Its results are copied to a readback
-    /// buffer and mapped; nothing waits. A job with nothing to draw ends here, its block to
-    /// `sink`. False when no entry was left to dispatch.
+    /// Plans one dispatch of at most about `sample_cap` samples (and at least one entry): open
+    /// jobs first, then pending ones opened into free slots, each face's rounds from the first
+    /// sample no submit has drawn yet; the render half issues it ([`RenderHalf::issue`]), the
+    /// opened jobs' tables first. A job with nothing to draw ends here, its block to `sink`.
+    /// False when no entry was left to dispatch.
     #[allow(
         clippy::too_many_arguments,
         reason = "the frame's parts, the store, the settings, the cap and the two callbacks are independent"
@@ -321,14 +410,13 @@ impl JobLoop {
     pub(crate) fn dispatch(
         &mut self,
         run: &BakeRun<'_>,
-        bind: &wgpu::BindGroup,
+        half: &mut dyn RenderHalf,
         store: &mut Store,
         settings: &BakeSettings,
         sample_cap: u64,
         sink: &mut BlockSink<'_>,
         progress: &mut dyn FnMut(&BakeProgress),
     ) -> bool {
-        self.start_timer(run);
         let round = settings.round.max(1);
         let per_submit = (SUBMIT_SAMPLES / u64::from(round)).max(1) as usize;
         let batch = settings
@@ -346,6 +434,7 @@ impl JobLoop {
             },
         };
         let (budget, plan) = self.plan_rounds(&ctx, store, batch, sample_cap, sink, progress);
+        half.tables(&std::mem::take(&mut self.new_tables));
         if budget.entries == 0 {
             self.last_samples = 0;
             return false;
@@ -359,36 +448,19 @@ impl JobLoop {
             2
         };
         self.plan_stops[stop] += 1;
+        self.slotless_stops += u64::from(stop == 2 && self.free.is_empty());
         let (input, entries, jobs_in) = self.fill_entries(&plan, round, budget.entries);
-        self.send(run, bind, settings, &input, entries, jobs_in);
+        self.report.max_jobs_in_submit = self.report.max_jobs_in_submit.max(jobs_in);
+        half.issue(Prepared {
+            input,
+            seed: settings.seed,
+            clamp: settings.clamp,
+            sky: run.sky,
+            key: run.key,
+            timer: settings.timer.clone(),
+        });
+        self.in_flight.push_back(Planned { entries });
         true
-    }
-
-    /// The loop's own timestamp queries, made at its first timed dispatch where the device
-    /// has them.
-    fn start_timer(&mut self, run: &BakeRun<'_>) {
-        let (device, queue) = (run.device, run.queue);
-        if self.timed && self.timer.is_none() {
-            self.timer = Some(
-                device
-                    .features()
-                    .contains(wgpu::Features::TIMESTAMP_QUERY)
-                    .then(|| LoopTimer {
-                        queries: device.create_query_set(&wgpu::QuerySetDescriptor {
-                            label: Some("bake loop timer"),
-                            ty: wgpu::QueryType::Timestamp,
-                            count: 2,
-                        }),
-                        resolve: device.create_buffer(&wgpu::BufferDescriptor {
-                            label: Some("bake loop timer resolve"),
-                            size: STAMP_BYTES,
-                            usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
-                            mapped_at_creation: false,
-                        }),
-                        period_ns: queue.get_timestamp_period(),
-                    }),
-            );
-        }
     }
 
     /// The rounds each live face takes in a submit of at most about `sample_cap` samples and
@@ -423,10 +495,12 @@ impl JobLoop {
                 break;
             };
             let job = ctx.open(next, slot);
+            self.new_tables.push((slot, job.coord));
             if job.live.is_empty() {
                 self.free.push(slot);
                 let (coord, first, block) = ctx.close(job, report);
-                sink(store, coord, first, block);
+                let stamp = self.stamps.remove(&coord.0).unwrap_or(self.stamp);
+                sink(store, coord, first, block, stamp);
                 done.chunks_done += 1;
                 progress(done);
                 continue;
@@ -493,170 +567,49 @@ impl JobLoop {
         (input, entries, jobs_in)
     }
 
-    /// Writes the dispatch's input, records the pass and its readback, submits and maps it,
-    /// and puts it in flight.
-    fn send(
-        &mut self,
-        run: &BakeRun<'_>,
-        bind: &wgpu::BindGroup,
-        settings: &BakeSettings,
-        input: &[[u32; FACE_WORDS]],
-        entries: Entries,
-        jobs_in: u64,
-    ) {
-        let (device, queue) = (run.device, run.queue);
-        let report = &mut self.report;
-        let count = input.len() as u32;
-        let (key_dir, key_radius) = run.key.unwrap_or(([0.0; 3], 0.0));
-        let uniform = [
-            count,
-            settings.seed,
-            ((run.gpu.light_radius() * 64) as f32).to_bits(),
-            u32::from(settings.clamp),
-            run.sky,
-            u32::from(run.key.is_some()),
-            0,
-            0,
-            key_dir[0].to_bits(),
-            key_dir[1].to_bits(),
-            key_dir[2].to_bits(),
-            key_radius.to_bits(),
-        ];
-        queue.write_buffer(&run.pipeline.job, 0, bytemuck::cast_slice(&uniform));
-        queue.write_buffer(&run.pipeline.faces, 0, bytemuck::cast_slice(input));
-        let own = self.timer.as_ref().and_then(Option::as_ref);
-        let size = STAMP_BYTES + u64::from(count) * FACE_BYTES;
-        let staging = match self.staging.iter().position(|b| b.size() >= size) {
-            Some(k) => self.staging.swap_remove(k),
-            None => device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("bake readback"),
-                size: STAMP_BYTES + BAKE_BATCH_FACES as u64 * FACE_BYTES,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            }),
-        };
-        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        {
-            let writes = match own {
-                Some(t) => Some(wgpu::ComputePassTimestampWrites {
-                    query_set: &t.queries,
-                    beginning_of_pass_write_index: Some(0),
-                    end_of_pass_write_index: Some(1),
-                }),
-                None => settings.timer.as_ref().map(|t| t.writes()),
-            };
-            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("bake"),
-                timestamp_writes: writes,
-            });
-            pass.set_pipeline(&run.pipeline.pipeline);
-            pass.set_bind_group(0, run.world_bind, &[]);
-            pass.set_bind_group(3, bind, &[]);
-            pass.dispatch_workgroups(count.min(BAKE_ROW), count.div_ceil(BAKE_ROW), 1);
-        }
-        match own {
-            Some(t) => {
-                enc.resolve_query_set(&t.queries, 0..2, &t.resolve, 0);
-                enc.copy_buffer_to_buffer(&t.resolve, 0, &staging, 0, STAMP_BYTES);
-            }
-            None => {
-                if let Some(timer) = &settings.timer {
-                    timer.resolve(&mut enc);
-                }
-            }
-        }
-        enc.copy_buffer_to_buffer(
-            &run.pipeline.faces,
-            0,
-            &staging,
-            STAMP_BYTES,
-            u64::from(count) * FACE_BYTES,
-        );
-        report.max_jobs_in_submit = report.max_jobs_in_submit.max(jobs_in);
-        let t = stopwatch();
-        queue.submit([enc.finish()]);
-        let ready = Arc::new(std::sync::atomic::AtomicU8::new(0));
-        let flag = ready.clone();
-        staging.map_async(wgpu::MapMode::Read, ..size, move |r| {
-            flag.store(
-                if r.is_ok() { 1 } else { 2 },
-                std::sync::atomic::Ordering::Release,
-            );
-        });
-        self.in_flight.push_back(InFlight {
-            entries,
-            count: u64::from(count),
-            staging,
-            ready,
-            timed: own.is_some(),
-            t,
-        });
-    }
-
     /// Reads back the submits whose results are mapped, oldest first, stopping at the first
-    /// that is not, after polling the device until at most `unread` are left unread: each face's
-    /// rounds added in sample order, its stop read after each, and each ended job's block to
-    /// `sink`. The sum of what the submits read did; zero samples when none was read.
+    /// that is not, after the render half waits until at most `unread` are left unread: each
+    /// face's rounds added in sample order, its stop read after each, and each ended job's block
+    /// to `sink`. The sum of what the submits read did; zero samples when none was read.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the frame's parts, the store, the settings, the two callbacks and the wait are independent"
+    )]
     pub(crate) fn collect(
         &mut self,
         run: &BakeRun<'_>,
+        half: &mut dyn RenderHalf,
         store: &mut Store,
         settings: &BakeSettings,
         sink: &mut BlockSink<'_>,
         progress: &mut dyn FnMut(&BakeProgress),
         unread: usize,
     ) -> SubmitDone {
-        use std::sync::atomic::Ordering;
-        let device = run.device;
         let mut out = SubmitDone::default();
-        while let Some(front) = self.in_flight.front() {
-            if front.ready.load(Ordering::Acquire) == 0 {
-                if self.in_flight.len() <= unread {
-                    break;
-                }
-                let _ = device.poll(wgpu::PollType::wait_indefinitely());
-                continue;
-            }
-            let f = self.in_flight.pop_front().expect("front read above");
-            let mapped = f.ready.load(Ordering::Acquire) == 1;
-            let seconds = seconds_since(f.t);
-            let size = STAMP_BYTES + f.count * FACE_BYTES;
-            let bytes: Vec<u8> = if mapped {
-                let b = f
-                    .staging
-                    .get_mapped_range(..size)
-                    .expect("bake readback mapped")
-                    .to_vec();
-                f.staging.unmap();
-                b
-            } else {
-                vec![0; size as usize]
+        while !self.in_flight.is_empty() {
+            let Some(rb) = half.collect(unread) else {
+                break;
             };
-            self.staging.push(f.staging);
-            let gpu_ms = (f.timed && mapped).then(|| {
-                let t: &[u64] = bytemuck::cast_slice(&bytes[..STAMP_BYTES as usize]);
-                let period = self
-                    .timer
-                    .as_ref()
-                    .and_then(Option::as_ref)
-                    .map_or(1.0, |t| t.period_ns);
-                t[1].saturating_sub(t[0]) as f64 * f64::from(period) / 1e6
-            });
+            let f = self
+                .in_flight
+                .pop_front()
+                .expect("one planned a submit read back");
+            let (mapped, seconds, gpu_ms) = (rb.mapped, rb.seconds, rb.gpu_ms);
             let report = &mut self.report;
             report.gpu_seconds += seconds;
-            if !f.timed
-                && let Some(timer) = &settings.timer
-            {
-                report.dispatch_seconds += timer.read_ms(device) / 1e3;
+            if let Some(ms) = rb.timer_ms {
+                report.dispatch_seconds += ms / 1e3;
             }
             report.submits += 1;
             let samples_before = report.samples;
             // Each face's rounds in order: the stop is read after each, and a round past it is
             // waste.
-            let out_words: &[u32] = bytemuck::cast_slice(&bytes[STAMP_BYTES as usize..]);
+            let out_words: &[u32] = &rb.words;
             let mut e = 0usize;
             let mut at = 0usize;
             let mut class_samples = [0u64; 2];
+            // Every round's samples drawn, kept or not, by its job's class.
+            let mut drawn = Drawn::default();
             for &(slot, i, r) in &f.entries {
                 if self.open.get(at).is_none_or(|j| j.slot != slot) {
                     match self.open.iter().position(|j| j.slot == slot) {
@@ -669,7 +622,9 @@ impl JobLoop {
                                 .find(|j| j.slot == slot)
                                 .expect("a job with entries in flight stays open or withdrawn");
                             for _ in 0..r {
-                                let samples = out_words[e * FACE_WORDS + 5];
+                                let words = &out_words[e * FACE_WORDS..(e + 1) * FACE_WORDS];
+                                let samples = words[5];
+                                drawn.add(z.class, words);
                                 e += 1;
                                 z.states[i].queued -= samples;
                                 report.wasted += u64::from(samples);
@@ -679,11 +634,13 @@ impl JobLoop {
                     }
                 }
                 let class = usize::from(self.open[at].own_count);
+                let job_class = self.open[at].class;
                 let s = &mut self.open[at].states[i];
                 for _ in 0..r {
                     let words = &out_words[e * FACE_WORDS..(e + 1) * FACE_WORDS];
                     e += 1;
                     let samples = words[5];
+                    drawn.add(job_class, words);
                     s.queued -= samples;
                     // A readback that failed to map draws its rounds again in a later submit,
                     // from the face's first sample not drawn.
@@ -712,11 +669,11 @@ impl JobLoop {
                 }
             }
             // A withdrawn job whose rounds are all read back frees its slot.
-            let free = &mut self.free;
+            let (free, rows) = (&mut self.free, &self.rows);
             self.withdrawn.retain(|j| {
                 let drained = j.states.iter().all(|s| s.queued == 0);
                 if drained {
-                    free.push(j.slot);
+                    Self::release(free, rows, j.slot);
                 }
                 !drained
             });
@@ -726,6 +683,11 @@ impl JobLoop {
             out.seconds += seconds;
             if let Some(ms) = gpu_ms {
                 *out.gpu_ms.get_or_insert(0.0) += ms;
+                out.timed += 1;
+                out.drawn += drawn.samples;
+                out.dig_drawn = [0, 1].map(|k| out.dig_drawn[k] + drawn.dig[k]);
+                out.rays += drawn.rays;
+                out.ray_len += drawn.ray_len;
                 let all = class_samples[0] + class_samples[1];
                 for ((s, m), &n) in out
                     .class_samples
@@ -768,13 +730,14 @@ impl JobLoop {
             let j = &self.open[k];
             if j.live.is_empty() && j.states.iter().all(|s| s.queued == 0) {
                 let job = self.open.remove(k);
-                self.free.push(job.slot);
+                Self::release(&mut self.free, &self.rows, job.slot);
                 if let Some(ended) = self.ended.as_mut() {
                     let drawn = job.states.iter().map(|s| u64::from(s.n)).sum();
                     ended.push((job.coord, drawn));
                 }
                 let (coord, first, block) = ctx.close(job, &mut self.report);
-                sink(store, coord, first, block);
+                let stamp = self.stamps.remove(&coord.0).unwrap_or(self.stamp);
+                sink(store, coord, first, block, stamp);
                 self.done.chunks_done += 1;
             } else {
                 k += 1;
@@ -793,8 +756,9 @@ pub(crate) struct Withdrawn {
     pub drawn: u64,
 }
 
-/// Where an ended job's block goes: the store, its chunk, its place and its words.
-pub(crate) type BlockSink<'a> = dyn FnMut(&mut Store, ChunkCoord, u64, Vec<u32>) + 'a;
+/// Where an ended job's block goes: the store, its chunk, its place, its words, and its job's
+/// stamp ([`JobLoop::stamps`]).
+pub(crate) type BlockSink<'a> = dyn FnMut(&mut Store, ChunkCoord, u64, Vec<u32>, u64) + 'a;
 
 /// A submit's room: its entries against the batch, its samples against the cap.
 pub(super) struct SubmitRoom {
@@ -816,22 +780,6 @@ impl SubmitRoom {
     }
 }
 
-/// Stages `coord`'s candidate table and its chunk in table slot `slot`.
-pub(super) fn write_job_table(run: &BakeRun<'_>, coord: ChunkCoord, slot: usize) {
-    let table = job_table(run.gpu, coord);
-    let used = (1 + table.count as usize) * 16;
-    let at = slot as u64 * TABLE_SLOT_BYTES;
-    let tables = &run.pipeline.tables;
-    run.queue
-        .write_buffer(tables, at, &bytemuck::bytes_of(&table)[..used]);
-    let chunk = [coord.0[0], coord.0[1], coord.0[2], 0];
-    run.queue.write_buffer(
-        tables,
-        at + (TABLE_SLOT_WORDS - 1) * 16,
-        bytemuck::cast_slice(&chunk),
-    );
-}
-
 /// A chunk's job while its faces run.
 pub(super) struct OpenJob {
     pub(super) coord: ChunkCoord,
@@ -845,6 +793,8 @@ pub(super) struct OpenJob {
     pub(super) own_count: bool,
     /// [`Job::tier`].
     pub(super) tier: u8,
+    /// [`Job::class`]: its samples' class in [`SubmitDone::dig_drawn`].
+    pub(super) class: JobClass,
     pub(super) states: Vec<FaceState>,
     /// The faces still running.
     pub(super) live: Vec<usize>,
@@ -860,7 +810,8 @@ pub(super) struct JobCtx<'a, 'b> {
 }
 
 impl JobCtx<'_, '_> {
-    /// The job at `coord`: its faces' states, and its parameters and table staged in `slot`.
+    /// The job at `coord` in `slot`: its faces' states. The caller hands `(slot, coord)` to the
+    /// render half, which writes its candidate table ([`JobLoop::new_tables`]).
     pub(super) fn open(&self, job: Job, slot: usize) -> OpenJob {
         let Job {
             coord,
@@ -871,8 +822,8 @@ impl JobCtx<'_, '_> {
             brick_samples,
             key_only,
             tier,
+            class,
         } = job;
-        write_job_table(self.run, coord, slot);
         // A job's own count (the live queue's coarse pass) on cells of a brick draws each
         // direction's samples on `ceil(count / BAKE_LANES)` of its faces, spread evenly through
         // them in key order, so each entry fills its workgroup; the record is their mean.
@@ -964,6 +915,7 @@ impl JobCtx<'_, '_> {
             key_only,
             own_count,
             tier,
+            class,
             states,
             live,
             slot,
