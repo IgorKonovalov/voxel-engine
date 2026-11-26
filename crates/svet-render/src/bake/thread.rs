@@ -44,8 +44,12 @@ struct Outbox<O> {
 struct Shared<M, O> {
     inbox: Mutex<Option<M>>,
     outbox: Mutex<Outbox<O>>,
-    /// The bake thread's wait: a message arrived, room was made, or the stop.
-    wake: Condvar,
+    /// The bake thread's wait for a message, waited under the inbox's lock: a message arrived,
+    /// or the stop.
+    arrived: Condvar,
+    /// The bake thread's wait at the outbox's cap, waited under the outbox's lock: room was
+    /// made, or the stop.
+    room: Condvar,
     /// The render thread's waits ([`BakeThread::take_until`], [`BakeThread::wait_step`]): an
     /// entry made, a put waiting at the cap, or the thread ended.
     made: Condvar,
@@ -63,16 +67,17 @@ struct Shared<M, O> {
 }
 
 impl<M, O> Shared<M, O> {
-    /// Sets the stop and wakes the thread: under each lock in turn, so it is either waiting
-    /// (and woken) or past its check of the stop.
+    /// Sets the stop and wakes the thread: under each lock in turn, each wait's condition
+    /// variable under its own lock, so the thread is either waiting (and woken) or past its
+    /// check of the stop.
     fn halt(&self) {
         self.stop.store(true, Ordering::Release);
         {
             let _slot = Self::lock(&self.inbox);
-            self.wake.notify_all();
+            self.arrived.notify_all();
         }
         let _ob = Self::lock(&self.outbox);
-        self.wake.notify_all();
+        self.room.notify_all();
     }
 
     fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -102,7 +107,7 @@ impl<M, O: Weighed> Shared<M, O> {
                 ob.at_cap = true;
                 self.made.notify_all();
             }
-            ob = self.wake.wait(ob).unwrap_or_else(PoisonError::into_inner);
+            ob = self.room.wait(ob).unwrap_or_else(PoisonError::into_inner);
         }
         ob.at_cap = false;
         if last {
@@ -151,7 +156,8 @@ where
                 done: 0,
                 at_cap: false,
             }),
-            wake: Condvar::new(),
+            arrived: Condvar::new(),
+            room: Condvar::new(),
             made: Condvar::new(),
             stop: AtomicBool::new(false),
             ended: AtomicBool::new(false),
@@ -178,7 +184,10 @@ where
                                 sh.picked.fetch_add(1, Ordering::Release);
                                 break m;
                             }
-                            slot = sh.wake.wait(slot).unwrap_or_else(PoisonError::into_inner);
+                            slot = sh
+                                .arrived
+                                .wait(slot)
+                                .unwrap_or_else(PoisonError::into_inner);
                         }
                     };
                     let took = crate::bake::stopwatch();
@@ -206,7 +215,7 @@ where
         };
         *slot = Some(next);
         drop(slot);
-        self.shared.wake.notify_all();
+        self.shared.arrived.notify_all();
     }
 
     /// What the bake half made since the last call, in order.
@@ -215,7 +224,7 @@ where
         ob.bytes = 0;
         let out = std::mem::take(&mut ob.entries);
         drop(ob);
-        self.shared.wake.notify_all();
+        self.shared.room.notify_all();
         out
     }
 
@@ -232,7 +241,7 @@ where
                 let took = std::mem::take(&mut ob.entries);
                 let found = took.iter().any(&mut done);
                 out.extend(took);
-                self.shared.wake.notify_all();
+                self.shared.room.notify_all();
                 if found {
                     return (out, true);
                 }
