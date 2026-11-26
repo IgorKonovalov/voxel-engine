@@ -210,7 +210,7 @@ struct Blocked { at: u64, by: Blocker }
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1 | dev | done (Rulings 1 to 4): stopped at `f082adb4` on the moved pin of `an_opening_without_a_mirror_event_rebuilds_nothing`; Phase 1b re-pins it to `[2, 3, 1, 4, 0, 5, 6, 7]` and removes `Default` from `Blocker` and `Blocked`; `split_tests/routing.rs` also spells its mark ([log](logs/0109.md)) | `f082adb4`; Phase 1b committed with this row |
+| 1 | dev | done (Rulings 1 to 4): stopped at `f082adb4` on the moved pin of `an_opening_without_a_mirror_event_rebuilds_nothing`; Phase 1b re-pins it to `[2, 3, 1, 4, 0, 5, 6, 7]` and removes `Default` from `Blocker` and `Blocked`; `split_tests/routing.rs` also spells its mark ([log](logs/0109.md)) | `f082adb4`, `b59dc1ef` |
 
 ### Notes
 
