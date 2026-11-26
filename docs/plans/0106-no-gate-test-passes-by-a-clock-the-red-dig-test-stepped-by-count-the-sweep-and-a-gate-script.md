@@ -1,6 +1,6 @@
 # 0106: No gate test passes by a clock: the red dig test stepped by count, the sweep, and a gate script
 
-> **Status:** in-progress (2026-11-26): Phase 1, the fix for main's red CI, done on its own. Phases 2 to 4 await the owner's go.
+> **Status:** in-progress (2026-11-26): Phase 1, the fix for main's red CI, done and merged on its own. Phases 2 to 4 approved (owner, 2026-11-26), with the soak tier's sweep added as Phases 5 and 6.
 > **Created:** 2026-11-26
 > **Milestone:** none (harness; follows Plan 0099, `docs/roadmap.md` M9's bake thread)
 > **Related ADRs:** [ADR-0083](../adrs/0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md) (the bake thread; not changed)
@@ -121,6 +121,26 @@ flowchart LR
 - **Files touched:** `scripts/check-test-clocks.mjs`, `scripts/test-clocks-allow.txt`, `scripts/fixtures/test-clocks/` (a seeded tree, one finding a rule, and the README's expected findings), `.github/workflows/ci.yml`. (The `CLAUDE.md` scripts row is the architect's at the close.)
 - **Done when:** `node scripts/check-test-clocks.mjs` exits 0 on the tree and names every seeded finding on the fixture (`--self-test`), one a rule and one for a stale allow-list row (a row whose site is gone is a finding). Run against `9b1cd85d`'s tree (a `git worktree` at that commit, no build) it names the red test's sleep and every class A and B site of this plan's tables that rules 1 and 2 can see; the ones it cannot see (a give-up loop with no sleep, a poll with no wait) are listed in the readings log as what the script does not catch. Under 5 s.
 
+## Amended 2026-11-26 (owner)
+
+The owner read the draft and answered "all recommended":
+
+- **Phases 2 to 4 have the go.** Phase 1 merges into main on its own first (it is the fix for main's red CI); the lane then continues from the merged tip, one phase per dev brief.
+- **The weekly soak tier gets the same sweep** (the open question under Risks), as later phases of this plan, after Phase 4 so the script's rules are fixed before they are widened. The line "The soak tier's and the readings' clocks" under "What this plan does NOT do" now stands for the readings only.
+
+### Phase 5: the soak tier, the reading
+- **Owner skill:** dev
+- **What:** The reading the Context section made of the gate tier, repeated on every test marked `#[ignore = "soak"]`: each one that sleeps, polls, counts frames beside a second thread or compares a duration, classed A (a count or an order a clock or a thread can move), B (a wall-clock bound) or fine, with the remedy this plan's Phases 2 and 3 used for the same shape. No test is changed. `the_threaded_queue_drains_to_the_lockstep_store` and the two headless teardown runs are read first.
+- **Files touched:** `docs/plans/logs/0106.md`.
+- **Done when:** The readings log holds the table (file, test, class, the line that makes it so, the remedy), and a list of the soak tests whose claim is itself a duration (a soak test may time a long run; those stay and are named with their reason). A test whose remedy is not one of Phases 2 and 3's goes to the architect with its text.
+
+### Phase 6: the soak tier, the fixes, and the script over it
+- **Owner skill:** dev
+- **What:** Phase 5's class A and B rows take their remedies, assertions unchanged. `check-test-clocks.mjs` loses its exemption for `#[ignore = "soak"]` tests; the rows that stay go on the allow-list with their reasons.
+- **Files touched:** the test files Phase 5's table names, `scripts/check-test-clocks.mjs`, `scripts/test-clocks-allow.txt`, `scripts/fixtures/test-clocks/`, `docs/plans/logs/0106.md`.
+- **Done when:** Each changed soak test passes by name (`--run-ignored only`, the test's name; never the whole soak tier) three times on lavapipe under the perf lock, 0 failed, each run projected from its start and stopped past 20 minutes; a diff of the assertion lines is in the readings log; the script exits 0 on the tree with the soak exemption gone and its self-test names a seeded soak finding. The quick tier, clippy, fmt, the check scripts.
+- **Stops:** a soak test that cannot be run by name inside 20 minutes under the lock is reported with its projected time, not run.
+
 ## Data shapes
 
 ```rust
@@ -164,6 +184,8 @@ impl Frame {
 | 2: class A, the rest | dev | not started | |
 | 3: class B | dev | not started | |
 | 4: the gate script | dev | not started | |
+| 5: the soak tier, the reading | dev | not started | |
+| 6: the soak tier, the fixes | dev | not started | |
 
 ### Notes
 
