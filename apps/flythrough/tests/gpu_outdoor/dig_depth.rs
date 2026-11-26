@@ -669,7 +669,7 @@ mod dig_depth {
             let m = &r.manual;
             let fades: Vec<String> = r.fades.1.iter().map(|(c, s)| format!("{c:?} [{}]", s.join(" "))).collect();
             format!(
-                "{site} {mode} {} depth {:.1} m against S: window D+0..{} ({}); mean max {mx:+.1} at {}, p95 max {px:+.0}: {}; record-only frames {} of {}: mean max {}, p95 max {}: {}; B3 lowest mean {lo:+.1} at {}; peak mean against D+60 {peak60:+.1}; check frame against D+60 {:+.2} ({}); S luma {:.1}, D+60 luma {:.1}; exposure D-1 {:.4e} S {:.4e} check {:.4e} D+60 {:.4e}; adapted log2 D+60 {:.4} S {:.4}, after the switch back previous {:.4e} current {:.4e} adapted {:.4}; fades at D-1 {}, touched chunks {}\n    frames against S (mean/p95, exposure): {}",
+                "{site} {mode} {} depth {:.1} m against S: window D+0..{} ({}); mean max {mx:+.1} at {}, p95 max {px:+.0}: {}; record-only frames {} of {}: mean max {}, p95 max {}: {}; B3 lowest mean {lo:+.1} at {}; peak mean against D+60 {peak60:+.1}; check frame against D+60 {:+.2} ({}); S luma {:.1}, D+60 luma {:.1}; exposure D-1 {:.4e} S {:.4e} check {:.4e} D+60 {:.4e}; adapted log2 D+60 {:.4} S {:.4}, after the switch back previous {:.4e} current {:.4e} adapted {:.4}; D+0 step {:.2} ms (dig {:.2} ms); fades at D-1 {}, touched chunks {}\n    frames against S (mean/p95, exposure): {}",
                 r.label,
                 r.depth as f64 / 10.0,
                 r.frames[end].label,
@@ -695,6 +695,8 @@ mod dig_depth {
                 m.back.previous,
                 m.back.current,
                 m.back.adapted_log2,
+                r.frames[1].q.stages.total_ms,
+                r.frames[1].q.dig_ns / 1e6,
                 r.fades.0,
                 fades.join(", "),
                 frames.join("; ")
