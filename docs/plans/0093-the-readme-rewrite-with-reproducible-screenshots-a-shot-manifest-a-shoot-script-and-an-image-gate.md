@@ -1108,7 +1108,8 @@ chunk or its record.
 | 2b: the settled start | dev | done; readings in [the log](logs/0093.md) | `66f3bd66` |
 | 2c: the check's quantity, read | dev | done: C 8, L 4; the hero 0.004; readings in [the log](logs/0093.md) | `f5f3632c` |
 | 2d: the check, the batches, the shoot | dev | stopped: `--check` after the shoot over tolerance on `spider-walk` (log) | `3ece99fb` (wip) |
-| 2e: the noise sets, read | dev | stopped: both loops' `--filter off` reads 0, under their noise; the hero 0.004 (log) | committed with this row |
+| 2e: the noise sets, read | dev | stopped: both loops' `--filter off` reads 0, under their noise; the hero 0.004 (log) | `bceef9a9` |
+| 2f: the tolerances, the worst frame, the shoot | dev | done; readings in [the log](logs/0093.md) | committed with this row |
 | 3: the image gate, fragments, CI | dev | not started | |
 | 4: candidates and contact sheets | dev | not started | |
 | 5: the owner picks | human | not started | |
@@ -1172,6 +1173,15 @@ each. Empty is fine.)_
   other four by the script's `target/release/flythrough` (a release build of 15:24; the two files differ).
 - Phase 2e: h7 and h8 differ from the six earlier hero renders in one patch of 6 cells by up
   to 60 levels (not between each other); within the share (log). Not attributed.
+- Phase 2f: the shoot and both checks ran with `--no-build`, after the script's own build
+  command run by hand (CARGO_BUILD_JOBS=4) rebuilt nothing (log).
+- Phase 2f: the `--print hero` lines were run as printed, so the by-hand encode wrote
+  `docs/images/hero.webp`; it was copied to `live/` and the shoot's file put back (`cmp`).
+- Phase 2f: the patch is in the pale state in the by-hand hero render (the six cells, pre-roll
+  box at 1343 coarse) and in check 2's (five of the six over 20, at 1613); both within the
+  tolerance (log).
+- Phase 2f: `--check` prints a loop's worst frame as `worst frame F at S (unjudged)`, or
+  `worst frame none` when no cell is over.
 
 ### Close triggers
 

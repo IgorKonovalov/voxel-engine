@@ -656,12 +656,14 @@ node scripts/shoot-images.mjs --check             # re-render and compare with t
 |--------|------|
 | `--only ID,..` | Shoot these rows only |
 | `--print ID` | Print the row's three commands (clear its frames, render, encode) and exit |
-| `--check` | Render and encode into `target/shots/check/`, decode the new and the committed file, cut each frame into 8 x 8 cells, and print the share of cells whose mean in one channel is more than 4 of 255 apart (and the largest cell difference) against the row's `tolerance`; exit 1 when one is over |
+| `--check` | Render and encode into `target/shots/check/`, decode the new and the committed file, cut each frame into 8 x 8 cells, and print the share of cells whose mean in one channel is more than 4 of 255 apart (and the largest cell difference) against the row's `tolerance`, and for a loop its worst frame and that frame's share, unjudged; exit 1 when one is over |
 | `--no-build` | Use the release binaries as already built |
 | `--manifest FILE` | Read `FILE` instead of `docs/images/shots.json` |
 
 A frame is not bit-identical from run to run on every scene (the outdoor hills differ in a few
 pixels in a thousand), and the lossy encoder spreads a small change over its blocks, so
 `--check` compares cell means: noise averages out inside a cell, while a changed scene, a
-missing pass or another hour moves whole cells. A row's tolerance is read from pairs of runs
-in that quantity, not assumed, and `note` names the reading.
+missing pass or another hour moves whole cells. A row's tolerance is read from six runs or
+more in that quantity (every pair of them), not assumed, and `note` names the reading. A loop
+is judged by its share over all its frames; run-to-run noise there is a spike in a few frames,
+so the worst frame is printed beside it and not judged.

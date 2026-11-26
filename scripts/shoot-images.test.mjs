@@ -151,14 +151,14 @@ test("the check's cell constants are the reading's pick", () => {
 });
 
 test("cellShare: equal buffers read 0", () => {
-  assert.deepEqual(cellShare(frame(), frame(), W, H), { share: 0, max: 0 });
+  assert.deepEqual(cellShare(frame(), frame(), W, H), { share: 0, max: 0, worst: null });
 });
 
 test("cellShare: one cell moved by L + 1 reads one over the cell count, by L reads 0", () => {
   const over = cellShare(frame(), move(frame(), 0, 0, 8, 8, CELL_LEVEL + 1), W, H);
-  assert.deepEqual(over, { share: 1 / 4, max: CELL_LEVEL + 1 });
+  assert.deepEqual(over, { share: 1 / 4, max: CELL_LEVEL + 1, worst: { frame: 0, share: 1 / 4 } });
   const at = cellShare(frame(), move(frame(), 0, 0, 8, 8, CELL_LEVEL, 2), W, H);
-  assert.deepEqual(at, { share: 0, max: CELL_LEVEL });
+  assert.deepEqual(at, { share: 0, max: CELL_LEVEL, worst: null });
 });
 
 test("cellShare: an edge cell counts once, by its own pixels' mean", () => {
@@ -175,6 +175,13 @@ test("cellShare: cells of every frame of a loop count, and a size mismatch reads
   assert.equal(cellShare(two, moved, W, H).share, 1 / 8);
   assert.equal(cellShare(frame(), two, W, H).share, 1);
   assert.equal(cellShare(frame(), frame(), 7, 7).share, 1);
+});
+
+test("cellShare: two frames, one cell moved by L + 1 in the second: the worst frame is frame 1", () => {
+  const two = Buffer.concat([frame(), frame()]);
+  const moved = Buffer.concat([frame(), move(frame(), 0, 0, 8, 8, CELL_LEVEL + 1)]);
+  assert.deepEqual(cellShare(two, moved, W, H), { share: 1 / 8, max: CELL_LEVEL + 1, worst: { frame: 1, share: 1 / 4 } });
+  assert.equal(cellShare(two, Buffer.concat([frame(), frame()]), W, H).worst, null);
 });
 
 test("batchOf starts no render once the hold is the limit old, on a faked clock", () => {

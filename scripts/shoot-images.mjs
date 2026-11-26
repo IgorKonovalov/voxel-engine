@@ -176,7 +176,8 @@ export function probeSize(file) {
  * The share of cells of two RGB buffers (frames of `width` x `height`, every frame in order)
  * whose largest channel mean differs by more than `level`. Cells are `cell` x `cell` from the
  * top left; the right and bottom ones are smaller, and each counts once. `max` is the largest
- * cell difference.
+ * cell difference. `worst` is the frame with the largest share of its own cells over `level`
+ * (the first of equals) and that share, or null when no cell is over.
  */
 export function cellShare(a, b, width, height, { cell = CELL, level = CELL_LEVEL } = {}) {
   const fb = width * height * 3;
@@ -185,7 +186,10 @@ export function cellShare(a, b, width, height, { cell = CELL, level = CELL_LEVEL
   let cells = 0;
   let over = 0;
   let max = 0;
+  let worst = null;
   for (let f = 0; f < a.length / fb; f++) {
+    const cells0 = cells;
+    const over0 = over;
     for (let y0 = 0; y0 < height; y0 += cell) {
       for (let x0 = 0; x0 < width; x0 += cell) {
         const y1 = Math.min(y0 + cell, height);
@@ -204,8 +208,10 @@ export function cellShare(a, b, width, height, { cell = CELL, level = CELL_LEVEL
         if (diff > max) max = diff;
       }
     }
+    const share = (over - over0) / (cells - cells0);
+    if (over > over0 && (worst === null || share > worst.share)) worst = { frame: f, share };
   }
-  return { share: over / cells, max };
+  return { share: over / cells, max, worst };
 }
 
 /**
@@ -414,6 +420,10 @@ function main() {
           if (over) failed++;
           out += `; cell share ${d.share.toFixed(6)} (C ${CELL}, L ${CELL_LEVEL}, largest ${d.max.toFixed(2)}) ` +
             `tolerance ${entry.tolerance} ${over ? "OVER" : "ok"}${d.note ? ` (${d.note})` : ""}`;
+          // A loop's worst frame is a reading beside the judged share, not judged itself.
+          if (entry.kind === "loop" && !d.note) {
+            out += d.worst ? `; worst frame ${d.worst.frame} at ${d.worst.share.toFixed(6)} (unjudged)` : "; worst frame none";
+          }
         }
       }
       console.log(out);
