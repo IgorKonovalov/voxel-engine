@@ -1,5 +1,5 @@
 //! `--settled-start` (headless only): a start-up stage after the light pre-roll that holds
-//! frame 0 back until the world no longer changes under a still camera. It steps the stream
+//! frame 0 back until the world holds still under a still camera. It steps the stream
 //! (update, poll, apply, sync) until full residency (nothing queued or in flight on the
 //! streamer, nothing pending on the mirror), then the stream and the live queue in lockstep
 //! until the queue reads idle ([`drain_idle`]: no job open or pending, no coarse block left to
