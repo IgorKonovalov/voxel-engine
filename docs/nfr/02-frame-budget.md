@@ -1312,3 +1312,28 @@ tip compared 4 203 and 4 753 blocks a run on the RTX and 1 022 and 1 124 on the 
 (full, provisional, partial, class 1), and 0 differ in every case on all four runs. The store's
 bytes across two RTX forest runs were not read: no fly-through flag writes or hashes the store
 at this tip (`--bake-file` is refused since Plan 0059).
+
+**The rule at every opening, the bytes and the bake thread (Plan 0101 Phase 4 (c), 2026-11-26;
+release `flythrough` at `2c1b860f`, two runs at `fca23ca9` (one more counter on the line);
+headless, the RTX forest as above (RTX 3080 Laptop, Floor, 1920 x 1080, drain 1.5 ms), from the
+first world frame at a still camera; exclusive perf lock per run, quiet at the start (load1 1.30
+to 1.43) but one bake thread run loaded (2.24); every row in
+[`docs/plans/logs/0101.md`](../plans/logs/0101.md), Phase 4 (c)).** `--queue-rule-reading` hashes
+the zeroed chunks' blocks (FNV-1a 64, every word but the landing word) and the whole store's.
+Three lockstep runs and three with `--bake-thread on` read the same 3 589 zeroed chunks, every
+block hash equal chunk by chunk within each mode and across them, and the same whole-store hash
+over 9 494 blocks (a reading, no bar). One `--queue-rule-audit --bake-thread on` run differs on
+0 blocks in every case (compared full 210, provisional 1 116, partial 2 967, class 1 401).
+
+| reading (RTX forest) | lockstep, three runs | bake thread on, three runs |
+|---|---|---|
+| In view landed | 37.9, 32.0, 30.0 s | 14.7 (loaded), 15.2, 6.2 s |
+| The whole residency empty | 46.0, 39.8, 38.2 s | 22.9 (loaded), 24.7, 22.7 s |
+| Zero records by the rule (re-listed, across a border) | 3 589 (0, 0) each | 3 589 (0, 0) each |
+| Jobs opened | 8 014, 8 032, 7 989 | 9 104, 9 060, 8 486 |
+| The queue's step, regime B, p50 / p99 | 15.148 / 40.431, 13.356 / 38.983, 14.218 / 35.877 ms | the render thread's call 0.751 / 1.617, 0.802 / 1.546, 0.767 / 1.410 ms; the step on the bake thread 10.102 / 24.607, 11.319 / 24.055, 9.344 / 27.214 ms |
+| The re-list's lap (`touched`) p50 / p99 | 0.001 / 1.409, 0.000 / 1.425, 0.001 / 1.225 ms | 0.000 / 2.538, 0.001 / 1.499, 0.000 / 2.021 ms |
+
+The lockstep step's p50 lies -6.9 to +5.6 % of Phase 1's base (14.347 ms). The lockstep in-view
+and residency readings beside Phase 3's one run (13.5 and 39.5 s) are not separable (the same
+behaviour read 12.0 to 33.0 s and 27.6 to 41.5 there). The lines of section 2 do not move.

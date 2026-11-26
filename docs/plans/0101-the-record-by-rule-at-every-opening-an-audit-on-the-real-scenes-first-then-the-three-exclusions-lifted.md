@@ -1,6 +1,6 @@
 # 0101: The record by rule at every opening: an audit on the real scenes first, then the three exclusions lifted
 
-> **Status:** in-progress, Phase 4 (the fix pass; (a) and (b) landed, (c) owed after Phase 5); Phase 5 (the pool's job set under a ruled push) landed; the close review of 2026-11-26 found two cases where a
+> **Status:** in-progress, Phases 4 and 5 implemented (the fix pass's (a), (b) and (c); the pool's job set under a ruled push), awaiting the close review; the close review of 2026-11-26 found two cases where a
 > ruled record is not the one a bake writes, both by reading the code, neither covered by a test
 > or by the audit; section "The close review"); Phases 1 to 3 done 2026-11-26 on lane `plan-0101`; approved (owner, 2026-11-24: lane after Plan 0099 closes; drafted 2026-11-24 with no interview; the guesses
 > and the open questions are under "Risks & open questions", each with a recommended option).
@@ -670,8 +670,8 @@ or the difference named (a re-list rules a chunk twice by design).
 | 1: The audit and the re-read, no behaviour change | dev | done: 0 blocks differ in every case on all runs, both forests over the 10 % job line ([readings log](logs/0101.md)) | wip `67062697`; the readings `30e771b9` |
 | 2: The rule at every opening | dev | done: the rule on every ready candidate; CPU tests (1)-(3), two soak-born lavapipe rigs (4) ([readings log](logs/0101.md)) | `85bf694d` |
 | 3: The readings on both adapters, the audit at the tip, and the documents | dev | done but (5): audit 0 differ on four runs, the step under the base, gate 1 443 of 1 443; the bytes not read ([readings log](logs/0101.md)) | `5312afb7` |
-| 4: The fix pass | dev | in progress: (a) the verdict read at the push, (b) the border faces, each red then green; (c) owed ([readings log](logs/0101.md)) | (a) `1c85d787`; (b) `11445eb6` |
-| 5: The pool counts a ruled chunk awaiting its block as in a job | dev | done: both tests red on `9838fb4d`'s code (test 2 red in release too, `zeroed` 2), green with `ruled` in `sync_pool`'s job set ([readings log](logs/0101.md)) | committed with this row |
+| 4: The fix pass | dev | done: (a) the verdict read at the push, (b) the border faces, each red then green; (c) the hash line, RTX forest 3 lockstep and 3 thread runs zero the same 3 589 chunks, every hash equal, thread audit 0 differ, step B p50 -6.9 to +5.6 % of the base ([readings log](logs/0101.md)) | (a) `1c85d787`; (b) `11445eb6`; (c) `2c1b860f`, `fca23ca9`, readings committed with this row |
+| 5: The pool counts a ruled chunk awaiting its block as in a job | dev | done: both tests red on `9838fb4d`'s code (test 2 red in release too, `zeroed` 2), green with `ruled` in `sync_pool`'s job set ([readings log](logs/0101.md)) | `248f1511` |
 
 ### Notes
 
@@ -749,12 +749,34 @@ each. Empty is fine.)_
 - Phase 5, followup not acted on: `open_step`'s quiet test counts `lp.chunks()` around the
   opening, so a lockstep opening that only rules chunks sets `quiet_until`; the view census and
   `counted_idle` miss a ruled chunk awaiting its block for one opening (readings log).
+- Phase 4 (c) (`2c1b860f`): files outside `Files touched`: `svet-render`'s `queue/{books,reads}.rs`,
+  `bake/link.rs` and `lib.rs` (the bake thread's answer and the read), `flythrough`'s
+  `cli/{parse,flags,queue_flags}.rs`, `run/{mod,tour}.rs` and `report.rs`: `run.json` was written
+  only on a path run, so `--report` now also runs with `--queue-rule-reading` and no path (scene,
+  path and mode `none`).
+- Phase 4 (c): the hashes are printed on their own `bake queue: rule hashes ...` line at the
+  first emptiness and the run's end, and as a clause of every later `bake queue:` line; with the
+  bake thread on the run's end prints the newest answer (from the first emptiness), not a fresh
+  read. The whole store's hash leaves the landing word out like the zeroed blocks'.
+- Phase 4 (c) (`fca23ca9`): `zero_border_relisted` was on no line; added as `border re-listed`
+  after the first five runs, read on two more runs (lock-c, thread-c); the other four plain runs'
+  count is read from `zero by rule` minus the zeroed set (0).
+- Phase 4 (c): three runs a mode, not two (the third with the counter); one thread run loaded
+  (load1 2.24 after a 10 min wait). Every lockstep in-view (30.0 to 37.9 s) is over Phase 3's
+  one row (13.5); written as not separable against Phase 3's spread (12.0 to 33.0).
+- Phase 4 (c): `docs/nfr.md` unchanged (not in Phase 4's `Files touched`); the rows are in
+  `docs/nfr/02-frame-budget.md`.
+- Phase 4 (c): no debug build was run thread-on on a real scene; the runs are release.
 
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 - **What shipped:** feature (the record by rule at every opening; the audit and its reading)
+- **Public API changed (Phase 4 (c)):** `svet_render::RuleHashes`, `BakeQueue::ask_rule_hashes`,
+  `QueueRead::rule_hashes`; the `bake queue:` line's `rule hashes` clause and line, `border
+  re-listed`; `run.json`'s `queue.rule_hashes`; `--report` without a path under
+  `--queue-rule-reading`
 - **Public API changed:** `svet_render::{RuleAudit, AuditDiffer}`, `QueueStats::rule_audit`,
   `BakeQueue::rule_audit`; fly-through `--queue-rule-audit`; the `bake queue:` line's `rule
   audit` clause and `run.json`'s `queue.rule_audit`
@@ -763,7 +785,12 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   1080 and RADV RENOIR Portable 1280 x 720, quiet at the start; in view RTX forest 13.5 s, hills
   11.0, RENOIR forest 14.1, hills 10.2; residency 39.5, 29.1, not empty by frame 5 940, 111.4 s;
   step B RTX forest p50 / p99 13.008 / 33.734 ms (base 14.347 / 28.525); the lines keep their
-  standing. Section 6 (bytes across two runs): not read
+  standing. Section 6 (bytes across two runs): not read at Phase 3. Phase 4 (c), release
+  `2c1b860f` / `fca23ca9`, RTX forest, still camera: three lockstep and three bake thread runs
+  zero 3 589 chunks, every block hash equal across all six, the whole store's hash equal (9 494
+  blocks); the thread audit 0 differ (compared 210 / 1 116 / 2 967 / 401); lockstep in view 30.0
+  to 37.9 s, residency 38.2 to 46.0, step B p50 / p99 13.356 to 15.148 / 35.877 to 40.431 ms;
+  thread on in view 6.2 to 15.2, residency 22.7 to 24.7 (`docs/nfr/02-frame-budget.md`)
 - **Gate at the tip `85bf694d`:** build exit 0; nextest gate tier in four parts 1 443 run, 1 443
   passed (CPU 1 107, A 108, B 100, C 128; a first CPU try at load1 49.4 failed one wall-clock
   test, passed on re-run); sole 1 of 1; doctests 10 passed; clippy, fmt, deny, doc and tier
