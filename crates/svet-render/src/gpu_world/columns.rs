@@ -283,13 +283,23 @@ fn tile_of(
     z_range: std::ops::Range<i32>,
     texels: &mut [i32; SHEET_CELLS],
 ) {
+    tile_by(|c| sheets.get(&c), col, z_range, texels);
+}
+
+/// [`tile_of`] over a sheet lookup `get`, called once per chunk of the column it reads.
+fn tile_by<'a>(
+    mut get: impl FnMut(ChunkCoord) -> Option<&'a Sheet>,
+    col: [i32; 2],
+    z_range: std::ops::Range<i32>,
+    texels: &mut [i32; SHEET_CELLS],
+) {
     texels.fill(COLUMN_NONE);
     let mut open = SHEET_CELLS;
     for z in z_range.rev() {
         if open == 0 {
             break;
         }
-        let Some(s) = sheets.get(&ChunkCoord([col[0], col[1], z])) else {
+        let Some(s) = get(ChunkCoord([col[0], col[1], z])) else {
             continue;
         };
         for (t, &h) in texels.iter_mut().zip(s.iter()) {
@@ -509,29 +519,43 @@ mod tests {
     }
 
     /// The streamed window's first flush computes every column's tile (the defaults' side is
-    /// 57 chunks); a tile costs a lookup per chunk of its column, not per cell and chunk, so
-    /// the whole window's tiles take well under a second even unoptimized (the per-cell
-    /// lookup took 48 s of the outdoor start's first sync on lavapipe's debug run).
+    /// 57 chunks); a tile costs at most a lookup per chunk of its column, not one per cell and
+    /// chunk (the per-cell lookup took 48 s of the outdoor start's first sync on lavapipe's
+    /// debug run): the lookups are counted, the wall time only printed.
     #[test]
     #[allow(
         clippy::disallowed_methods,
-        reason = "the test bounds the tiles' wall time"
+        reason = "the test prints the tiles' wall time"
     )]
     fn the_first_flush_of_the_streamed_window_is_cheap() {
         let (side, wz) = (57, 57);
         let sheets = window_sheets(side, wz);
         let mut texels = [0; SHEET_CELLS];
         let mut topped = 0usize;
+        let mut lookups = 0usize;
         let t = std::time::Instant::now();
         for y in 0..side {
             for x in 0..side {
-                tile_of(&sheets, [x - side / 2, y - side / 2], 0..wz, &mut texels);
+                let get = |c: ChunkCoord| {
+                    lookups += 1;
+                    sheets.get(&c)
+                };
+                tile_by(get, [x - side / 2, y - side / 2], 0..wz, &mut texels);
                 topped += texels.iter().filter(|&&v| v != COLUMN_NONE).count();
             }
         }
         let ms = t.elapsed().as_secs_f64() * 1e3;
-        println!("{} tiles in {ms:.1} ms, {topped} cells topped", side * side);
+        let chunks = (side * side * wz) as usize;
+        println!(
+            "{} tiles in {ms:.1} ms, {topped} cells topped, {lookups} lookups of {chunks} chunks",
+            side * side
+        );
         assert!(topped > 0);
-        assert!(ms < 1000.0, "the window's tiles took {ms:.1} ms");
+        assert!(
+            lookups <= chunks,
+            "the window's tiles took {lookups} lookups, over one per chunk ({chunks}; one per \
+             cell and chunk would be {})",
+            chunks * SHEET_CELLS
+        );
     }
 }

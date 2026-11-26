@@ -611,6 +611,11 @@ pub struct BakeArgs {
     /// rule would answer at that opening, by what kept the rule from them
     /// (`svet_render::RuleMissed`), on the `bake queue:` line and in `run.json`'s `queue`.
     pub(crate) queue_rule_reading: bool,
+    /// `--queue-rule-audit` (implies `--queue-rule-reading`): the live queue's rule writes no
+    /// record; every candidate it holds for at an opening takes a job, and each such job's
+    /// placed block is compared with the rule's zero record by case
+    /// (`svet_render::RuleAudit`), on the `bake queue:` line and in `run.json`'s `queue`.
+    pub(crate) queue_rule_audit: bool,
     /// `--edit-ms MS`: the live queue's slice grows by `MS` a frame while a dig's bricks wait
     /// (default `svet_render::DEFAULT_BAKE_EDIT_MS`).
     pub(crate) edit_ms: f64,
@@ -796,6 +801,10 @@ pub struct Args {
     pub(crate) switch_at: Vec<u32>,
     /// `--spawn-hash`: print the hash of the chunks within 2 of the spawn's at the end.
     pub(crate) spawn_hash: bool,
+    /// `--spawn-hash` given on the command line, set by the flag's parser alone: before the
+    /// hash the run waits for the stream to go idle (`run::switch::wait_for_stream`). A line
+    /// only implied by `--switch-at` does not wait.
+    pub(crate) spawn_hash_wait: bool,
     pub(crate) outdoor: OutdoorArgs,
     pub(crate) audio: AudioArgs,
     pub(crate) light: LightingArgs,

@@ -739,16 +739,22 @@ fn staged_steps() -> Option<(Vec<(svet_render::debug::StepStages, f64)>, u64)> {
     Some((steps, openings))
 }
 
-/// Over 20 steps the stages' sum is within 5 % of the steps' own time (each call timed from
-/// outside), and no stage reads negative.
+/// A nanosecond in ms: `Instant`'s tick. A step's stages are laps of one clock from the step's
+/// start to its last lap, and `total_ms` is that span, so the two differ by rounding only.
+const TICK_MS: f64 = 1e-6;
+
+/// Over 20 steps each step's stages sum to its own span (`total_ms`, the step's start to its
+/// last lap) within a tick, and no stage reads negative. The call's time from outside is
+/// printed, not compared.
 #[test]
 fn the_step_s_stages_sum_to_its_time() {
     let Some((steps, _)) = staged_steps() else {
         return;
     };
     let sum: f64 = steps.iter().map(|(s, _)| s.sum()).sum();
+    let total: f64 = steps.iter().map(|(s, _)| s.total_ms).sum();
     let own: f64 = steps.iter().map(|(_, ms)| ms).sum();
-    println!("stages {sum:.4} ms, own {own:.4} ms over 20 steps");
+    println!("stages {sum:.4} ms, span {total:.4} ms, own {own:.4} ms over 20 steps");
     for (s, _) in &steps {
         for (k, ms) in s.ms.iter().enumerate() {
             assert!(
@@ -758,15 +764,19 @@ fn the_step_s_stages_sum_to_its_time() {
             );
         }
     }
-    assert!(
-        (sum - own).abs() <= 0.05 * own,
-        "stages {sum} ms against the steps' {own} ms"
-    );
+    for (s, _) in &steps {
+        assert!(
+            (s.sum() - s.total_ms).abs() <= TICK_MS,
+            "stages {} ms against the step's span {} ms",
+            s.sum(),
+            s.total_ms
+        );
+    }
 }
 
 /// Over 20 steps of which some open and some do not, the opening and other counts sum to 20
 /// and match the steps whose opening ran (the queue's count of openings), and each side's
-/// stage sum is within 5 % of its steps' own time.
+/// steps' stages sum to their spans within a tick (the call's time from outside printed).
 #[test]
 fn the_stages_split_by_opening() {
     let Some((steps, openings)) = staged_steps() else {
@@ -786,11 +796,12 @@ fn the_stages_split_by_opening() {
     assert_eq!(open.len() as u64, openings);
     for (what, side) in [("opening", &open), ("other", &not)] {
         let sum: f64 = side.iter().map(|(s, _)| s.sum()).sum();
+        let total: f64 = side.iter().map(|(s, _)| s.total_ms).sum();
         let own: f64 = side.iter().map(|(_, ms)| ms).sum();
-        println!("{what}: stages {sum:.4} ms, own {own:.4} ms");
+        println!("{what}: stages {sum:.4} ms, span {total:.4} ms, own {own:.4} ms");
         assert!(
-            (sum - own).abs() <= 0.05 * own,
-            "{what}: stages {sum} ms against the steps' {own} ms"
+            (sum - total).abs() <= TICK_MS * side.len() as f64,
+            "{what}: stages {sum} ms against the steps' span {total} ms"
         );
         assert!(
             side.iter().all(|(s, _)| s.opened == (what == "opening")),

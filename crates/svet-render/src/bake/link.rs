@@ -327,6 +327,7 @@ pub(crate) fn bake_step(
         hook(frame);
     }
     let at = stopwatch();
+    side.queue.answer_rule_hashes(&side.store);
     let books = Arc::new(Books::of(&side.queue, &side.store, frame, eye));
     let end = stopwatch();
     vec![Made::Books(Snapshot {
@@ -593,6 +594,13 @@ impl ThreadLink {
                     .collect(),
             ),
         })
+    }
+
+    /// Blocks until the bake thread has stepped every message sent and handed in each step's
+    /// entries, or waits at the outbox's cap, or has ended ([`BakeThread::wait_step`]). Takes
+    /// nothing: the next frame's take holds what it made.
+    pub(crate) fn wait_step(&self) {
+        self.thread.wait_step();
     }
 
     /// The bake thread's steps so far.

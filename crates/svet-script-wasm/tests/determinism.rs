@@ -445,18 +445,20 @@ fn edits_applied_before_a_failure_stay_and_resimulate() {
 }
 
 /// The component's timers are always ready: `timer` sleeps 30 s and then polls a fresh 1 s
-/// timer every tick, yet each tick broadcasts `[1]` (ready) and two loads of three ticks take
-/// well under one sleep of wall time. A real timer would block the host thread for each sleep.
+/// timer every tick, yet each tick broadcasts `[1]` (ready) and two runs of three ticks take
+/// well under one sleep of wall time, timed after both loads (a compile is no sleep). A real
+/// timer would block the host thread for each sleep.
 #[test]
 #[allow(
     clippy::disallowed_methods,
     reason = "the test measures that a guest's sleep spends no wall time"
 )]
 fn timers_are_always_ready_and_never_wait() {
+    let mut logics: Vec<_> = (0..2)
+        .map(|_| WasmLogic::load(&guest("timer"), &WasmConfig::default()).expect("timer loads"))
+        .collect();
     let start = Instant::now();
-    for _ in 0..2 {
-        let mut logic =
-            WasmLogic::load(&guest("timer"), &WasmConfig::default()).expect("timer loads");
+    for logic in &mut logics {
         let world = solid3_world();
         let mut host = WorldHost::new(&world);
         logic.try_init(&mut host, 0).expect("timer's init returns");
@@ -469,6 +471,7 @@ fn timers_are_always_ready_and_never_wait() {
         );
     }
     let elapsed = start.elapsed();
+    println!("two runs of three ticks in {elapsed:?}");
     assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
 }
 

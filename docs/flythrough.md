@@ -294,7 +294,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--logic native\|wasm[=PATH]` | The server's logic: native [default], or a component (needs `--features wasm` and `scripts/build-guests.sh`) |
 | `--path cave\|showcase\|castle\|outdoor` | Fly that scene's camera path (the scene's own flags and seed 1 required; `outdoor` needs `--source outdoor` with the `outside` spawn, the sparse trees and the default leaf fill, and takes any `--sun` or `--time`) |
 | `--path-mode bench\|tour` | Fly the path once by wall time with the lamp off, then exit [bench]; or loop it |
-| `--report DIR` | Write `DIR/run.json` at exit (with `--path`) |
+| `--report DIR` | Write `DIR/run.json` at exit (with `--path`, or with `--queue-rule-reading`: the queue's object alone, scene, path and mode `none`) |
 | `--tester` | Only movement, look, the dig, `F1`, `T` and `Esc` act |
 | `--pad on\|off` | Read a gamepad in a window [on; never headless or under the autopilot] |
 
@@ -339,7 +339,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--exposure-highlight P\|off` | Highlight protection: the auto exposure is also capped so the level over which the brightest `100 - P` percent of the view lies (each hit pixel's brightest channel, the largest per 8 x 8 meter tile; sky pixels never set it) maps at or under 0.95 after the tone curve, smoothed at the eye's own rate; 50 to 100, `off` lets the bright tail clip. A view with no bright tail leaves the cap over the ceiling. The HUD's exposure row reads the cap as `hi +X EV`; the banner reads `exposure highlight P` or `exposure highlight off` when not the default [99] |
 | `--sky on\|off` | A sky over the world [on for `--source outdoor`, else off] |
 | `--switch-at F,..` | Switch the source at these frames, as the menu's `source` entry does, and print the spawn's hash at the end |
-| `--spawn-hash` | Print the voxel hash of the chunks within 2 of the spawn's chunk at the end |
+| `--spawn-hash` | Print the voxel hash of the chunks within 2 of the spawn's chunk at the end, after the last frame waits for the stream's chunks in flight to arrive (a `diag:` line names the wait's ms and the chunks); the hash `--switch-at` implies does not wait |
 | `--level` | The bounded level (as `--source level`) |
 | `--thin-rig` | A bounded scene of thin features for the field look |
 | `--seam-rig` | A bounded scene of seams for the field look |
@@ -430,7 +430,8 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--bake-depth N` | The submits the bake thread's steps hold unread at most, 1 to 8 (a reading's knob; lockstep, the pre-roll and the one-shot bakes hold two whatever it is) [3] |
 | `--bake-slots N` | The live queue's table slots the bake thread's steps open jobs into, 16 to 64 (a reading's knob; lockstep and the pre-roll keep 16 whatever it is) [16] |
 | `--queue-census` | Read the queue's view census at every opening, its listing once |
-| `--queue-rule-reading` | Count the jobs opened for chunks the zero rule would answer (a reading) |
+| `--queue-rule-reading` | Count the jobs opened for chunks the zero rule would answer, and hash the zeroed chunks' blocks and the store's once the queue is empty and at the end (a reading) |
+| `--queue-rule-audit` | The zero rule writes no record; compare each job it would answer with its record (a reading; implies --queue-rule-reading) |
 | `--edit-ms MS` | The slice's growth while a dig waits, 0 to 100 ms [3] |
 | `--bake-ring1-stretch X` | A dig's ring 1 goes whole in a submit within X times the priced cap, 1.0 to 2.0; the HUD and the banner name it when not the default (`stretch 1.0`) [1.5] |
 | `--dig-reach on\|off` | A dig re-bakes the chunks within the light radius [on] |
@@ -556,6 +557,7 @@ from the next frame, and the profile row names the fields that wait for a restar
 |------|------|
 | `--load-slice MS` | The start-up step time a loading frame spends before it draws [25] |
 | `--quit-at-loading-frame N` | Act as `Esc` at loading frame `N`, a test's way to end a run while it loads |
+| `--pre-roll-stepped` | With `--headless` (refused without it): wait on the device before every light pre-roll step, with or without the loading screen, and end the pre-roll by its chunks only (no 5 s box, no 120 s cap), so its steps, chunks and samples do not depend on the machine's pace; off by default |
 
 ### Removed flags
 

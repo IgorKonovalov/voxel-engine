@@ -107,21 +107,31 @@ fn to_dig(h: [f32; 4], d: f32) -> f32 {
 /// default slice, coarse 8 near 2) bakes the floor of 3 x 3 chunks in the first frames, the
 /// dig at frame [`DIG_AT`], then [`DIG_READ`] frames: the shots of frame `DIG_AT - 1` and of
 /// every frame after the dig. At frame `DIG_AT - 1` every chunk of the 3 x 3 holds a store
-/// block, else the rig is at fault (a dig into baked ground is the case read). The queue's
-/// whole-dig count after the dig's step is printed.
+/// block, else the rig is at fault (a dig into baked ground is the case read). Every frame
+/// waits on the device after its step, so which step reads a bake read-back is the same on
+/// every run. The queue's whole-dig count after the dig's step is printed.
 fn dig_run() -> Option<(Vec<DigShot>, World)> {
-    dig_run_with(|_, _, _, _| {})
+    dig_run_with(None, |_, _, _, _| {})
 }
 
-/// [`dig_run`], with `each` called after every frame's step (its index, the device, the
-/// queue and the frame).
+/// [`dig_run`], with `each` called after every frame's step and the device's wait (its index,
+/// the device, the queue and the frame). `hold`, when given, replaces [`dig_frame`]'s dig
+/// hold (the default, `DigHold::On`) before the queue starts; `None` leaves the frame as
+/// [`dig_frame`] builds it.
 fn dig_run_with(
+    hold: Option<svet_render::DigHold>,
     mut each: impl FnMut(usize, &wgpu::Device, &wgpu::Queue, &Frame),
 ) -> Option<(Vec<DigShot>, World)> {
     let (device, queue) = device()?;
     let world = floor_world([3, 3, 1], |_| false);
     let mut gpu = mirror(&device, &queue, &world, None);
     let mut f = dig_frame(&device);
+    if let Some(dig_hold) = hold {
+        f.set_lighting(Lighting {
+            dig_hold,
+            ..f.lighting()
+        });
+    }
     f.start_bake_queue(
         &queue,
         &gpu,
@@ -153,6 +163,9 @@ fn dig_run_with(
             );
         }
         f.step(&device, &queue, &gpu, &cam, &LightParams::headlamp());
+        // The device waited each frame: the next step's read-backs are all in, whatever the
+        // adapter's pace, so the queue's bake order is the same on every run.
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
         each(i, &device, &queue, &f);
         if i + 1 == DIG_AT {
             let bare: Vec<[i32; 2]> = (0..9)
@@ -370,7 +383,7 @@ fn a_dig_leaves_no_dots() {
     // The display's luma per frame from 16 frames before the dig (frame `DIG_AT - 16 + k`).
     let mut lumas: Vec<Vec<f32>> = Vec::new();
     let eye = dig_camera().position.to_array();
-    let Some((shots, world)) = dig_run_with(|i, device, queue, f| {
+    let Some((shots, world)) = dig_run_with(None, |i, device, queue, f| {
         baked_count.push(f.bake_queue().expect("the queue runs").stats().digs_baked);
         if i + 16 >= DIG_AT {
             lumas.push(dig_shot(device, queue, f).luma);
@@ -649,6 +662,9 @@ fn up_seed(f: &Frame, world: &World, h: [f32; 4]) -> f32 {
 /// clause: at frame 1 the centre chunk's summary record is `SKY_STALE` (the dig job queued and
 /// not landed) and every `+z` pixel inside the box whose face holds no record cast the sky ray
 /// (arm A's answer, so no source word `own summary`).
+/// The dig run takes `DigHold::Off`, the hold whose seed this defends: under the default `On`
+/// each brick the box touches takes a held record at the edit, and a face with a record casts
+/// no sky ray and keeps no pair (ADR-0082), so no pixel the test counts holds a record.
 /// Soak: 14.2 s on lavapipe in Plan 0086 Phase 24i's quiet gate.
 #[test]
 #[ignore = "soak"]
@@ -681,7 +697,7 @@ fn a_reset_pixel_starts_from_its_record() {
         Mode::Carve,
     ))
     .expect("the dig is resident");
-    let r = dig_run_with(|i, device, queue, f| {
+    let r = dig_run_with(Some(svet_render::DigHold::Off), |i, device, queue, f| {
         let k = i as i64 - DIG_AT as i64 + 1;
         if ![1, 8, 16, 60].contains(&k) {
             return;

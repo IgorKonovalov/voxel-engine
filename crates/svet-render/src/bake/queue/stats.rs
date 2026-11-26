@@ -210,6 +210,9 @@ pub struct QueueStats {
     /// having broken the rule.
     pub zeroed: u64,
     pub zero_relisted: u64,
+    /// Zeroed chunks listed again since the queue started because a neighbour their record was
+    /// listed without (not held full) is held full now; each is ruled again or baked.
+    pub zero_border_relisted: u64,
     /// With the bake thread's listing pool (Plan 0099 Phase 4b): the projection (the loop's
     /// samples left and the pool's estimates) over the cap at the last step's draw, 0 where
     /// the step drew nothing; the two fills of the listing bounds, listed from the world and
@@ -219,6 +222,8 @@ pub struct QueueStats {
     pub pool_guard: u64,
     /// The jobs the rule would have answered, while [`BakeQueue::rule_reading`] is on.
     pub rule_missed: RuleMissed,
+    /// The rule's audit, while [`BakeQueue::rule_audit`] is on.
+    pub rule_audit: RuleAudit,
     /// Blocks whose band changed as the camera's chunk changed (their candidacy read again),
     /// and pending jobs withdrawn above their new band's count, since the queue started.
     pub retiered: u64,
@@ -427,6 +432,208 @@ impl RuleMissed {
             j as f64 / self.opened_before[0].max(1) as f64,
             s as f64 / self.opened_before[1].max(1) as f64,
         ]
+    }
+}
+
+/// The audit's cases ([`RuleAudit`]): the rule held at the opening with none of the exclusions.
+pub(crate) const AUDIT_FULL: usize = 0;
+/// A column over the reach not final.
+pub(crate) const AUDIT_PROVISIONAL: usize = 1;
+/// The reach crossing the full radius.
+pub(crate) const AUDIT_PARTIAL: usize = 2;
+/// A block already held (class 1).
+pub(crate) const AUDIT_CLASS1: usize = 3;
+
+/// The differing blocks an audit keeps.
+pub(crate) const AUDIT_KEPT: usize = 16;
+
+/// One block an audit found differing from the rule's zero record: its chunk, its case, the
+/// first differing word's index in the block, and the job's word and the rule's there.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AuditDiffer {
+    pub chunk: [i32; 3],
+    pub case: u8,
+    pub word: u32,
+    pub job: u32,
+    pub rule: u32,
+}
+
+/// An audit of the rule (while [`BakeQueue::rule_audit`] is on): every block a job placed, not
+/// stale, for a chunk the rule held for at its opening, compared word for word with the zero
+/// record the rule writes for the same faces, by the case at the opening ([`AUDIT_FULL`],
+/// [`AUDIT_PROVISIONAL`], [`AUDIT_PARTIAL`], [`AUDIT_CLASS1`]; the first that applies, in the
+/// reading's order). The records' tier bits are left out where the job's tier is not the
+/// ruled record's (counted in `tier_masked`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RuleAudit {
+    pub compared: [u64; 4],
+    pub differ: [u64; 4],
+    /// Blocks compared with the tier bits masked: a job at a lesser tier (ADR-0080 rule 2).
+    pub tier_masked: u64,
+    /// The first [`AUDIT_KEPT`] that differ, `kept` of them.
+    pub first: [AuditDiffer; AUDIT_KEPT],
+    pub kept: u8,
+}
+
+impl RuleAudit {
+    /// Compares `job` (a block placed for `chunk`, case `case`) with `rule`, the zero record of
+    /// its faces at the ruled tier, the tier bits of each cell record (`record` words a cell
+    /// from the block's directory) masked where `mask_tier`.
+    pub fn compare(
+        &mut self,
+        chunk: [i32; 3],
+        case: usize,
+        job: &[u32],
+        rule: &[u32],
+        record: usize,
+        mask_tier: bool,
+    ) {
+        self.compared[case] += 1;
+        self.tier_masked += u64::from(mask_tier);
+        let tier_words: std::collections::HashSet<usize> = if mask_tier {
+            tier_words(rule, record)
+        } else {
+            Default::default()
+        };
+        let mask = |i: usize, w: u32| {
+            if tier_words.contains(&i) {
+                w & !(3 << TIER_SHIFT)
+            } else {
+                w
+            }
+        };
+        let n = job.len().max(rule.len());
+        let at = (0..n).find(|&i| {
+            let (a, b) = (job.get(i).copied(), rule.get(i).copied());
+            a.map(|w| mask(i, w)) != b.map(|w| mask(i, w))
+        });
+        let Some(i) = at else {
+            return;
+        };
+        self.differ[case] += 1;
+        if usize::from(self.kept) < AUDIT_KEPT {
+            self.first[usize::from(self.kept)] = AuditDiffer {
+                chunk,
+                case: case as u8,
+                word: i as u32,
+                job: job.get(i).copied().unwrap_or(u32::MAX),
+                rule: rule.get(i).copied().unwrap_or(u32::MAX),
+            };
+            self.kept += 1;
+        }
+    }
+
+    /// The differing blocks kept.
+    pub fn kept(&self) -> &[AuditDiffer] {
+        &self.first[..usize::from(self.kept)]
+    }
+}
+
+/// The indices of the words holding the tier bits ([`TIER_SHIFT`]) in `block`: each cell
+/// record's second visibility word, the records found from the directory.
+fn tier_words(block: &[u32], record: usize) -> std::collections::HashSet<usize> {
+    let mut out = std::collections::HashSet::new();
+    for &dir in block.iter().take(CHUNK_BRICKS) {
+        if dir == 0 {
+            continue;
+        }
+        let run = (dir >> 11) as usize;
+        for cell in (run - record..run).step_by(BRICK_WORDS) {
+            out.insert(cell + VIS_WORD + 1);
+        }
+    }
+    out
+}
+
+/// The hashes of the store's blocks a reading compares across runs ([`BakeQueue::rule_hashes`],
+/// [`QueueRead::rule_hashes`]). A block's hash is FNV-1a 64 over its words as little-endian
+/// `u32`, the landing word ([`LANDED_AT`], the frame the chunk's first block landed in) left
+/// out; a set's is FNV-1a 64 over its chunks ascending, each as its coordinate (three
+/// little-endian `i32`) then its block's hash (little-endian `u64`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RuleHashes {
+    /// The request this answers ([`BakeQueue::ask_rule_hashes`]); `u64::MAX` for a read made
+    /// on the spot in lockstep.
+    pub asked: u64,
+    /// The queue's steps when it was read.
+    pub step: u64,
+    /// The zeroed chunks (the rule's records) holding a block, ascending, with their blocks'
+    /// hashes.
+    pub chunks: Vec<([i32; 3], u64)>,
+    /// Zeroed chunks whose block the store does not hold yet (pushed, placed at the submit).
+    pub unplaced: u64,
+    /// The zeroed set's hash over `chunks`.
+    pub zeroed: u64,
+    /// The whole store's: every block, and its count. A job's record on a partial reach casts
+    /// from what was resident (ADR-0080 rule 4), so this one depends on the camera's start.
+    pub store: u64,
+    pub blocks: u64,
+}
+
+/// A block's hash ([`RuleHashes`]): its words but the landing word.
+pub(crate) fn block_hash(words: &[u32]) -> u64 {
+    let mut h = svet_world::hash::Fnv1a::default();
+    for (i, w) in words.iter().enumerate() {
+        if i != LANDED_AT as usize {
+            h.write(&w.to_le_bytes());
+        }
+    }
+    h.finish()
+}
+
+/// Folds `(chunk, block hash)` pairs, in the order given, into a set's hash ([`RuleHashes`]).
+fn set_hash<'a>(pairs: impl Iterator<Item = &'a ([i32; 3], u64)>) -> u64 {
+    let mut h = svet_world::hash::Fnv1a::default();
+    for (c, b) in pairs {
+        for v in c {
+            h.write(&v.to_le_bytes());
+        }
+        h.write(&b.to_le_bytes());
+    }
+    h.finish()
+}
+
+impl BakeQueue {
+    /// The hashes of the zeroed chunks' blocks and of the whole store's in `store`'s copy, read
+    /// now ([`RuleHashes`]; `asked` names the request). A reading: it hashes every block.
+    pub(crate) fn rule_hashes_of(&self, store: &Store, asked: u64) -> RuleHashes {
+        let all: Vec<([i32; 3], u64)> = store
+            .words
+            .iter()
+            .map(|(&c, w)| (c, block_hash(w)))
+            .collect();
+        let chunks: Vec<([i32; 3], u64)> = all
+            .iter()
+            .filter(|(c, _)| self.zeroed.contains(c))
+            .copied()
+            .collect();
+        RuleHashes {
+            asked,
+            step: self.steps,
+            unplaced: self.zeroed.len() as u64 - chunks.len() as u64,
+            zeroed: set_hash(chunks.iter()),
+            chunks,
+            store: set_hash(all.iter()),
+            blocks: all.len() as u64,
+        }
+    }
+
+    /// Asks the bake thread for [`RuleHashes`]: the first step after the message that carries
+    /// request `n` reads them ([`BakeQueue::answer_rule_hashes`]), and the books it publishes
+    /// carry them from then on. Requests are numbered upward; an older one is answered by a newer.
+    pub fn ask_rule_hashes(&mut self, n: u64) {
+        self.rule_hash_asked = self.rule_hash_asked.max(n);
+    }
+
+    /// Reads [`RuleHashes`] after a bake thread's step when a request newer than the last
+    /// answer waits.
+    pub(crate) fn answer_rule_hashes(&mut self, store: &Store) {
+        let answered = self.rule_hashes.as_ref().map_or(0, |h| h.asked);
+        if self.rule_hash_asked > answered {
+            self.rule_hashes = Some(std::sync::Arc::new(
+                self.rule_hashes_of(store, self.rule_hash_asked),
+            ));
+        }
     }
 }
 

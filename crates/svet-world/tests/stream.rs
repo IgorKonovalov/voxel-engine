@@ -574,10 +574,13 @@ fn the_incremental_queue_and_sweep_equal_the_full_rebuild_over_a_walk() {
 }
 
 /// A uniform source of material 3 whose first `chunk` call reports its coordinate and blocks
-/// until released; every later call returns at once.
+/// until released; its second call reports that it started (`next`); every later call returns
+/// at once. With one worker the second call is that worker's next job, so the first job's
+/// result is already sent when `next` is.
 struct GateSource {
     entered: Mutex<Option<mpsc::Sender<ChunkCoord>>>,
     release: Mutex<mpsc::Receiver<()>>,
+    next: Mutex<Option<mpsc::Sender<()>>>,
 }
 
 impl WorldSource for GateSource {
@@ -585,6 +588,8 @@ impl WorldSource for GateSource {
         if let Some(tx) = self.entered.lock().unwrap().take() {
             tx.send(coord).unwrap();
             self.release.lock().unwrap().recv().unwrap();
+        } else if let Some(tx) = self.next.lock().unwrap().take() {
+            tx.send(()).unwrap();
         }
         UniformSource(3).chunk(coord, out);
     }
@@ -592,14 +597,17 @@ impl WorldSource for GateSource {
 
 /// A full chunk whose focus jumps away while it loads lands past the full band (inside the
 /// LOD band) and is inserted anyway; the next poll, with the focus still, sweeps it out of the
-/// full tier, and its demotion completes as a `demoted` event.
+/// full tier, and its demotion completes as a `demoted` event. One worker: the poll that lands
+/// the chunk runs once the worker has started its next job, so the chunk's result is sent.
 #[test]
 fn a_full_chunk_landing_outside_its_band_is_demoted_by_the_next_poll() {
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
+    let (next_tx, next_rx) = mpsc::channel();
     let source = GateSource {
         entered: Mutex::new(Some(entered_tx)),
         release: Mutex::new(release_rx),
+        next: Mutex::new(Some(next_tx)),
     };
     let world = World::new(&test_table());
     // keep_full2 = 1, keep_lod2 = 9.
@@ -611,16 +619,11 @@ fn a_full_chunk_landing_outside_its_band_is_demoted_by_the_next_poll() {
     let focus = ChunkCoord([held.0[0] + 2, held.0[1], held.0[2]]);
     s.update(&world, &[VoxelCoord(focus.0.map(|c| c * 64 + 5))]);
     release_tx.send(()).unwrap();
+    // The LOD band around the new focus holds jobs, so the worker starts another.
+    next_rx.recv().unwrap();
 
-    let mut landed = false;
-    for _ in 0..1_000_000 {
-        let ev = s.poll(&world);
-        if ev.loaded.contains(&(held, Tier::Full)) {
-            landed = true;
-            break;
-        }
-        std::thread::yield_now();
-    }
+    let ev = s.poll(&world);
+    let landed = ev.loaded.contains(&(held, Tier::Full));
     assert!(landed, "{held:?} never landed");
     assert_eq!(s.tier(held), Some(Tier::Full));
     assert!(world.store().contains(held));

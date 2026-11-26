@@ -514,8 +514,12 @@ impl Drop for Run {
         if let Some(line) = self.hud.run.line() {
             println!("{line}");
         }
+        self.take_rule_hashes("the run's end", true);
         self.write_report();
         if self.args.spawn_hash || !self.args.switch_at.is_empty() {
+            if self.args.spawn_hash_wait {
+                switch::wait_for_stream(self.stream.as_mut(), &self.world);
+            }
             println!("{}", switch::spawn_hash_line(&self.world, self.spawn));
         }
         if self.args.census {

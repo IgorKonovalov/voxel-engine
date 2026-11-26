@@ -176,7 +176,9 @@ pub struct StepStages {
     pub render_ms: [f64; STEP_STAGES.len()],
     /// The bytes the step wrote, by [`WRITE_KINDS`].
     pub bytes: [u64; WRITE_KINDS.len()],
-    /// The step's own milliseconds, from the frame's call to the step's return.
+    /// The step's own milliseconds, from the frame's call to its last lap: the span the
+    /// stages split, so [`StepStages::sum`] equals it to rounding. With the bake thread on,
+    /// the frame call's wall instead.
     pub total_ms: f64,
     /// Whether the step ran an opening.
     pub opened: bool,

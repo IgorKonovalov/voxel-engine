@@ -5,8 +5,9 @@
 use super::*;
 
 /// A books hook that holds the snapshot after the step on message `from` (set at run time;
-/// `u64::MAX`: none) until the sender is dropped (2 s at most), telling the test on `reached`
-/// when it holds.
+/// `u64::MAX`: none) until the sender is dropped, telling the test on `reached` when it holds.
+/// A test binds the sender after its rig, so a failed test drops the sender (the hold let go)
+/// before the rig's join.
 fn hold_books() -> (
     BooksHook,
     Arc<std::sync::atomic::AtomicU64>,
@@ -22,12 +23,7 @@ fn hold_books() -> (
     let hook: BooksHook = Box::new(move |frame| {
         if frame == f.load(SeqCst) {
             let _ = reached_tx.send(());
-            // Bounded, so a failed test's drop (the hold's sender dropped after the rig's
-            // join) does not hang.
-            let _ = rx
-                .lock()
-                .expect("one step at a time")
-                .recv_timeout(std::time::Duration::from_secs(2));
+            let _ = rx.lock().expect("one step at a time").recv();
         }
     });
     (hook, from, tx, reached)
@@ -41,22 +37,25 @@ fn hold_books() -> (
 #[test]
 fn the_edits_frame_does_not_wait_for_the_books() {
     use std::sync::atomic::Ordering::SeqCst;
-    let (books_hook, from, gate, reached) = hold_books();
+    let (books_hook, from, hold, reached) = hold_books();
     let mut t = ThreadRig::with_books(None, books_hook, |_| {});
+    // Bound after the rig: a failed test drops it first, letting the hold go before the join.
+    let gate = hold;
     drain(&mut t);
     let before_books = t.link.books.frame;
     let before = t.applied.len();
     t.carve([60, 20, 4], [67, 23, 7]);
     let box_frame = t.rig.half.frame + 1;
     from.store(box_frame, SeqCst);
-    let at = stopwatch();
     t.frame().expect("the edit's frame returns with its list");
-    let waited = seconds_since(at);
     assert_eq!(t.rig.half.frame, box_frame);
-    reached
-        .recv_timeout(std::time::Duration::from_secs(1))
-        .expect("the dig's snapshot is held");
-    assert!(waited < 1.0, "the edit's frame returned in {waited} s");
+    reached.recv().expect("the dig's snapshot is held");
+    // The gate is read, not a clock: the edit's frame returned and the dig's books are not
+    // taken, their snapshot still held (the gate is let go below).
+    assert!(
+        t.link.books.frame < box_frame,
+        "the edit's frame returned with the dig's snapshot held"
+    );
     assert_eq!(t.link.lists_frame, box_frame, "the dig's lists taken");
     // The drain's last message may have gone into the dig's (coalesced): the books held are
     // the newest made before the dig's step.
@@ -121,8 +120,10 @@ fn the_mailbox_answers_by_the_older_of_lists_and_books() {
 fn answers_by_the_older(stop: bool) {
     use std::sync::atomic::Ordering::SeqCst;
     const B: [i32; 3] = [1, 0, 0];
-    let (books_hook, from, gate, reached) = hold_books();
+    let (books_hook, from, hold, reached) = hold_books();
     let mut t = ThreadRig::with_books(None, books_hook, |_| {});
+    // Bound after the rig: a failed test drops it first, letting the hold go before the join.
+    let gate = hold;
     for s in 1..=2 {
         t.frame_stepped(s);
     }
@@ -133,9 +134,7 @@ fn answers_by_the_older(stop: bool) {
     t.frame().expect("message F goes out");
     assert_eq!(t.rig.half.frame, f);
     assert!(t.rig.inbox.unknown(B), "message F's masks are counted");
-    reached
-        .recv_timeout(std::time::Duration::from_secs(1))
-        .expect("step F's snapshot is held");
+    reached.recv().expect("step F's snapshot is held");
     t.frame().expect("a frame with no edit");
     assert_eq!(t.link.lists_frame, f, "step F's lists taken");
     assert_eq!(t.lists.newest, f, "and applied");
@@ -157,7 +156,8 @@ fn answers_by_the_older(stop: bool) {
         assert_eq!(again, 0, "step F's lists are not handed back to lockstep");
         return;
     }
-    assert!(within(|| t.link.steps() >= 3), "step F's books handed in");
+    t.link.wait_step();
+    assert!(t.link.steps() >= 3, "step F's books handed in");
     t.frame().expect("the frame that takes the books");
     assert!(t.link.books.frame >= f, "step F's books taken");
     assert!(!t.rig.inbox.unknown(B), "message F answered");

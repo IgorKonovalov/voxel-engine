@@ -10,12 +10,17 @@ const FRAMES: u32 = 300;
 
 /// 300 headless frames of the showcase on the software adapter (`--adapter llvmpipe`; the
 /// default adapter where none is named so), 64 x 36, the live queue's pre-roll at its smallest,
-/// with the stats HUD shown: the `frames:` line reads `blocking reads 0`, every queue line names
-/// the age of the store's counts it read (at most 2 frames, or not read back yet on the first
-/// frame, whose line prints before the frame turns the count on and so names none) and at
-/// least one read them, and with `TIMESTAMP_QUERY` the march timer handed over a
-/// set on all but at most two frames. Before the timers and the store read through rings, the
-/// same run read 608 (two timer reads a frame and the queue line's).
+/// with the stats HUD shown. Asserted, each a count the code keeps at any pace: the `frames:`
+/// line reads `blocking reads 0`; every queue line names the age of the store's counts it read,
+/// or not read back yet (the first frame's line prints before the frame turns the count on and
+/// so names none); at least one line read them, over 240 frames that never wait, which only a
+/// GPU 240 frames behind would miss; without `TIMESTAMP_QUERY` the line says the march timer
+/// was not read. Printed and not asserted, because the GPU's pace chooses them: the ages (a
+/// three-slot ring, so 3 once the GPU is three copies behind; at most 2 is asserted where the
+/// test waits between frames, `gpu_frame`'s timers-and-store test) and, with `TIMESTAMP_QUERY`,
+/// how many frames the march timer handed over a set (one lost to every frame whose unwaited
+/// poll found no newer set). Before the timers and the store read through rings, the same run
+/// read 608 blocking reads (two timer reads a frame and the queue line's).
 #[test]
 #[ignore = "soak"]
 fn a_shown_hud_and_the_queue_line_wait_on_the_gpu_nowhere() {
@@ -85,16 +90,12 @@ fn a_shown_hud_and_the_queue_line_wait_on_the_gpu_nowhere() {
         ages.iter().any(Option::is_some),
         "a line read the store's counts"
     );
-    assert!(ages.iter().flatten().all(|&a| a <= 2), "{ages:?}");
     if let Some((_, rest)) = frames.split_once(" over ") {
         let timed: u32 = rest
             .split_once(" timed frames")
             .and_then(|(n, _)| n.parse().ok())
             .unwrap_or_else(|| panic!("a timed count in {frames}"));
-        assert!(
-            timed + 2 >= FRAMES,
-            "the march timer handed over {timed} sets"
-        );
+        println!("the march timer handed over {timed} sets over {FRAMES} frames");
     } else {
         assert!(frames.contains("march GPU n/a"), "{frames}");
         println!("the adapter has no TIMESTAMP_QUERY: the timers were not read");

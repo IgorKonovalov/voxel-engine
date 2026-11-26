@@ -10,8 +10,9 @@
 
 use std::io::Read;
 use std::process::{Command, Stdio};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use flythrough::cave::CaveSource;
@@ -20,27 +21,69 @@ use svet_world::*;
 
 const DROP_BOUND: Duration = Duration::from_secs(5);
 
-/// The fly-through's streamer: the cave at seed 1, residency 16/24/1, half the logical cores
-/// as workers (at least 1), no spill directory.
-fn streaming_world(seed: u64) -> (World, Streamer, VoxelCoord) {
+/// The chunks [`Gated`] generates before it holds the workers: a few of the thousands the
+/// flight's residency queues.
+const FREE_CHUNKS: usize = 64;
+
+/// The cave source behind a gate: the first [`FREE_CHUNKS`] `chunk` calls go through, every
+/// later one waits inside the call until [`Gated::open`]. So at the end of a flight every
+/// worker that took a job past those holds it: work is in flight whatever the machine's pace.
+struct Gated {
+    cave: CaveSource,
+    passed: AtomicUsize,
+    open: Mutex<bool>,
+    opened: Condvar,
+}
+
+impl Gated {
+    /// Lets every waiting and later call through.
+    fn open(&self) {
+        *self.open.lock().expect("the gate's lock") = true;
+        self.opened.notify_all();
+    }
+}
+
+impl WorldSource for Gated {
+    fn chunk(&self, coord: ChunkCoord, out: &mut Chunk) {
+        if self.passed.fetch_add(1, Ordering::AcqRel) >= FREE_CHUNKS {
+            let mut open = self.open.lock().expect("the gate's lock");
+            while !*open {
+                open = self.opened.wait(open).expect("the gate's lock");
+            }
+        }
+        self.cave.chunk(coord, out);
+    }
+}
+
+/// The fly-through's streamer: the cave at seed 1 behind [`Gated`], residency 16/24/1, half
+/// the logical cores as workers (at least 1), no spill directory; the gate kept to open
+/// before the drop.
+fn streaming_world(seed: u64) -> (World, Streamer, VoxelCoord, Arc<Gated>) {
     let source = CaveSource::unbounded(seed);
     let spawn = source.spawn();
+    let gate = Arc::new(Gated {
+        cave: source,
+        passed: AtomicUsize::new(0),
+        open: Mutex::new(false),
+        opened: Condvar::new(),
+    });
     let workers = (std::thread::available_parallelism().map_or(1, usize::from) / 2).max(1);
     let world = World::new(&cave_materials());
     let streamer = Streamer::new(
-        Arc::new(source),
+        gate.clone(),
         StreamConfig {
             residency: RESIDENCY,
             workers,
             persist: PersistConfig::default(),
         },
     );
-    (world, streamer, spawn)
+    (world, streamer, spawn, gate)
 }
 
 /// Flies `steps` chunks along +x from the spawn, one `update` and `poll` per chunk, carving
-/// a 1 m sphere at the focus each step; returns without waiting for the workers, so jobs
-/// are queued and running when it does.
+/// a 1 m sphere at the focus each step (where its chunk has landed); returns without waiting
+/// for the workers. The source's gate holds every job past its first [`FREE_CHUNKS`], so
+/// jobs are queued and running when it does.
 fn fly_and_dig(world: &World, streamer: &mut Streamer, spawn: VoxelCoord, steps: i32) {
     let mut carved = 0u64;
     for i in 0..steps {
@@ -56,7 +99,6 @@ fn fly_and_dig(world: &World, streamer: &mut Streamer, spawn: VoxelCoord, steps:
                 .map(|&(_, n)| u64::from(n))
                 .sum::<u64>();
         }
-        std::thread::sleep(Duration::from_millis(5));
     }
     let st = streamer.stats();
     assert!(
@@ -81,8 +123,10 @@ fn timed_drop<T: Send + 'static>(value: T, bound: Duration) -> Option<Duration> 
 
 #[test]
 fn dropping_the_streamer_mid_flight_returns_within_bound() {
-    let (world, mut streamer, spawn) = streaming_world(1);
+    let (world, mut streamer, spawn, gate) = streaming_world(1);
     fly_and_dig(&world, &mut streamer, spawn, 24);
+    // The held workers go on: the drop meets jobs running and queued.
+    gate.open();
     let took = timed_drop((world, streamer), DROP_BOUND)
         .unwrap_or_else(|| panic!("dropping the world and streamer took over {DROP_BOUND:?}"));
     println!("dropped in {took:?}");
@@ -92,8 +136,9 @@ fn dropping_the_streamer_mid_flight_returns_within_bound() {
 /// would: the workers' results still reference the store's chunks.
 #[test]
 fn dropping_the_streamer_before_the_world_returns_within_bound() {
-    let (world, mut streamer, spawn) = streaming_world(1);
+    let (world, mut streamer, spawn, gate) = streaming_world(1);
     fly_and_dig(&world, &mut streamer, spawn, 24);
+    gate.open();
     let took = timed_drop(streamer, DROP_BOUND)
         .unwrap_or_else(|| panic!("dropping the streamer took over {DROP_BOUND:?}"));
     println!("streamer dropped in {took:?}");
@@ -167,6 +212,10 @@ fn headless_run(extra: &[&str]) -> Option<(std::process::ExitStatus, String)> {
         }
         std::thread::sleep(Duration::from_millis(20));
     };
+    println!(
+        "the headless fly-through ran {:.1} s of its {RUN_BOUND:?} guard",
+        t.elapsed().as_secs_f64()
+    );
     let err = reader.join().expect("stderr is read");
     let _ = out_reader.join();
     if !status.success() && err.contains("no adapter") {

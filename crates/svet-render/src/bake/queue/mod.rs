@@ -29,6 +29,8 @@ use self::reach::reach_of;
 pub use self::reads::QueueRead;
 pub(crate) use self::reads::Source as ReadSource;
 pub(crate) use self::shadow::{LightNote, Shadow, notes};
+pub(crate) use self::stats::{AUDIT_CLASS1, AUDIT_FULL, AUDIT_PARTIAL, AUDIT_PROVISIONAL};
+pub use self::stats::{AuditDiffer, RuleAudit, RuleHashes};
 pub use self::stats::{
     BakeRoundTrip, Band, Bands, CycleLine, DigTrace, DigTraceJob, InViewWaiting, LANDED_BARE,
     LANDED_FALLBACK, LANDED_REFADED, LANDED_UNFADED, LANDING_DIRECTIONS, LANDING_KEY,
@@ -368,6 +370,16 @@ pub struct BakeQueue {
     /// The opening's checked candidates the reading counts if their job opens: the exclusion
     /// that kept the rule from each, and whether it lies in the view cone or the near shell.
     pub(super) rule_missed_checked: ChunkMap<(usize, bool)>,
+    /// A reading that implies [`BakeQueue::rule_reading`]: the rule writes no record, and every
+    /// candidate it holds for at the opening, whatever the exclusions, takes a job whose placed
+    /// block is compared with the rule's zero record ([`QueueStats::rule_audit`]). Off by
+    /// default.
+    pub rule_audit: bool,
+    /// The opening's checked candidates the audit compares if their job opens: the case.
+    pub(super) audit_checked: ChunkMap<usize>,
+    /// The audited jobs open: each chunk's case and its listed faces, for the zero record its
+    /// placed block is compared with.
+    pub(super) audit_jobs: ChunkMap<(usize, ChunkFaces)>,
     /// Whether a read of the drain's set found it not empty since the queue started (the
     /// in-view landing is the first empty set after it, [`RuleMissed::landed_at`]).
     pub(super) waiting_armed: bool,
@@ -406,8 +418,8 @@ pub struct BakeQueue {
     /// The pool is read again whole at the next opening: at the start, and when the mirror's
     /// or the store's changes went untracked.
     pub(super) pool_stale: bool,
-    /// The jobs' chunks at the last reading of the pool: a chunk joining or leaving a job is
-    /// read again.
+    /// The jobs' chunks and the ruled chunks awaiting their blocks at the last reading of the
+    /// pool: a chunk joining or leaving that set is read again.
     pub(super) pool_jobs: std::collections::HashSet<[i32; 3]>,
     /// The pool's candidates in their order, walked from the camera outward and kept in step
     /// with the pool ([`BakeQueue::pool_insert`], [`BakeQueue::pool_remove`]).
@@ -454,6 +466,14 @@ pub struct BakeQueue {
     /// Chunks whose block is the rule's zero record: baked again when a change near them
     /// breaks the rule ([`BakeQueue::relist_zeroed`]).
     pub(super) zeroed: ChunkSet,
+    /// Of the zeroed chunks, those whose record was written with a neighbour the shadow did not
+    /// hold full (its listing read it as rock): bit `f` for the neighbour across face `f`.
+    /// Listed again when one of them is held full ([`BakeQueue::relist_zeroed`]).
+    pub(super) zeroed_open: std::collections::HashMap<[i32; 3], u8>,
+    /// The newest request for [`RuleHashes`] ([`BakeQueue::ask_rule_hashes`]), and the newest
+    /// answer read after a bake thread's step, which its books carry.
+    pub(super) rule_hash_asked: u64,
+    pub(super) rule_hashes: Option<std::sync::Arc<RuleHashes>>,
     /// Chunks the opening's checks found answered by the rule, read when listed.
     pub(super) ruled_checked: ChunkSet,
     /// Ruled chunks listed this step, their place and faces: their zero blocks are placed at
@@ -629,6 +649,9 @@ impl BakeQueue {
             census_every_opening: false,
             rule_reading: false,
             rule_missed_checked: Default::default(),
+            rule_audit: false,
+            audit_checked: Default::default(),
+            audit_jobs: Default::default(),
             waiting_armed: false,
             stats: QueueStats {
                 ns_per_sample: 20.0,
@@ -664,6 +687,9 @@ impl BakeQueue {
             zero_rule: true,
             sealed: Default::default(),
             zeroed: Default::default(),
+            zeroed_open: Default::default(),
+            rule_hash_asked: 0,
+            rule_hashes: None,
             ruled_checked: Default::default(),
             ruled: Vec::new(),
             tiers: DEFAULT_TIERS,
@@ -734,7 +760,15 @@ impl BakeQueue {
     /// joins, changes or leaves moves in the kept order with it.
     pub(super) fn sync_pool(&mut self, run: &BakeRun<'_>, store: &mut Store) {
         let gpu = run.mirror;
-        let in_job: std::collections::HashSet<[i32; 3]> = self.lp.chunks().map(|c| c.0).collect();
+        // A ruled chunk pushed this step ([`BakeQueue::ruled`]) has no block, no job and no
+        // flag until the submit places its zero block: it counts as in a job, as a job's chunk
+        // does until its block lands, and the pool reads it again once it leaves the set.
+        let in_job: std::collections::HashSet<[i32; 3]> = self
+            .lp
+            .chunks()
+            .chain(self.ruled.iter().map(|r| r.0))
+            .map(|c| c.0)
+            .collect();
         match store.take_touched() {
             Some(t) => self.touched.extend(t),
             None => self.pool_stale = true,

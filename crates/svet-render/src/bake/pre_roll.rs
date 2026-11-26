@@ -1,8 +1,11 @@
 //! The light pre-roll as a steppable object (ADR-0059): the live queue stepped with a fixed
 //! sample count until the chunks near the camera hold their light and the coarse pass has
 //! covered the full chunks mirrored at that moment, boxed past the near chunks and capped. The
-//! box and the cap read the work time the caller passes, never a clock, so a pre-roll stepped
-//! a slice per frame stops at the same step as one stepped in a loop.
+//! box and the cap read the work time the caller passes (its summed step time), never a clock
+//! of their own, so the time between a sliced pre-roll's slices is not counted. A step's own
+//! time, and the step at which a read-back is read, are the machine's: where the box or the cap
+//! can end it, or a read-back can lag, the step it ends at is too. A caller that waits on the
+//! device before each step and passes no box and no cap ends at the same step on any machine.
 
 use svet_world::{ChunkCoord, World};
 

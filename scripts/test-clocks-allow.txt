@@ -1,0 +1,42 @@
+# The sites scripts/check-test-clocks.mjs lets pass: file | fn | token | reason.
+# One row a site (every use of the token in that function of that file). A row whose site is
+# gone is a finding. Ratios are a guard's bound over its slowest loaded reading (Plan 0106's
+# readings log); a row is added only with a reason a reviewer can check against the code.
+
+# Guards that stay: a bound that only fails a hung test, never the claim.
+crates/svet-render/src/bake/queue/split_tests/thread.rs | within | yield_now | first_opening's release thread waits for sender.sent() to rise, an atomic with no notify; 1 s guard, slowest loaded 2.04 ms, ratio 490
+crates/svet-render/src/bake/queue/split_tests/thread.rs | waits_parts | yield_now | the held step spins until the box signal waits, an atomic with no notify; 1 s guard, slowest loaded 44.2 ms, ratio 22.6
+crates/svet-render/src/bake/queue/split_tests/thread.rs | waits_parts | seconds_since | the same spin's 1 s guard (ratio 22.6), asserted so a hung box fails by name
+crates/svet-render/src/bake/queue/split_tests/thread/fade.rs | gated | yield_now | the box-signal spin of waits_parts in the fade tail's held step; 1 s guard, ratio 22.6
+crates/svet-render/src/bake/queue/split_tests/thread/fade.rs | gated | seconds_since | the same spin's 1 s guard (ratio 22.6), asserted so a hung box fails by name
+crates/svet-script-wasm/tests/determinism.rs | timers_are_always_ready_and_never_wait | elapsed | the guest sleeps 30 s twice; under 5 s is the claim's scale (the loads before the clock), slowest loaded 53.2 ms, ratio 94
+apps/flythrough/tests/gpu_shutdown.rs | headless_run | sleep | RUN_BOUND's 20 ms poll of the child: a kill guard's poll, the child is waited on by try_wait
+apps/flythrough/tests/gpu_shutdown.rs | headless_run | elapsed | RUN_BOUND, a 120 s kill guard on the child; 3.4x the slowest of 11 loaded runs (35.8 s), under 10: its resize is deferred to Phase 11 (Plan 0106 amendment, Phase 3's two leftovers)
+apps/flythrough/tests/gpu_outdoor.rs | run | sleep | the 50 ms poll of a 300 s kill guard on the child (soak tests only), waited on by try_wait; 300 s over the slowest of Phase 6a's six loaded test walls (62.8 s, an upper bound on any one child), ratio 4.8, under 10: sized with RUN_BOUND on Plan 0109's tree (Plan 0106 Ruling 9)
+apps/flythrough/tests/gpu_shutdown.rs | timed_drop | recv_timeout | DROP_BOUND 5 s on the streamer drops: the claim that a drop returns (ADR-level), slowest loaded 17.9 ms, ratio 279
+apps/flythrough/tests/gpu_shutdown.rs | assert_teardown_within_bound | as_secs_f64 | DROP_BOUND 5 s on the teardown's summed stages: the claim that the teardown returns, slowest loaded 195.5 ms, ratio 25.6
+
+# Sleeps that are the claim's own delay: a sleep never returns early.
+crates/svet-render/src/bake/queue/split_tests/thread.rs | the_edits_frame_waits_for_its_list_and_no_other_frame_does | sleep | 100 ms before the release, so the edit's frame provably waited for it
+crates/svet-render/src/bake/queue/split_tests/thread.rs | the_edits_frame_waits_for_its_list_and_no_other_frame_does | waited | waited >= 0.1: the frame returned after the 100 ms sleep before the release
+crates/svet-render/src/bake/stages.rs | a_lap_takes_the_calls_inside_it | sleep | a 2 ms sleep inside the lap, which the lap must count (at least 2 ms)
+
+# A clock compared with itself within a tick (Plan 0106's Decision, form 2), not a bound.
+crates/svet-render/src/bake/queue/split_tests/thread/cycle.rs | the_cycle_parts_sum_to_the_time_between_two_steps | span | the parts' sum against the same instants' span, within TICK_MS (a nanosecond)
+
+# The bake thread on where no count beside it is asserted.
+apps/flythrough/tests/gpu_shutdown.rs | the_headless_flythrough_with_the_bake_thread_exits_within_bound | --bake-thread on | a headless child with the thread on; asserts the exit status, the teardown's stages in order (one line a stage, causal) and DROP_BOUND (its own row), no frame or step count (Plan 0106 Ruling 9)
+
+# Test-only waits with nothing to block on.
+crates/svet-render/src/bake/queue/lister.rs | wait_listed | sleep | #[cfg(test)]; polls the lister pool every 100 us until it has listed, the pool has no condition variable; unbounded, asserts nothing
+
+# Timestamps a test needs for its claim.
+crates/svet-render/tests/gpu_frame.rs | timed_device | TIMESTAMP_QUERY | the frame's pass timers are the claim; the test that takes this device asserts read-back ages and timer sets, no step or sample count
+
+# Spins with no bound on a state another thread sets (a blocking wait written as a loop): no
+# count or duration of the spin is asserted, and the assertions after it hold at any pace.
+crates/svet-audio/tests/stream.rs | streamed | yield_now | the writer waits for ring space and the mixer for the frames it needs; the gap's writer waits for resume
+crates/svet-world/tests/persist.rs | no_ok_edit_is_lost_to_a_racing_eviction | yield_now | waits for the editor's op count to reach half and then the whole round; the bounds on ok ops (>= 250, < 2000) hold by the rounds' order
+crates/svet-world/tests/stream.rs | settle | yield_now | polls until no job is queued or running, with no give-up; the bound asserted per poll is a residency count
+crates/svet-world/tests/stream.rs | apply_waits_for_the_store_write_lock | yield_now | 10 000 yields while the write lock is held: the op cannot finish at any pace, a descheduled editor only weakens the check
+crates/svet-world/tests/stream.rs | the_store_write_lock_never_sees_half_an_op | yield_now | yields to let the editor and the locker reach their locks; `first == 3 || was_released` holds at any pace

@@ -694,15 +694,17 @@ impl Run {
         frame.set_bake_slots(self.args.bake.slots);
         if frame.bake_queue().is_some() {
             let (order, withdraw) = (self.args.queue_order(), self.args.bake.queue_withdraw);
-            let (census, rule) = (
+            let (census, rule, audit) = (
                 self.args.bake.queue_census,
                 self.args.bake.queue_rule_reading,
+                self.args.bake.queue_rule_audit,
             );
             frame.set_bake_queue(move |q| {
                 q.order = order;
                 q.withdraw = withdraw;
                 q.census_every_opening = census;
                 q.rule_reading = rule;
+                q.rule_audit = audit;
             });
             self.queue.listing_due = self.args.bake.queue_census;
         }
@@ -727,12 +729,18 @@ impl Run {
             .collect();
         l.progress.enter(NEAR);
         l.progress.set(0, Some(near.len() as u64));
+        // `--pre-roll-stepped`: no box and no cap, so the pre-roll ends by its chunks alone.
+        let (box_ms, cap_ms) = if self.args.loading.pre_roll_stepped {
+            (f64::INFINITY, f64::INFINITY)
+        } else {
+            (COARSE_PRE_ROLL_MS, PRE_ROLL_CAP_MS)
+        };
         Stage::PreRoll(Box::new(PreRollRun {
             pre: PreRoll::new(PreRollConfig {
                 near,
                 coarse: self.args.bake.coarse,
-                box_ms: COARSE_PRE_ROLL_MS,
-                cap_ms: PRE_ROLL_CAP_MS,
+                box_ms,
+                cap_ms,
                 samples: PRE_ROLL_SAMPLES,
             }),
             camera,
@@ -751,6 +759,12 @@ impl Run {
         mut p: Box<PreRollRun>,
         l: &mut Loading,
     ) -> Stage {
+        // `--pre-roll-stepped`: every submit of the earlier steps has finished before this
+        // step polls, so the step reads the same read-backs under either driver (the frame
+        // loop's slices and `load_all`'s loop); outside the step's timed span.
+        if self.args.loading.pre_roll_stepped {
+            let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+        }
         let t = now();
         let camera = p.camera;
         let frame = &mut gfx.frame;

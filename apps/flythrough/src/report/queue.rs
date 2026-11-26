@@ -9,13 +9,19 @@ use super::write_ms;
 /// ([`svet_render::InViewWaiting`]), the samples they still need, the last second's samples a
 /// second, and `drain_s`, the need over that rate (`None` while nothing is drawn and something
 /// waits). Under `--queue-rule-reading`, the jobs the rule would have answered
-/// ([`svet_render::RuleMissed`]; `None` while the reading has counted nothing).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// ([`svet_render::RuleMissed`]; `None` while the reading has counted nothing). Under
+/// `--queue-rule-audit`, the blocks compared with the rule's zero record and those that differ
+/// by case ([`svet_render::RuleAudit`]; `None` while the audit has compared nothing). Under
+/// `--queue-rule-reading`, the newest hashes of the zeroed chunks' blocks and of the store's
+/// ([`svet_render::RuleHashes`]; `None` before the queue was first empty).
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct QueueDrain {
     pub depth: u64,
     pub waiting: svet_render::InViewWaiting,
     pub samples_per_s: f64,
     pub rule_missed: Option<svet_render::RuleMissed>,
+    pub rule_audit: Option<svet_render::RuleAudit>,
+    pub rule_hashes: Option<std::sync::Arc<svet_render::RuleHashes>>,
 }
 
 impl QueueDrain {
@@ -39,6 +45,13 @@ impl QueueDrain {
         );
         if let Some(r) = &self.rule_missed {
             t.push_str(&rule_missed_text(r));
+        }
+        if let Some(a) = &self.rule_audit {
+            t.push_str(&rule_audit_text(a));
+        }
+        if let Some(h) = &self.rule_hashes {
+            t.push_str("; ");
+            t.push_str(&rule_hash_text(h));
         }
         t
     }
@@ -84,8 +97,99 @@ impl QueueDrain {
                     .map_or_else(|| "null".to_owned(), |s| s.to_string()),
             );
         }
+        if let Some(a) = &self.rule_audit {
+            let list = |v: &[u64; 4]| format!("[{}, {}, {}, {}]", v[0], v[1], v[2], v[3]);
+            let first: Vec<String> = a
+                .kept()
+                .iter()
+                .map(|d| {
+                    format!(
+                        "{{\"chunk\": [{}, {}, {}], \"case\": \"{}\", \"word\": {}, \"job\": {}, \"rule\": {}}}",
+                        d.chunk[0],
+                        d.chunk[1],
+                        d.chunk[2],
+                        AUDIT_CASES[usize::from(d.case)],
+                        d.word,
+                        d.job,
+                        d.rule,
+                    )
+                })
+                .collect();
+            let _ = write!(
+                o,
+                ", \"rule_audit\": {{\"cases\": [\"full\", \"provisional\", \"partial\", \"class1\"], \"compared\": {}, \"differ\": {}, \"tier_masked\": {}, \"first\": [{}]}}",
+                list(&a.compared),
+                list(&a.differ),
+                a.tier_masked,
+                first.join(", "),
+            );
+        }
+        if let Some(h) = &self.rule_hashes {
+            write_rule_hashes(o, h);
+        }
         o.push('}');
     }
+}
+
+/// The audit's cases by index ([`svet_render::RuleAudit`]).
+pub const AUDIT_CASES: [&str; 4] = ["full", "provisional", "partial", "class1"];
+
+/// The rule audit's text on the `bake queue:` line: the blocks compared with the zero record
+/// and those that differ, by case, the tier-masked count, and the first that differs (chunk,
+/// case, word index, the job's word and the rule's).
+pub fn rule_audit_text(a: &svet_render::RuleAudit) -> String {
+    let mut t = String::from("; rule audit compared/differ");
+    for (k, name) in AUDIT_CASES.iter().enumerate() {
+        let _ = write!(t, " {name} {}/{}", a.compared[k], a.differ[k]);
+    }
+    let _ = write!(t, ", tier masked {}", a.tier_masked);
+    if let Some(d) = a.kept().first() {
+        let _ = write!(
+            t,
+            ", first differ chunk {:?} {} word {} job {:#010x} rule {:#010x}",
+            d.chunk,
+            AUDIT_CASES[usize::from(d.case)],
+            d.word,
+            d.job,
+            d.rule,
+        );
+    }
+    t
+}
+
+/// The rule hashes' text ([`svet_render::RuleHashes`]): `rule hashes zeroed 3589 chunks
+/// 0123456789abcdef (unplaced 0), store 7989 blocks fedcba9876543210, at step 1681`.
+pub fn rule_hash_text(h: &svet_render::RuleHashes) -> String {
+    format!(
+        "rule hashes zeroed {} chunks {:016x} (unplaced {}), store {} blocks {:016x}, at step {}",
+        h.chunks.len(),
+        h.zeroed,
+        h.unplaced,
+        h.blocks,
+        h.store,
+        h.step,
+    )
+}
+
+/// `run.json`'s `queue.rule_hashes`: the counts, the two hashes and each zeroed chunk's
+/// coordinate and block hash, the hashes as 16 hex digits in a string (a JSON number holds
+/// 53 bits).
+fn write_rule_hashes(o: &mut String, h: &svet_render::RuleHashes) {
+    let _ = write!(
+        o,
+        ", \"rule_hashes\": {{\"step\": {}, \"zeroed_chunks\": {}, \"unplaced\": {}, \"zeroed\": \"{:016x}\", \"blocks\": {}, \"store\": \"{:016x}\", \"chunks\": [",
+        h.step,
+        h.chunks.len(),
+        h.unplaced,
+        h.zeroed,
+        h.blocks,
+        h.store,
+    );
+    for (i, (c, b)) in h.chunks.iter().enumerate() {
+        let sep = if i == 0 { "" } else { ", " };
+        let _ = write!(o, "{sep}[{}, {}, {}, \"{b:016x}\"]", c[0], c[1], c[2]);
+    }
+    o.push_str("]}");
 }
 
 /// The rule reading's text on the `bake queue:` line: the jobs (and samples) the rule would

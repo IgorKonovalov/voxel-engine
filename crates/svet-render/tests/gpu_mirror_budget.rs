@@ -605,11 +605,13 @@ fn a_sync_spent_while_sizing_keeps_what_it_sized() {
     assert!(read(split.records()) == read(whole.records()));
 }
 
-/// The first sync of a 4 x 4 x 4 chunk world of [`Mixed`] bricks, timed on the wall clock
-/// around the call: its six stages (`select_us` to `alloc_us`, on the mirror's stage clock)
-/// sum to within 10 % of that wall, every stage the sync ran is in one of them (`pack_us`
-/// holds only the band repair, off here), `light_us` is its two parts' sum, and
-/// `packed_bricks` is the world's `Full` brick count (each packed once on the render thread).
+/// The first sync of a 4 x 4 x 4 chunk world of [`Mixed`] bricks: its six stages
+/// (`select_us` to `alloc_us`, on the mirror's stage clock) sum to the clock's own span
+/// (`span_us`, its first read to its last) within a tick, the microsecond each of the seven
+/// stages is truncated to (at most the span, less than 7 us under it), so every stage the sync
+/// ran is in one of them (`pack_us` holds only the band repair, off here); `light_us` is its
+/// two parts' sum, and `packed_bricks` is the world's `Full` brick count (each packed once on
+/// the render thread). The wall around the call is printed, not compared.
 #[test]
 fn the_sync_stages_sum_to_its_wall() {
     let Some((device, queue)) = device() else {
@@ -625,7 +627,7 @@ fn the_sync_stages_sum_to_its_wall() {
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     #[allow(
         clippy::disallowed_methods,
-        reason = "the test reads the sync's wall against its stage clock"
+        reason = "the test prints the sync's wall beside its stage clock"
     )]
     let (s, wall_us) = {
         let t = std::time::Instant::now();
@@ -643,10 +645,14 @@ fn the_sync_stages_sum_to_its_wall() {
         s.alloc_us,
     ];
     let sum: u64 = stages.iter().sum();
-    println!("wall {wall_us} us, stages {stages:?}, sum {sum} us");
+    println!(
+        "wall {wall_us} us, span {} us, stages {stages:?}, sum {sum} us",
+        s.span_us
+    );
     assert!(
-        sum.abs_diff(wall_us) * 10 <= wall_us,
-        "stages {stages:?} sum to {sum} us against a wall of {wall_us} us"
+        sum <= s.span_us && s.span_us - sum < 7,
+        "stages {stages:?} sum to {sum} us against the stage clock's span of {} us",
+        s.span_us
     );
     assert!(s.size_us > 0 && s.copy_us > 0 && s.alloc_us > 0);
     assert_eq!(s.light_place_us + s.light_note_us, s.light_us);

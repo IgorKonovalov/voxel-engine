@@ -1,0 +1,5 @@
+# The seeded tree's allow-list: one live row, one stale.
+crates/seeded/tests/seeded.rs | the_claims_own_delay | sleep | 100 ms before the release the claim waits on
+
+# Stale: the function below no longer exists, so this row is a finding.
+crates/seeded/tests/seeded.rs | removed_long_ago | sleep | a sleep that was removed

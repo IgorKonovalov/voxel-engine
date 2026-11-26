@@ -66,6 +66,8 @@ fn the_queue_line_reports_in_view_waiting_by_band_and_a_drain_projection() {
         waiting,
         samples_per_s: 2.0e6,
         rule_missed: None,
+        rule_audit: None,
+        rule_hashes: None,
     };
     assert_eq!(drain.drain_s(), Some(3.0));
     let text = drain.text();
@@ -91,7 +93,7 @@ fn the_queue_line_reports_in_view_waiting_by_band_and_a_drain_projection() {
     // Nothing drawn while chunks wait: no projection.
     let idle = QueueDrain {
         samples_per_s: 0.0,
-        ..drain
+        ..drain.clone()
     };
     assert!(idle.text().ends_with("drain n/a"), "{}", idle.text());
     assert_eq!(
@@ -111,7 +113,7 @@ fn the_queue_line_reports_in_view_waiting_by_band_and_a_drain_projection() {
     assert_eq!(r.before_shares(), [0.25, 0.125]);
     let read = QueueDrain {
         rule_missed: Some(r),
-        ..drain
+        ..drain.clone()
     };
     let text = read.text();
     assert!(
@@ -124,5 +126,120 @@ fn the_queue_line_reports_in_view_waiting_by_band_and_a_drain_projection() {
             .contains("\"rule_missed\": {\"jobs\": [40, 5, 2]"),
         "{}",
         read.json()
+    );
+
+    // The rule audit (Plan 0101 Phase 1): compared and differ by case, full / provisional /
+    // partial / class 1, on the line and in `run.json`, with the first block that differs.
+    let mut a = svet_render::RuleAudit {
+        compared: [12, 7, 30, 2],
+        differ: [0, 0, 1, 0],
+        tier_masked: 4,
+        ..Default::default()
+    };
+    a.first[0] = svet_render::AuditDiffer {
+        chunk: [3, -2, 1],
+        case: 2,
+        word: 77,
+        job: 5,
+        rule: 0,
+    };
+    a.kept = 1;
+    let audited = QueueDrain {
+        rule_audit: Some(a),
+        ..read.clone()
+    };
+    let text = audited.text();
+    assert!(
+        text.contains(
+            "rule audit compared/differ full 12/0 provisional 7/0 partial 30/1 class1 2/0, tier masked 4, first differ chunk [3, -2, 1] partial word 77"
+        ),
+        "{text}"
+    );
+    let json = parse(&audited.json()).expect("parses");
+    let audit = json.get("rule_audit").expect("the audit's object");
+    let nums = |k: &str| match audit.get(k) {
+        Some(Value::Arr(v)) => v
+            .iter()
+            .map(|x| match x {
+                Value::Num(n) => *n,
+                other => panic!("{k}: {other:?}"),
+            })
+            .collect::<Vec<f64>>(),
+        other => panic!("{k}: {other:?}"),
+    };
+    assert_eq!(nums("compared"), [12.0, 7.0, 30.0, 2.0]);
+    assert_eq!(nums("differ"), [0.0, 0.0, 1.0, 0.0]);
+    let Some(Value::Arr(first)) = audit.get("first") else {
+        panic!("first: {audit:?}");
+    };
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].get("word"), Some(&Value::Num(77.0)));
+    assert_eq!(first[0].get("case"), Some(&Value::Str("partial".into())));
+    // No audit: no object.
+    assert!(read.json().contains("rule_missed") && !read.json().contains("rule_audit"));
+}
+
+/// The rule hashes (Plan 0101 Phase 4 (c)) on the `bake queue:` line and in `run.json`'s
+/// `queue`: the zeroed chunks' count and set hash, the store's block count and hash and the
+/// step, as 16 hex digits; in `run.json` each zeroed chunk's coordinate and block hash. No
+/// hashes, no clause and no object.
+#[test]
+fn the_queue_line_carries_the_rule_hashes_and_run_json_each_zeroed_chunk() {
+    let h = svet_render::RuleHashes {
+        asked: 1,
+        step: 1681,
+        chunks: vec![
+            ([-3, 2, 1], 0x0123_4567_89ab_cdef),
+            ([4, 0, -1], 0xfeed_0000_0000_0001),
+        ],
+        unplaced: 0,
+        zeroed: 0xdead_beef_0000_0042,
+        store: 0x0000_0000_0000_00ff,
+        blocks: 7989,
+    };
+    let plain = QueueDrain::default();
+    assert!(!plain.text().contains("rule hashes"), "{}", plain.text());
+    assert!(!plain.json().contains("rule_hashes"), "{}", plain.json());
+    let hashed = QueueDrain {
+        rule_hashes: Some(std::sync::Arc::new(h)),
+        ..plain
+    };
+    let text = hashed.text();
+    assert!(
+        text.ends_with(
+            "; rule hashes zeroed 2 chunks deadbeef00000042 (unplaced 0), store 7989 blocks 00000000000000ff, at step 1681"
+        ),
+        "{text}"
+    );
+    let json = parse(&hashed.json()).expect("parses");
+    let o = json.get("rule_hashes").expect("the hashes' object");
+    assert_eq!(o.get("step"), Some(&Value::Num(1681.0)));
+    assert_eq!(o.get("zeroed_chunks"), Some(&Value::Num(2.0)));
+    assert_eq!(o.get("unplaced"), Some(&Value::Num(0.0)));
+    assert_eq!(
+        o.get("zeroed"),
+        Some(&Value::Str("deadbeef00000042".into()))
+    );
+    assert_eq!(o.get("blocks"), Some(&Value::Num(7989.0)));
+    assert_eq!(o.get("store"), Some(&Value::Str("00000000000000ff".into())));
+    let Some(Value::Arr(chunks)) = o.get("chunks") else {
+        panic!("chunks: {o:?}");
+    };
+    assert_eq!(
+        chunks,
+        &[
+            Value::Arr(vec![
+                Value::Num(-3.0),
+                Value::Num(2.0),
+                Value::Num(1.0),
+                Value::Str("0123456789abcdef".into()),
+            ]),
+            Value::Arr(vec![
+                Value::Num(4.0),
+                Value::Num(0.0),
+                Value::Num(-1.0),
+                Value::Str("feed000000000001".into()),
+            ]),
+        ]
     );
 }

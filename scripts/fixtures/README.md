@@ -131,6 +131,39 @@ The other profiles are green here (`quick` and `gpu` are the prefix filter and i
 `gate` has none, `soak` and `full` leave out `reading::`), so the seven lines above are the whole
 output.
 
+## `test-clocks/`: for `check-test-clocks.mjs`
+
+```
+node scripts/check-test-clocks.mjs scripts/fixtures/test-clocks
+node scripts/check-test-clocks.mjs --self-test    # expects exit 0, 13 of 13
+```
+
+Expect **exit 1 and exactly nine findings**, then the count line `9 finding(s) across 6 files
+of test code`. The tree is one crate, `crates/seeded`, and its own `scripts/test-clocks-allow.txt`
+(one live row, one stale):
+
+| Case | Seeded as | Expected |
+|------|-----------|----------|
+| rule 1, a sleep | `tests/seeded.rs`'s `paced_by_a_sleep` | ``crates/seeded/tests/seeded.rs:14 -> rule 1: `sleep` in `paced_by_a_sleep`: ...`` |
+| rule 2, a duration against a constant | `seeded.rs`'s `bound_by_a_constant`, `t.elapsed() < LIMIT` | `crates/seeded/tests/seeded.rs:21 -> rule 2: ...` |
+| rule 2 through a bound name | `seeded.rs`'s `bound_through_a_name`, `let ms = ..elapsed()..; ms < 1000.0` | `crates/seeded/tests/seeded.rs:27 -> rule 2: ...` |
+| rule 2 through a clock function, an `if` that panics | `src/lib.rs`'s `#[cfg(test)]` module, `seconds_since(t) > 2.0` | `crates/seeded/src/lib.rs:30 -> rule 2: ...` |
+| rule 3 | `tests/threaded.rs`, `set_bake_thread(.., true)` and no `wait_bake_step` | `crates/seeded/tests/threaded.rs:9 -> rule 3: ...` |
+| rule 4 | `tests/timed.rs`'s `timed_device`, in a file that calls `.step(` | `crates/seeded/tests/timed.rs:9 -> rule 4: ...` |
+| a stale allow-list row | `scripts/test-clocks-allow.txt` line 5, `removed_long_ago` | `scripts/test-clocks-allow.txt:5 -> a row whose site is gone: ...` |
+| an allow-listed site | `seeded.rs`'s `the_claims_own_delay` | not reported |
+| rule 1 in a soak test | `seeded.rs`'s `a_long_series`, marked `#[ignore = "soak"]` | ``crates/seeded/tests/seeded.rs:56 -> rule 1: `sleep` in `a_long_series`: ...`` |
+| rule 1 in a helper only a soak test calls | `seeded.rs`'s `paced_helper` | ``crates/seeded/tests/seeded.rs:60 -> rule 1: `yield_now` in `paced_helper`: ...`` |
+| a reading | `seeded.rs`'s and `timed.rs`'s `mod reading` | not reported |
+| tokens in comments and strings | `seeded.rs`'s module doc and `tokens_in_strings` | not reported |
+| a duration against zero or a value | `seeded.rs`'s `compared_with_zero_or_a_value` | not reported |
+| production code | `src/lib.rs`'s `back_off` and `late` | not reported; only test code is read |
+| the blocking wait in a declared module | `tests/waited.rs`, whose `mod support;` names `wait_bake_step` | not reported |
+
+`--self-test` asserts the nine lines (file, line, rule, token and function), nothing beyond
+them, one of the two rows used, and a floor on the repository: at least 100 files of test code
+scanned and at least 5 allow-list rows matching a site, which a dead detector takes to zero.
+
 ## `file-size/`: for `check-file-size.mjs`
 
 ```

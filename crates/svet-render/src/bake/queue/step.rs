@@ -80,7 +80,8 @@ impl BakeQueue {
         self.stats.stages.ms = self.laps.ms;
         self.stats.stages.render_ms = self.laps.render_ms();
         self.stats.stages.bytes = self.laps.bytes();
-        self.stats.stages.total_ms = stopwatch().duration_since(t0.at).as_secs_f64() * 1e3;
+        // The step's span ends at the apply's lap, so the stages sum to it.
+        self.stats.stages.total_ms = self.laps.at.duration_since(t0.at).as_secs_f64() * 1e3;
     }
 
     /// The bake half of [`BakeQueue::step`]: every stage but the apply.
@@ -311,7 +312,11 @@ impl BakeQueue {
         self.laps.lap(S_DIGS);
         // With the bake thread on, what the listing pool finished is pushed every step, ahead
         // of the gate that reads it ([`BakeQueue::take_listed`]).
-        self.take_listed(store, view.eye.map(|v| (v / 64.0).floor() as i32))?;
+        self.take_listed(
+            run.mirror,
+            store,
+            view.eye.map(|v| (v / 64.0).floor() as i32),
+        )?;
         self.laps.lap(S_LIST);
         let pooled = view.samples.is_none() && self.lists_off_the_loop();
         let level = if pooled { POOLED_LEVEL * cap } else { 2 * cap };
@@ -400,6 +405,8 @@ impl BakeQueue {
         // frees, and planned ahead of every other job.
         let ring1 = self.ring1_chunks();
         let (cell, clamp) = (self.settings.cell, self.settings.clamp);
+        let sky = run.sky & BAKE_SKY_ON != 0;
+        let key = run.key.map(|(d, _)| d);
         let mut placement = Placement {
             gpu: run.mirror,
             stale: &mut self.stale,
@@ -426,6 +433,8 @@ impl BakeQueue {
             landing_fade: self.landing_fade,
             dig_store_hold: self.dig_store_hold,
             landed_word: self.landed_word,
+            audit_jobs: &mut self.audit_jobs,
+            zero: (cell, clamp, sky, key),
         };
         let mut sink =
             |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>, stamp| {
@@ -435,8 +444,6 @@ impl BakeQueue {
                 place_render.set(place_render.get() + calls().ms - c);
             };
         // The rule's zero records land through the same placement as a job's block.
-        let sky = run.sky & BAKE_SKY_ON != 0;
-        let key = run.key.map(|(d, _)| d);
         let now = self.lp.stamp;
         for (coord, first, faces, tier) in ruled {
             sink(
@@ -634,7 +641,8 @@ impl BakeQueue {
             ms: self.laps.ms,
             render_ms: self.laps.render_ms(),
             bytes: self.laps.bytes(),
-            total_ms: stopwatch().duration_since(t0.at).as_secs_f64() * 1e3,
+            // The span to the last lap's own read: the stages sum to it.
+            total_ms: self.laps.at.duration_since(t0.at).as_secs_f64() * 1e3,
             opened: opened_step,
         };
     }
@@ -675,6 +683,12 @@ struct Placement<'a> {
     dig_store_hold: bool,
     /// [`BakeQueue::landed_word`].
     landed_word: Option<u32>,
+    /// [`BakeQueue::audit_jobs`]: an audited job's placed block is compared with the rule's
+    /// zero record ([`QueueStats::rule_audit`]).
+    audit_jobs: &'a mut ChunkMap<(usize, ChunkFaces)>,
+    /// What the zero record is written under: the cell, the clamp, the sky and the key light's
+    /// direction ([`zero_block`]).
+    zero: (u32, bool, bool, Option<[f32; 3]>),
 }
 
 impl Placement<'_> {
@@ -702,6 +716,7 @@ impl Placement<'_> {
         let dug = self.dig_open.remove(&coord.0);
         let keyed = self.keys_open.remove(&coord.0);
         let stale = self.stale.remove(&coord.0).is_some_and(|at| at > stamp);
+        let audited = self.audit_jobs.remove(&coord.0);
         if stale || !self.gpu.is_mirrored(coord) {
             store.release(first, block.len() as u64);
             // The pool reads its candidacy again: a job opened and ended between two of its
@@ -739,6 +754,9 @@ impl Placement<'_> {
                 store.release(first, block.len() as u64);
             }
             return;
+        }
+        if let Some((case, faces)) = audited.filter(|_| dug.is_none()) {
+            self.audit(coord, case, &faces, &block);
         }
         if let Some(e) = self.entered.get_mut(&coord.0) {
             let age = u32::try_from(self.steps - e.0).unwrap_or(u32::MAX);
@@ -831,6 +849,25 @@ impl Placement<'_> {
                 }
             },
         }
+    }
+
+    /// The audit's compare of `block`, an audited job's (case `case`, its listed `faces`), with
+    /// the rule's zero record of those faces at the ruled tier (0); the tier bits are left out
+    /// where the job's first record holds another tier (ADR-0080 rule 2).
+    fn audit(&mut self, coord: ChunkCoord, case: usize, faces: &ChunkFaces, block: &[u32]) {
+        let (cell, clamp, sky, key) = self.zero;
+        let rule = zero_block(coord, faces, cell, clamp, sky, key, 0);
+        let tier = block
+            .iter()
+            .take(CHUNK_BRICKS)
+            .find(|&&d| d != 0)
+            .map_or(0, |&d| {
+                let run = (d >> 11) as usize;
+                record_tier(&block[run - self.record..])
+            });
+        self.stats
+            .rule_audit
+            .compare(coord.0, case, block, &rule, self.record, tier != 0);
     }
 
     /// The same layout: the block takes its old place `f`, its words read back at `first` are
