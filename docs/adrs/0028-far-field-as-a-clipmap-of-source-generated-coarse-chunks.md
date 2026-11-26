@@ -7,6 +7,19 @@
 > rewritten below: ADR-0027's Outcome made an absent chunk sky, and so does this ADR at its
 > coarsest level. The sky term at a clip hit under ADR-0070 (baked sky visibility) is an open
 > owner question of Plan 0033 and is noted where the Decision says what lights a clip hit.
+> **Revised 2026-11-26 (architect, Plan 0033's second re-read; still proposed, pending the
+> owner's answer to that plan's question 1):** "the lighting rays of ADR-0027 take the far
+> field" and "the directional shadow ray starts at its hit's level and follows the same rule
+> out to the far limit" are withdrawn. Since ADR-0082 the light passes keep no screen history
+> and a far face's key light is the column map's horizon toward the sun, not a ray; every clip
+> hit is such a face. So **no lighting ray takes the far field; only the primary ray does**,
+> and the far occluder is the column map extended over the levels: each level keeps column
+> tiles of its clip chunks' tops, and the horizon's march continues from the near map into
+> them to the far limit, ending lit in an absent level (absent is sky, as before). A near
+> face's key source is multiplied by that far horizon. Rejected as the default: the ray as
+> written, which is exact under an overhang and needs a history to hide its per-frame noise.
+> The clip levels never enter the bake thread's copy of the mirror (ADR-0083), and the
+> rule-by-record of ADR-0080 and ADR-0085 reads the near map only.
 > **Date:** 2026-10-22
 > **Related plan(s):** [Plan 0033](../plans/0033-far-field-clipmap-to-a-kilometre.md)
 > **Claims:** the founding-interview decision "Far-field clipmap (coarser rings beyond the
