@@ -1,7 +1,22 @@
 # 0104: The wobble anchored to the owner's eye: clips he ranks, a measure that ranks them, then the remedy
 
-> **Status:** in progress: **closing. The owner answered question 4 (a), close (2026-11-26):
-> no remedy; Phase 6 (6a, 6b, 6c) is next, then the fresh-session close review** ("Amended
+> **Status:** done: **closed 2026-11-26, v0.77.0, with no remedy (the owner's answer to
+> question 4: close).** The fresh-session close review found no blocker, major or minor. The
+> wobble is anchored on five clips the owner watched and ranked blind; no default, golden or
+> image bar moved. Plan 0100's unpicked settings are removed (`key_cover record`,
+> `lighting.key_at`, `lighting.key_horizon`, the walk shader, the column map's coarse rows);
+> `key_cover ray` stays a setting, off on every profile. What is left under the defaults is
+> parked in the backlog with his clips as anchors: sunlit tree crowns sparkling in motion,
+> and a second of settling after a turn (FSR 2's history). Disclosed, not repaired: candidate
+> 2 is a reading on one pair, provisional, not a measure; Phase 5a's under-0.002 figure was
+> missed on each hold's first window; the lit crowns' cause is not shown; `C`'s order was
+> never given as a ranking. The gate was not run again at the close: only documents changed
+> after the gated tree `7cd1f816` (its wall, 1314 s in parts, was read loaded and is in
+> `docs/nfr.md` section 7 as such). One correction to the Close triggers below: there never
+> was a `KeyCover::Walk` or a `key cover walk`; the walk removed is `KeyHorizon::Walk`
+> (`key horizon walk`), as the rest of the plan and `CHANGELOG.md` say. The history of the
+> plan's state, as it stood before the close: the owner answered question 4 (a), close (2026-11-26):
+> no remedy; Phase 6 (6a, 6b, 6c), then the fresh-session close review ("Amended
 > 2026-11-26 (owner)"). Phase 6a stopped at the settings-rows walk and is ruled ("Amended
 > 2026-11-26 (architect, after Phase 6a's stop)"): one test-file fix, one short rerun, then
 > 6b. Before it: Phase 5 landed
@@ -15,22 +30,22 @@
 > questions"). **Order (owner, question 1 (a)):** Phases 0 to 2 and 4 run as a lane beside
 > Plan 0099 now; Phase 3 and every remedy phase start on a main that holds Plan 0099.
 > **Created:** 2026-11-25
-> **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../roadmap.md)
-> **Related ADRs:** [ADR-0084](../adrs/0084-the-key-lights-visibility-on-a-world-face-is-fixed-per-face-the-columns-horizon-where-lit-a-cover-source-where-shadowed.md)
+> **Milestone:** M10: Outdoors in [`docs/roadmap.md`](../../roadmap.md)
+> **Related ADRs:** [ADR-0084](../../adrs/0084-the-key-lights-visibility-on-a-world-face-is-fixed-per-face-the-columns-horizon-where-lit-a-cover-source-where-shadowed.md)
 > (accepted with an Outcome; it defers the wobble, the near shadow's hole and sun under cover
 > as a default to this plan, and names the contact ray as the one exception "a cover source
 > only adds" may take),
-> [ADR-0082](../adrs/0082-the-light-pass-keeps-no-screen-history-by-default-and-reads-smooth-sources-to-the-mid-range.md)
+> [ADR-0082](../../adrs/0082-the-light-pass-keeps-no-screen-history-by-default-and-reads-smooth-sources-to-the-mid-range.md)
 > (the calm defaults),
-> [ADR-0076](../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
+> [ADR-0076](../../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
 > (where a history lives, one fade a transition),
-> [ADR-0055](../adrs/0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md)
+> [ADR-0055](../../adrs/0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md)
 > (the settings rows). **No ADR is drafted with this plan**: none is owed until a remedy has
 > a rejected alternative, and none is picked here.
-> **Source:** [Plan 0100](done/0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md)
+> **Source:** [Plan 0100](0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md)
 > (closed 2026-11-25, v0.75.0), its "Amended 2026-11-25 (architect, Phase 8b did not reproduce
 > the window)", which wrote this plan's Phases 1 to 4 as F1 to F4, and its "The close"; the
-> readings in [`logs/0100.md`](logs/0100.md): "Phase 8" (the owner's words), "The architect's
+> readings in [`logs/0100.md`](../logs/0100.md): "Phase 8" (the owner's words), "The architect's
 > code reading after the window", "Phase 8b", "The close review: the readings taken with no
 > device wait".
 
@@ -180,7 +195,7 @@ Every phase carries exactly one `**Owner skill:**`: `dev` or `human`.
   - **The comment:** one line at the `LIGHTING2_*` constants saying bit 3 of
     `Params::lighting2` is free (`centre` held it).
   - **Not taken:** the gate-sized rig for the bake's key ray at its cap ("Plan 0100's
-    leftovers" in [`docs/backlog.md`](../backlog.md)). It belongs in
+    leftovers" in [`docs/backlog.md`](../../backlog.md)). It belongs in
     `apps/flythrough/tests/gpu_bake_rule.rs`, which Plan 0101's Phase 2 edits; it stays in
     the backlog for that plan.
 - **Files touched:** `apps/flythrough/tests/support/wobble.rs` (or a sibling),
@@ -467,7 +482,7 @@ lighted").
   between frames at a fixed world point (it mixes a landing, a history or a jittered read):
   it becomes a seventh candidate in "After Phase 4", and Phase 4's maps say whether the
   owner's places lie on such pixels. (c) Neither: the tables go to
-  [`docs/backlog.md`](../backlog.md) under "Plan 0100's leftovers" as unexplained, by the
+  [`docs/backlog.md`](../../backlog.md) under "Plan 0100's leftovers" as unexplained, by the
   architect at the stop, and this plan carries it no further. No shader is changed in any
   case.
 
@@ -884,7 +899,7 @@ Nothing above is rewritten; where this section differs, this section rules.
 
 **Question 4: (a), close** (owner, 2026-11-26, morning, after `live/p4/index.md`). The plan
 closes with no remedy. The two things left under the defaults are parked in
-[`docs/backlog.md`](../backlog.md), each with his clips as its anchor:
+[`docs/backlog.md`](../../backlog.md), each with his clips as its anchor:
 
 - **Sunlit tree crowns sparkle while he moves** (`C a`, `C b`): "Sunlit tree crowns sparkle
   in motion under the defaults".
@@ -1157,7 +1172,7 @@ Neither (a) nor (b) as offered:
 |---|---|
 | `COLUMN_BLOCK`, `COLUMN_BLOCKS` removed | **stands.** They size the coarse rows alone, which the table removes "with their upload"; a public constant for data that no longer exists is not kept. The close ceremony's `CHANGELOG.md` list gains them and `column_coarse_texel` |
 | `apps/flythrough/tests/support/levels.rs` deleted | **stands.** It is the CPU port of the walk's coarse levels; its one reader's rows went with the walk |
-| `Params::column_top` and `GpuWorld::column_top_max` kept, unread by any pass | **stands for this close.** The word took a pad slot (Plan 0100), so the layout is as shipped and no shader is recompiled over it; removing it now would reopen 6a's gpu hold for no change on screen. It is parked in [`docs/backlog.md`](../backlog.md) ("The sun's term at small faces", the last bullet). The field's comment already says no pass reads it; `the_column_top_max_is_the_maps_maximum` stays as the accessor's test |
+| `Params::column_top` and `GpuWorld::column_top_max` kept, unread by any pass | **stands for this close.** The word took a pad slot (Plan 0100), so the layout is as shipped and no shader is recompiled over it; removing it now would reopen 6a's gpu hold for no change on screen. It is parked in [`docs/backlog.md`](../../backlog.md) ("The sun's term at small faces", the last bullet). The field's comment already says no pass reads it; `the_column_top_max_is_the_maps_maximum` stays as the accessor's test |
 
 ### What remains of Phase 6a (one dev brief)
 
@@ -1345,17 +1360,17 @@ taken as recommended ("Amended 2026-11-26 (owner)").
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 0: the wobble rigs read a baked store | dev | done: the shared settle (`support/baked.rs`); both soak tests pass on a whole census on the RTX and lavapipe (the forest one 12 538 s on lavapipe); W1 unexplained; readings in [`logs/0104.md`](logs/0104.md) | 565bdee2, 0bc94eb4, e42f5e8a |
-| 1: the owner's move as clips | dev | done: six files under `live/anchor/`, readings in [`logs/0104.md`](logs/0104.md) | 31d18c4e |
-| 2: the owner watches the clips | human | done: T, C, S anchored; T and C orders confirmed blind; answers in [`logs/0104.md`](logs/0104.md) | f8dd1fac, a183ddd6 |
-| 0b: the forest soak test asserts on one baked store ("Amended 2026-11-25") | dev | done: one store, two rest protocols; settle at the submit's cap; half frame on lavapipe; 113 to 146 s RTX, 250 to 255 s lavapipe (410 s loaded); far +30 bars 5.52 / 4.88 (1080p), 8.99 / 8.30 (960x540); readings in [`logs/0104.md`](logs/0104.md) | 127e7672 |
+| 0: the wobble rigs read a baked store | dev | done: the shared settle (`support/baked.rs`); both soak tests pass on a whole census on the RTX and lavapipe (the forest one 12 538 s on lavapipe); W1 unexplained; readings in [`logs/0104.md`](../logs/0104.md) | 565bdee2, 0bc94eb4, e42f5e8a |
+| 1: the owner's move as clips | dev | done: six files under `live/anchor/`, readings in [`logs/0104.md`](../logs/0104.md) | 31d18c4e |
+| 2: the owner watches the clips | human | done: T, C, S anchored; T and C orders confirmed blind; answers in [`logs/0104.md`](../logs/0104.md) | f8dd1fac, a183ddd6 |
+| 0b: the forest soak test asserts on one baked store ("Amended 2026-11-25") | dev | done: one store, two rest protocols; settle at the submit's cap; half frame on lavapipe; 113 to 146 s RTX, 250 to 255 s lavapipe (410 s loaded); far +30 bars 5.52 / 4.88 (1080p), 8.99 / 8.30 (960x540); readings in [`logs/0104.md`](../logs/0104.md) | 127e7672 |
 | 3: the owner's own flight, recorded and rendered again (only for a subject not shown) | dev | does not run: every subject anchored ("Amended 2026-11-25"; row marked by the architect) | |
-| 4: a measure that ranks what the owner ranked | dev | done: the store's tally (equal with and without lever 2), the W1 split by source (exit (a), (b)), `S`'s change named; step 3: the tracks rendered again with world units (`keys.rs`), both candidates scored on his files (`measure.rs`): candidate 2 holds (a) at `T a` and `S` but fails (b) at T (0.01507 against 0.01515), candidate 1 fails (a) at `C a` and (b) at C (0.04399 against 0.04858); candidate 7: no source 0 sample in any clip, its drop rule fires; `S`'s control: outlines change under the pinned exposure (light, read as a reading); maps and `index.md` under `live/p4/`; readings in [`logs/0104.md`](logs/0104.md) | 13605f9e (wip), 780ec1ec |
-| 5: two readings that separate the causes ("Amended 2026-11-26") | dev | done: 5a, held units in the holds: `T b`'s holds 0.00035 to 0.00317 (were 0.00719 to 0.01141), clip totals `T a` 0.01507 against `T b` 0.01123, **holds** by the refutation rule, the under-0.002 figure missed on each hold's first window and both extras; sunlit-leaf row `C a` 0.02480 against `C b` 0.02476; 5b, `S` with no upscaler pinned at 397: outlines 398 / 440 0.007 levels, **the upscaler**; `live/p4/index.md` rewritten; readings in [`logs/0104.md`](logs/0104.md) | committed with this row |
+| 4: a measure that ranks what the owner ranked | dev | done: the store's tally (equal with and without lever 2), the W1 split by source (exit (a), (b)), `S`'s change named; step 3: the tracks rendered again with world units (`keys.rs`), both candidates scored on his files (`measure.rs`): candidate 2 holds (a) at `T a` and `S` but fails (b) at T (0.01507 against 0.01515), candidate 1 fails (a) at `C a` and (b) at C (0.04399 against 0.04858); candidate 7: no source 0 sample in any clip, its drop rule fires; `S`'s control: outlines change under the pinned exposure (light, read as a reading); maps and `index.md` under `live/p4/`; readings in [`logs/0104.md`](../logs/0104.md) | 13605f9e (wip), 780ec1ec |
+| 5: two readings that separate the causes ("Amended 2026-11-26") | dev | done: 5a, held units in the holds: `T b`'s holds 0.00035 to 0.00317 (were 0.00719 to 0.01141), clip totals `T a` 0.01507 against `T b` 0.01123, **holds** by the refutation rule, the under-0.002 figure missed on each hold's first window and both extras; sunlit-leaf row `C a` 0.02480 against `C b` 0.02476; 5b, `S` with no upscaler pinned at 397: outlines 398 / 440 0.007 levels, **the upscaler**; `live/p4/index.md` rewritten; readings in [`logs/0104.md`](../logs/0104.md) | committed with this row |
 | the stop: the architect's amendment | - | written, with no remedy phase: the owner closed the plan ("Amended 2026-11-26 (owner)"; row marked by the architect) | |
-| 6a: Plan 0100's unpicked settings removed | dev | done: the removal, quick tier, clippy, fmt and checks green; the gpu binaries 57 passed, no golden differs; the rows walk ruled ("Amended 2026-11-26 (architect, after Phase 6a's stop)"): `lighting.key_cover` 0 pixels under the defaults, 12 071 under the far normal off (`LIVE_UNDER`), the walk passes, 14.0 s; readings in [`logs/0104.md`](logs/0104.md) | e8325704 (wip), committed with this row |
-| 6b: the rig cut to what stays, the anchors named, the pins | dev | done: candidate 7 and the read-a-frame scoring of holds cut, the `.keys` record 5 bytes a sample; on the cut code `T a` 0.01507 against `T b` 0.01123 and the sunlit-leaf row 0.02480 against 0.02476 repeat; `live/p4/*.keys` deleted, 14 626 939 470 B; the anchors' table and the soak pins (`docs/nfr/07-startup-and-build.md`); readings in [`logs/0104.md`](logs/0104.md) | committed with this row |
-| 6c: main merged in, and the tip's gate in parts | dev | done: main `1bfa3e5b` merged, one roster conflict, one merge fix-up (`support/baked.rs` to main's `QueueRead`); clippy, fmt, deny, doctests, checks green; gate CPU part 1103 passed, `gpu_*` in three holds 108 + 100 + 128 passed (508, 326, 448 s, loaded); sole 1 passed; gate parts 1314 s wall against section 7's 1140 s, loaded; no golden moved; soak tests 391.0 s (bar 600) and 91.7 s on lavapipe; readings in [`logs/0104.md`](logs/0104.md) | 7cd1f816, committed with this row |
+| 6a: Plan 0100's unpicked settings removed | dev | done: the removal, quick tier, clippy, fmt and checks green; the gpu binaries 57 passed, no golden differs; the rows walk ruled ("Amended 2026-11-26 (architect, after Phase 6a's stop)"): `lighting.key_cover` 0 pixels under the defaults, 12 071 under the far normal off (`LIVE_UNDER`), the walk passes, 14.0 s; readings in [`logs/0104.md`](../logs/0104.md) | e8325704 (wip), committed with this row |
+| 6b: the rig cut to what stays, the anchors named, the pins | dev | done: candidate 7 and the read-a-frame scoring of holds cut, the `.keys` record 5 bytes a sample; on the cut code `T a` 0.01507 against `T b` 0.01123 and the sunlit-leaf row 0.02480 against 0.02476 repeat; `live/p4/*.keys` deleted, 14 626 939 470 B; the anchors' table and the soak pins (`docs/nfr/07-startup-and-build.md`); readings in [`logs/0104.md`](../logs/0104.md) | committed with this row |
+| 6c: main merged in, and the tip's gate in parts | dev | done: main `1bfa3e5b` merged, one roster conflict, one merge fix-up (`support/baked.rs` to main's `QueueRead`); clippy, fmt, deny, doctests, checks green; gate CPU part 1103 passed, `gpu_*` in three holds 108 + 100 + 128 passed (508, 326, 448 s, loaded); sole 1 passed; gate parts 1314 s wall against section 7's 1140 s, loaded; no golden moved; soak tests 391.0 s (bar 600) and 91.7 s on lavapipe; readings in [`logs/0104.md`](../logs/0104.md) | 7cd1f816, committed with this row |
 
 ### Notes
 
