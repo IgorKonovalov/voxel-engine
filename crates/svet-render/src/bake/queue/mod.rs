@@ -466,6 +466,10 @@ pub struct BakeQueue {
     /// Chunks whose block is the rule's zero record: baked again when a change near them
     /// breaks the rule ([`BakeQueue::relist_zeroed`]).
     pub(super) zeroed: ChunkSet,
+    /// Of the zeroed chunks, those whose record was written with a neighbour the shadow did not
+    /// hold full (its listing read it as rock): bit `f` for the neighbour across face `f`.
+    /// Listed again when one of them is held full ([`BakeQueue::relist_zeroed`]).
+    pub(super) zeroed_open: std::collections::HashMap<[i32; 3], u8>,
     /// Chunks the opening's checks found answered by the rule, read when listed.
     pub(super) ruled_checked: ChunkSet,
     /// Ruled chunks listed this step, their place and faces: their zero blocks are placed at
@@ -679,6 +683,7 @@ impl BakeQueue {
             zero_rule: true,
             sealed: Default::default(),
             zeroed: Default::default(),
+            zeroed_open: Default::default(),
             ruled_checked: Default::default(),
             ruled: Vec::new(),
             tiers: DEFAULT_TIERS,

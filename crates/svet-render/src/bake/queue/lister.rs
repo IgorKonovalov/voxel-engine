@@ -405,7 +405,7 @@ impl BakeQueue {
                 self.audit_checked.insert(c, a);
             }
             let listed = l.listed.expect("collected above");
-            match self.push_listed(store, eye, l.class, ChunkCoord(c), listed) {
+            match self.push_listed(gpu, store, eye, l.class, ChunkCoord(c), listed) {
                 Ok(samples) => {
                     self.fill.note(l.prepared, l.bound, samples);
                     if samples > 0 && self.lp.stamps.contains_key(&c) {

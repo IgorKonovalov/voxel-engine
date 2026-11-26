@@ -210,6 +210,9 @@ pub struct QueueStats {
     /// having broken the rule.
     pub zeroed: u64,
     pub zero_relisted: u64,
+    /// Zeroed chunks listed again since the queue started because a neighbour their record was
+    /// listed without (not held full) is held full now; each is ruled again or baked.
+    pub zero_border_relisted: u64,
     /// With the bake thread's listing pool (Plan 0099 Phase 4b): the projection (the loop's
     /// samples left and the pool's estimates) over the cap at the last step's draw, 0 where
     /// the step drew nothing; the two fills of the listing bounds, listed from the world and

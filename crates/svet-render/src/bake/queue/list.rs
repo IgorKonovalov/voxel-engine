@@ -63,7 +63,7 @@ impl BakeQueue {
             if self.box_waits() {
                 break;
             }
-            match self.push_listed(store, eye, class, ChunkCoord(c), l) {
+            match self.push_listed(run.mirror, store, eye, class, ChunkCoord(c), l) {
                 Ok(samples) => {
                     #[cfg(test)]
                     if let Some(hook) = self.listed_hook.as_mut() {
@@ -141,6 +141,7 @@ impl BakeQueue {
     /// faceless instead. The job's samples at most (0 for none).
     pub(in crate::bake) fn push_listed(
         &mut self,
+        gpu: &Shadow,
         store: &mut Store,
         eye: [i32; 3],
         class: u8,
@@ -161,6 +162,7 @@ impl BakeQueue {
         let audit = self.audit_checked.remove(&c);
         self.audit_jobs.remove(&c);
         self.zeroed.remove(&c);
+        self.zeroed_open.remove(&c);
         if faces.faces() == 0 {
             self.reach.remove(&c);
             self.partial_due.remove(&c);
@@ -199,6 +201,20 @@ impl BakeQueue {
             self.ruled.push((coord, first_word, faces, 0));
             self.zeroed.insert(c);
             self.stats.zeroed += 1;
+            // Its faces were listed with each neighbour the store did not hold read as rock: the
+            // neighbours the shadow does not hold full are noted, and the chunk is listed again
+            // when one of them is (ADR-0085).
+            let open = (0..6).fold(0u8, |m, f| {
+                let n = ChunkCoord(neighbour(coord, f));
+                if gpu.is_mirrored(n) && !gpu.is_lod(n) {
+                    m
+                } else {
+                    m | 1 << f
+                }
+            });
+            if open != 0 {
+                self.zeroed_open.insert(c, open);
+            }
             return Ok(0);
         }
         if partial {
@@ -288,7 +304,7 @@ impl BakeQueue {
 pub(in crate::bake) type Held = [Option<Arc<PreparedMasks>>; 6];
 
 /// The chunk across `face` of `coord` (`face / 2` the axis, odd the positive side).
-fn neighbour(coord: ChunkCoord, face: usize) -> [i32; 3] {
+pub(super) fn neighbour(coord: ChunkCoord, face: usize) -> [i32; 3] {
     let mut c = coord.0;
     c[face / 2] += if face % 2 == 1 { 1 } else { -1 };
     c

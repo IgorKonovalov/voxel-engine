@@ -281,3 +281,96 @@ fn a_ruled_chunk_is_relisted_when_the_rule_stops_holding() {
         m.changed.push(ChunkCoord(L));
     });
 }
+
+/// The chunk over `C` in [`partial_rig`]'s window, given a slab of rock at its bottom by
+/// [`border_rig`]: its six neighbours are held from the start.
+const D: [i32; 3] = [1, 1, 2];
+/// `C`'s neighbour across its negative x face: air, so `C`'s slab lists faces toward it once it
+/// is held.
+const N: [i32; 3] = [0, 1, 1];
+
+/// `c`'s faces as a listing reads the world now.
+fn faces_of(rig: &mut Rig, c: [i32; 3]) -> usize {
+    let classes = rig.queue.classes(rig.world.materials());
+    rig.queue
+        .list(&rig.world, ChunkCoord(c), &classes)
+        .0
+        .faces()
+}
+
+/// [`partial_rig`] with a slab of rock at the bottom of [`D`] as well as `C`'s, and [`N`] in
+/// neither the mirror nor the world's store; the chunk it took out of the store.
+fn border_rig() -> (Rig, Chunk) {
+    let mut rig = partial_rig();
+    let rock = rig
+        .world
+        .material_at([C[0] * 64, C[1] * 64, C[2] * 64])
+        .expect("C's slab is resident");
+    let min = D.map(|v| i64::from(v) * 64);
+    let max = [min[0] + 63, min[1] + 63, min[2] + i64::from(SLAB_TOP) - 1];
+    rig.world
+        .apply(&box_op(min, max, Mode::Fill(rock)))
+        .expect("resident");
+    let n = rig
+        .world
+        .store()
+        .remove(ChunkCoord(N))
+        .expect("N is in the store");
+    let n = n.read().expect("unpoisoned").clone();
+    rig.mirror.absent.insert(N);
+    (rig, n)
+}
+
+/// Plan 0101 Phase 4, done-when (2). `C`'s slab meets the air of [`N`] across its negative x
+/// face, and `N` is in neither the world's store nor the mirror at `C`'s opening: `C` is ruled
+/// with 0 jobs, its faces listed with `N` read as rock. `N` arrives: `C` is listed again and
+/// ruled again, its block the zero record of its faces listed with `N` present (more faces than
+/// before), with 0 jobs, still zeroed, the four flags clear. [`D`], ruled with its six neighbours
+/// held, is not listed again by `N`'s arrival (`N` is not one of them).
+#[test]
+fn a_ruled_chunk_lists_its_border_faces_when_the_neighbour_arrives() {
+    let (mut rig, n) = border_rig();
+    rig.until("C and D ruled", |r| r.queue.stats.zeroed == 2);
+    settle(&mut rig, "C's and D's zero records");
+    assert!(rig.queue.zeroed.contains(&C) && rig.queue.zeroed.contains(&D));
+    assert_eq!(jobs(&rig), 0, "no job");
+    let before = faces_of(&mut rig, C);
+    let zero = zero_of_c(&mut rig);
+    assert_eq!(rig.store.words.get(&C), Some(&zero), "C's record, N absent");
+    let d = rig.store.words.get(&D).cloned().expect("D's record");
+
+    rig.world.store().insert(ChunkCoord(N), n);
+    rig.mirror.absent.remove(&N);
+    rig.mirror.changed.push(ChunkCoord(N));
+    rig.until("C ruled again", |r| r.queue.stats.zeroed == 3);
+    settle(&mut rig, "C's second zero record");
+    for _ in 0..30 {
+        rig.step();
+        assert!(!in_job(&rig), "no job for C");
+    }
+    let after = faces_of(&mut rig, C);
+    assert!(
+        after > before,
+        "C lists {after} faces with N, {before} without"
+    );
+    assert_eq!(jobs(&rig), 0, "no job");
+    assert_eq!(rig.queue.stats.zeroed, 3, "C ruled twice, D once");
+    assert_eq!(
+        rig.queue.stats.zero_relisted, 0,
+        "not by the rule's re-list"
+    );
+    assert_eq!(
+        rig.queue.stats.zero_border_relisted, 1,
+        "C listed again once, D not"
+    );
+    assert!(rig.queue.zeroed.contains(&C), "C still zeroed");
+    assert_eq!(flags_of_c(&rig), [false; 4], "the four flags clear");
+    let zero = zero_of_c(&mut rig);
+    assert_eq!(
+        rig.store.words.get(&C),
+        Some(&zero),
+        "C's record is the zero record of its faces with N present"
+    );
+    assert!(rig.queue.zeroed.contains(&D), "D still zeroed");
+    assert_eq!(rig.store.words.get(&D), Some(&d), "D not listed again");
+}
