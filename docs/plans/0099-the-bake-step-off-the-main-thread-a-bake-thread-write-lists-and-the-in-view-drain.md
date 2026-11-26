@@ -2597,6 +2597,273 @@ is loosened. Done when: the test run by name 40 times beside a running quick tie
 failures, the count in the log. **Stop, reported:** the case cannot be gated without a
 change to the product's path. Phase 4d is unchanged and goes first.
 
+## Amended 2026-11-26 (architect, after Phase 4d)
+
+Read against `5acc9eb3` (code as `cde2e966`): the plan of a submit (`dispatch`, `plan_rounds`,
+`JobCtx::plan`, `SubmitRoom::room`, `bake/job_loop.rs`; `certain_rounds`, `rounds_left`,
+`bake/job.rs`), the fed line (`QueueFed`, `bake/queue/stats.rs`), the order (`QueueOrder`,
+`Refine`, `cand_of`, `queue_score`, `angle_term`, `bake/order.rs`), the flag and the banner
+(`apps/flythrough/src/cli/queue_flags.rs`, `cli/mod.rs`, `toggles.rs`), ADR-0048's two
+Outcomes, and the raw rows (`live/p4dr/*.log`, `live/p4d-table.out`). The evidence by line
+and row is in the log ("Architect's ruling after Phase 4d"). Where this section differs from
+the text above it wins. Nothing was built or run. **The stop is closed with no fix and no
+run. The order's default does not change in this plan; the blended order is one arm at the
+window. Phase 5 is restated as a run list. Phase 6 is split in four parts, three of which do
+not wait for the window.**
+
+### Ruling 1: the stop at 0.60 is closed; the derivation was wrong by its cap and by the rows
+
+- **0.599 against 0.611 is spread.** The two runs differ by 2 % in fed and by 3.5 % in the
+  steps a frame (0.723 and 0.749), which is the step's own length (p50 9.58 and 8.99 ms).
+  The line was drawn at the edge of the read figure, so one run falls each side of it.
+- **The stop's claim is true all the same: fed reads about 0.60 at 16 rows, not 0.65 to
+  0.70.** The derivation after Phase 4c2 went wrong twice, both shown by the new line.
+  (1) Its cap was low: it took 630 000 to 650 000 samples a frame "at the printed price";
+  the caps granted read 685 000 and 678 000 a frame (1.4364e9 over 2 098 frames, 1.4709e9
+  over 2 169). Its samples a frame at 16 rows, 426 000, were right (read here: 418 000 and
+  406 000). Over the cap as granted that is 0.62. (2) Its second way, "0.65 submits a
+  frame, each at least a cap", was read at 32 rows and does not hold at 16, where a submit
+  carries 0.86 to 0.87 of its cap.
+- **What "drawn a submit" under 1 is, by the code.** A plan takes, from each open job, the
+  rounds of its live faces that cannot end them (`JobCtx::plan`: to the face's least count,
+  then one round a submit), then opens waiting jobs into free rows while the cap has room.
+  With no row free it stops there, under the cap: the further rounds of `plan_rounds` are
+  taken only when no job waits. A row frees only when its job's last rounds are read back.
+  So a submit with every row held carries what sixteen jobs' live faces give in one pass.
+  Read, whole run: the forest's plans stop at the cap 1 940 and 2 213 times and out of
+  rounds 768 and 759 times, 755 and 745 of those with no row free; the hills' 1 488 at the
+  cap, 1 240 out of rounds, 1 231 with no row free. A hills chunk has fewer faces than a
+  forest chunk, so sixteen of them fill less of a cap: 0.66 to 0.70 against 0.86 to 0.87.
+- **So it is the queue's nature at 16 rows, not a fault**, and it is the mode the ruling
+  after Phase 4c2 already disclosed ("39 to 42 % of the steps out of rounds for a row").
+  What is new is its size in the fed figure. Read again over the cap as granted, the rows
+  bought more than that ruling said: 32 to 64 rows fed 432 000 to 457 000 samples a frame,
+  0.63 to 0.67, against 0.60 to 0.61 here: **0.02 to 0.07, not 0.01 to 0.03** (the cap at
+  32 was not read by this line; it is taken as equal).
+- **The count stays 16.** That ruling was made on what the rows did to the view and to the
+  dig, both read directly and neither re-derived here: in view 0.4 to 0.7 s sooner of 18,
+  ring 1 later by 40 to 87 ms and the edit's wait 47 ms against 28. On the hills, where the
+  rows are the lower factor, in view meets its line at 16 rows (6.5 and 6.6 s). Stable image
+  first.
+- **The cycle's unread part is read: there is none.** The after-4c2 ruling left about
+  1.9 ms a step in no stage. The cycle line reads wait 0 at p50 (mean 0.40), step 8.99 and
+  9.58, snapshot 1.15 and 1.23, hand-over 0.004, sum 10.45 and 11.06 against a frame of
+  8.27 and 8.34. The thread never waits for a message; the step is the bound, as ruled.
+
+**Ruled: closed; the feed stays stopped; ruling 2 after Phase 4c2 stands with its figures
+replaced by the read ones.** "No one fix reaches 0.85" holds more firmly at 0.60: with every
+submit at its cap the forest feeds 0.69 to 0.71, and with a step a frame at the drawn share
+read it feeds 0.86, so the bar needs both factors moved at once.
+
+**The disclosure, as Phase 6 pins it** (RTX 3080 Laptop, Floor 1080p, thread on, 16 rows,
+depth 3, quiet, `cde2e966`):
+- **Fed against 0.85, missed.** Forest 0.611 and 0.599: submits a frame 0.714 and 0.686 (a
+  step takes 10.45 and 11.06 ms from start to start against a frame of 8.27 and 8.34), drawn
+  a submit 0.856 and 0.874 (the rows). Hills 0.589 and 0.582: submits a frame 0.842 and
+  0.879 (10.47 and 10.33 ms against 9.94 and 9.93), drawn a submit 0.700 and 0.662.
+- **In view against 10 s.** Forest missed, 17.9 and 19.0 s: the in-view chunks with no
+  light have landed at 7.5 and 8.1 s, and 31 coarse blocks in view wait 10.4 and 10.9 s
+  more (the order, ruling 2). Hills met, 6.5 and 6.6 s.
+- **RENOIR, Portable 720p, met:** fed 1.000 and 0.996, in view 12.7 and 11.5 s.
+- **Phase 3's bars hold:** share p50 0.75 to 0.80 ms, p99 1.2 to 1.3; wall p50 8.3 to
+  9.9 ms.
+
+**The lever, named and not built** (the backlog's entry on the feed takes it): a plan that
+finds no row free takes the open jobs' further rounds up to the cap. It is the one cheap
+change the code shows for the drawn share. It is not a fault's fix: those rounds are drawn
+past what a face is known to need, the jobs of a deep queue then hold their rows as long,
+and a dig finds more rounds in flight on the rows it withdraws (the mode of ruling 2 after
+Phase 3f). Its yield and that cost are unread.
+
+**Rejected.** *A third forest run to settle which side of 0.60:* nothing acts on it. *The
+lever above as a Phase 4e:* the feed is stopped; it would be a fourth fix on a derivation,
+with a cost on the dig. *32 rows after all:* ruled on the dig, and the hills meet at 16.
+
+### Ruling 2: the blended order stays an arm; the default does not change in this plan
+
+**What the flag does, by the code.** The default order is `Refine::Tier` at angle weight 4:
+the class leads, so every chunk with no block opens before any refinement, and ADR-0048's
+score (distance times one plus four times the angle beyond the view cone) orders each
+class. `--queue-weights 4,2` is `Refine::Weight(2)`: one score for both classes, a coarse
+block counting at twice its distance. A refinement at distance `d` then opens ahead of a
+chunk with no block in view farther than `2d`, and ahead of one out of view whose distance
+times its angle factor (up to about 3.4 straight behind) is over `2d`. The pre-roll takes
+the same order.
+
+**What the pair shows, read from its rows; it is not "the same run, refinements first".**
+- **The two arms start from different pre-rolls.** The default's 5 s coarse pass bakes
+  1 882 chunks with 4.69e8 samples; the blended one bakes 1 497 with 6.83e8. At the first
+  census the default has 2 229 chunks in view with no light and 31 coarse; the blended
+  2 380 with no light and none coarse. Its "no coarse block left in view" was made before
+  the first frame, at the price of 385 chunks' first light.
+- **In view with no light lasts 4 s longer:** to 11.7 and 11.8 s against 7.5 and 8.1. Each
+  blended run holds about 2.5 s in which no census count moves, in view or out (1 081 and
+  258 in view with no light). **Not shown: what the queue bakes then.**
+- **Out of view is later too.** At 11.8 s the default has about 2 400 to 2 650 out-of-view
+  chunks with no light, the blended 4 520 to 4 570. The queue empties at the same time (27.0 and 29.8
+  against 26.2 and 29.1 s).
+- **So the trade is:** every chunk in view final at about 12 s against 18 to 19, for first
+  light in view 4 s later and about 2 000 more chunks without light behind the camera at
+  12 s. That is the trade ADR-0048's Outcome of 2026-11-11 already fell back from (the
+  no-value share of the lighting pixels 0.80 to 0.83 blended against 0.76), and the owner's
+  rule of 2026-11-20 is a stable approximation while the bake runs, not a wait for light.
+- **Not read:** what a turn of the camera meets under either order; the weights on the
+  hills or the RENOIR; one run with the default order from the blended pre-roll.
+
+**Ruled: (ii) and (iii).** The blended order is shown to the owner at Phase 5 as one arm
+beside the default (run 5 below), labelled a reading, with the three facts above told
+first. **The default is not changed in this plan whatever he says**: the order's score is
+in "What this plan does NOT do", ADR-0048's Outcome set the default on a reading this pair
+agrees with, and a change is an image-side decision with an ADR's Outcome to write. His
+answer to question 9 routes it: a follow-on plan (a), nothing (b). Option (c) of question 9
+is withdrawn by this reading; the pair it rested on is confounded by the pre-roll.
+
+**The mode shows.** The banner's `light:` row and the HUD's queue row read `order score,
+angle 4, refine 2` under the flag and `refine tier` without it (both runs' stdout, lines 27
+and 7853). The arm is launched with the flag: a flip in the menu changes the live order
+only, not the pre-roll's.
+
+**Rejected.** *(i) The default changes here as a one-fix phase:* it trades first light for
+final light on a confounded pair, against ADR-0048's Outcome, in the owner's absence.
+*Drop the arm from the window:* it costs one launch, and question 9 is asked there anyway.
+
+### Phase 5, restated as a run list
+
+- **Owner skill:** human
+- **The binary:** `live/bin/p4d/flythrough` (release, `cde2e966`; no code has changed
+  since), the one every figure below was read on. On Linux, the dev box on mains, a
+  window, the stdout visible beside it. **No run holds the camera:** no `--pre-roll-drain`,
+  no `--tester`, no path, pan or `--dig-at`, no `--frames`; the owner moves and digs by
+  hand and closes each run himself. The runner checks each flag against `flythrough
+  --help` and that the banner's `light:` row reads the mode named, before he looks.
+- **The scene flags.** Forest: `--source outdoor --spawn forest --trees forest --time
+  15:00`. Hills: `--source outdoor --time 17:00`. RTX: `--adapter RTX --profile floor`.
+  RENOIR: `--adapter RENOIR --profile portable`. The thread is on in a window by default;
+  the runs name it either way.
+
+| run | command after the binary | the banner reads | for |
+|---|---|---|---|
+| 1, **the before arm** | forest, RTX, `--bake-thread off` | `bake thread off`, `refine tier` | (a), (c) |
+| 2 | forest, RTX, `--bake-thread on` | `bake thread on`, `refine tier` | (a), (c) |
+| 3 and 4, on his word | runs 1 and 2 again, for the digs, if he watched the start in 1 and 2 | as 1 and 2 | (c) |
+| 5 | forest, RTX, `--bake-thread on --queue-weights 4,2` | `bake thread on`, `refine 2` | (e) |
+| 6 | hills, RTX, `--bake-thread on` | `bake thread on` | (b) |
+| 7 | forest, RENOIR, `--bake-thread on` | `bake thread on` | (d) |
+| 8, on his word | forest, RENOIR, `--bake-thread off` | `bake thread off` | (d)'s before |
+
+**Told before runs 1 and 2** (RTX 3080 Laptop, Floor 1080p, forest, headless, quiet): with
+the thread on a frame is 8.3 ms while the view still bakes, against 21.9 off. Every chunk
+in view has some light about 8 s after the first frame, and all of it is final at 18 to
+19 s, against 31 off. The whole queue is empty 26 to 29 s after the first frame (36 to 39
+after launch), against about 50 after launch off. The light queue takes about 0.6 of its
+slice a frame on this card, not the 0.85 planned for; that is why 18 s and not 10.
+
+- **(a)** Is the frame rate there from the first seconds, and is anything different in the
+  image but the frame rate (a landing that pops, a fade that steps, a block that flashes)?
+- **(c), the dig. Told first, word for word from ruling 3 after Phase 3f:** "While the
+  queue is deep a dig's frame is about 44 ms with the thread on and about 45 ms with it
+  off. The frames around it are 8.4 ms on and 21.9 off, so the same stall is now about five
+  frames' time in a smooth run where it was two in a slow one. Once the queue has drained
+  the dig's frame is about 20 ms on and about 32 off. The light at the dig has landed about
+  170 ms after it with the thread on, about 230 off; once drained about 95 against about
+  127." He digs a few times beside his lamp in the first 15 s, and again once the HUD's
+  queue row reads 0 waiting, in each mode. **Asked, in his words: does the light follow the
+  dig as it does with the thread off, and does the dig's frame hitch?** The second is an
+  image-stability item and takes no answer in his place. Question 8 stays answered (a); a
+  hitch he names is option (b)'s fix pass, written on his word.
+- **(e), the order (question 9). Told before run 5:** "In run 2 every chunk in view has
+  some light at about 8 s, and 31 of them then wait about 10 s more for their final light.
+  Run 5 orders the queue the other way: all of the view is final at about 12 s, but the
+  chunks in view with no light stay so until then, 4 s longer, and at 12 s about twice as
+  many chunks behind you have no light." **Asked: in run 2, does he see those chunks refine
+  late, and does it matter; in run 5, is the start better or worse, and what does a turn of
+  the camera meet in each?** Nothing changes in this plan on the answer (ruling 2).
+- **(b)** Run 6: how long until it reads settled. Read: in view at 6.5 s.
+- **(d)** Run 7: nothing worse than before. Told: frames 24 ms on against 30 off, in view
+  at about 12 s, a dig's frame 48 ms on against 43 off while the queue is deep.
+- **Done when:** as written: for (a) to (e), fine or what is wrong, in his words; an item
+  not judged is recorded so; the verdicts go to the log, written by the orchestrator.
+
+### Phase 6, split: 6a to 6c do not wait for the window; 6d does
+
+One dev brief a part, in this order. 6a to 6c depend on no verdict: the window's binary is
+frozen, so the lane's tip may move under it.
+
+**Phase 6a: the sleep-paced test, gated**
+- **Owner skill:** dev
+- **What:** The remedy of the amendment after Phase 3g, as written there, for
+  `the_edits_frame_waits_for_its_list_and_no_other_frame_does`
+  (`bake/queue/split_tests/thread.rs`) and its fading-chunk case. No product path changes;
+  no assertion is loosened.
+- **Done when:** the test by name 40 times beside a running quick tier, 0 failures, the
+  count in the log; the quick tier, the phase's clippy, fmt, every `scripts/check-*.mjs`.
+  No GPU, no lock. **Stop, reported:** the case cannot be gated without a change to the
+  product's path.
+
+**Phase 6b: the moved readings and the pins no verdict can move**
+- **Owner skill:** dev
+- **What:** No code. (1) The four readings Phase 4d moved here, each one run on the frozen
+  binary or the archive `live/p4d-tests.tar.zst`, its own lock hold, quiet: the budget
+  `second:150,0.25`; the `taskset` arm; the ten steps after the view drains; the RENOIR
+  drained B's withdrawn samples (lockstep, the dig rig). One that cannot be read in one
+  run under 20 minutes is named not read, with the reason. (2) The pins, from Phase 4d's
+  table and ruling 1's disclosure, to `docs/nfr.md` section 2 and
+  `docs/nfr/02-frame-budget.md`, each with machine, adapter, scene, mode, rows and commit:
+  the render thread's bake share; the frame's wall while in view waits; fed, a disclosed
+  miss with its two factors; in view, the forest a disclosed miss with its two holders and
+  the hills met; the RENOIR's fed and in view; the whole-residency drain; the outbox's and
+  the shadow's peak bytes. A missed line is not moved to its reading. **Not pinned here:**
+  the dig's frame, the edit's wait and ring 1 (6d).
+- **Files touched:** `docs/nfr.md`, `docs/nfr/02-frame-budget.md`, `docs/plans/logs/0099.md`.
+- **Done when:** every Budgets row but "An edit's light" has a quiet reading on both
+  adapters with its mode and commit, or is named not read with the reason; the doc gates
+  exit 0.
+
+**Phase 6c: main merged in, and the tip's gate in parts**
+- **Owner skill:** dev
+- **What:** `git merge --no-ff main` into `plan-0099` (main is at v0.75.0), conflicts
+  resolved with both sides' behaviour kept, committed as lane rule 1 words it. Then the
+  gate on the merged tree: the build; `cargo clippy --workspace --all-targets -- -D
+  warnings`; fmt; `cargo deny check`; the doctests; the gate tier's CPU part outside the
+  lock (`--profile gate -E 'not binary(/^gpu_/)'`); its `gpu_*` binaries under the lock in
+  holds of at most 20 minutes each, the binaries listed first and dealt into holds by their
+  times in this log, a hold projected past the line from its first binaries stopped and
+  split; `node scripts/test-changed.mjs --profile gate --sole --since main`; the soak-marked
+  tests this lane added (`git diff main...HEAD` names them), each by name once, under the
+  lock; every `scripts/check-*.mjs`. The archive is built outside the lock.
+- **Done when:** every part's count, wall and load in the log, the parts' walls summed
+  against `docs/nfr.md` section 7; no golden moved, or the one that did is reported with
+  the frame it differs in, not re-blessed. **Stops, reported:** a conflict whose two sides
+  cannot both be kept; a test that fails on the merged tree and passes on each parent; the
+  `gpu_*` binaries cannot be dealt into holds under the line.
+
+**Phase 6d: after the window**
+- **Owner skill:** dev
+- **What:** After Phase 5's verdicts are in the log. The window's findings in mechanisms
+  this plan built are fixed here, one fix a brief, or routed by the architect's amendment
+  (a hitch at the dig is question 8 (b)'s pass; the order is a follow-on). The pins 6b
+  left: the dig's frame and the light at the dig as ruling 3 after Phase 3f tells them, the
+  edit's wait by ruling 1 after Phase 3f, ring 1 with ruling 2's disclosure there; they are
+  pinned as read if no fix moves them, read again if one does. `docs/flythrough.md` names
+  the mode; the backlog entries this plan took are closed into it; the log's resume notes
+  are deleted; the Implementation log's rows 5 and 6 and the Close triggers are written.
+  If code changed since 6c: the changed crates' quick tier and named `gpu_*` binaries,
+  clippy, fmt; main merged again only on the orchestrator's word.
+- **Done when:** Phase 6's (1) to (4) as first written hold over 6a to 6d together.
+
+**The version, the close ceremony and ADR-0083's Outcome wait for the fresh-session review
+after 6d.** The Outcome takes the read feed (ruling 1) in place of the derived one.
+
+### Owner questions
+
+No new question. Open at the window: (a) to (e) above, of which the dig's hitch (c) and the
+order (e, question 9) are image-side and take no answer in his place. Answered and not
+reopened: question 8 (a).
+
+### ADR-0083
+
+Not amended.
+
 ## Data shapes
 
 ```rust
