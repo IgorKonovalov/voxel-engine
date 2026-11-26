@@ -798,6 +798,10 @@ pub struct Args {
     pub(crate) switch_at: Vec<u32>,
     /// `--spawn-hash`: print the hash of the chunks within 2 of the spawn's at the end.
     pub(crate) spawn_hash: bool,
+    /// `--spawn-hash` given on the command line, set by the flag's parser alone: before the
+    /// hash the run waits for the stream to go idle (`run::switch::wait_for_stream`). A line
+    /// only implied by `--switch-at` does not wait.
+    pub(crate) spawn_hash_wait: bool,
     pub(crate) outdoor: OutdoorArgs,
     pub(crate) audio: AudioArgs,
     pub(crate) light: LightingArgs,

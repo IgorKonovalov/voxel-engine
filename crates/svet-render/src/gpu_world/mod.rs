@@ -216,6 +216,10 @@ pub struct SyncStats {
     pub copy_us: u64,
     pub alloc_us: u64,
     pub lock_us: u64,
+    /// The stage clock's span, from its first read to its last: the time the stages split.
+    /// Each stage is truncated to whole microseconds on its own, so the seven stages
+    /// (`light_us` holds two) sum to at most this and less than 7 us under it.
+    pub span_us: u64,
     /// Bricks inserted into the written records' emitter rescan sets, repeats counted: a
     /// written brick and each of its face neighbours inside the chunk, in a record that emits.
     pub rescan_inserts: u64,

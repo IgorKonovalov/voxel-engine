@@ -166,6 +166,7 @@ impl Args {
             argv: Vec::new(),
             switch_at: Vec::new(),
             spawn_hash: false,
+            spawn_hash_wait: false,
             outdoor: super::OutdoorArgs::default(),
         }
     }
@@ -287,6 +288,7 @@ fn settle(args: &mut Args, given: &Given) -> Result<(), String> {
     args.audio.mix.check()?;
     check_path(args, given.path_mode)?;
     args.still.check(args.headless, args.frames)?;
+    args.loading.check(args.headless)?;
     Ok(())
 }
 

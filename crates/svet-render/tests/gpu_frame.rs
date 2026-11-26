@@ -132,7 +132,8 @@ fn a_params_built_between_encodes_does_not_move_the_lamp_the_encode_compares() {
 
 /// Five frames, each encoded with the frame's pass timer and a one-pass timer (the HUD's and
 /// the field pass's form) resolved and the store's counters copied, submitted, then read with
-/// `try_read_all_ms`, `try_read_ms` and `try_store_stats`: the reads are `None` until a set has
+/// `try_read_all_ms`, `try_read_ms` and `try_store_stats`, the test waiting on the device
+/// between frames (outside the frame's calls): the reads are `None` until a set has
 /// finished, then per-pass values (one per `FRAME_PASSES` entry, finite, not all zero) and the
 /// store's counts at most 2 frames old; across all of it neither timer nor the store counts a
 /// blocking read. One `read_all_ms` after counts exactly one, and the store's non-blocking read
@@ -176,6 +177,9 @@ fn the_frame_s_timers_and_store_counts_read_back_without_waiting() {
         sets.push(timer.try_read_all_ms(&device));
         ones.push(one.try_read_ms(&device));
         stores.push(frame.try_store_stats(&device));
+        // The test's wait between frames, outside the frame's calls: the reads above never
+        // wait, and the next frame's reads find this frame's work done.
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
     }
     println!("sets {sets:?}\none-pass {ones:?}\nstore {stores:?}");
     let first = sets

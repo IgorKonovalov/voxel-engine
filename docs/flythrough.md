@@ -337,7 +337,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--exposure-highlight P\|off` | Highlight protection: the auto exposure is also capped so the level over which the brightest `100 - P` percent of the view lies (each hit pixel's brightest channel, the largest per 8 x 8 meter tile; sky pixels never set it) maps at or under 0.95 after the tone curve, smoothed at the eye's own rate; 50 to 100, `off` lets the bright tail clip. A view with no bright tail leaves the cap over the ceiling. The HUD's exposure row reads the cap as `hi +X EV`; the banner reads `exposure highlight P` or `exposure highlight off` when not the default [99] |
 | `--sky on\|off` | A sky over the world [on for `--source outdoor`, else off] |
 | `--switch-at F,..` | Switch the source at these frames, as the menu's `source` entry does, and print the spawn's hash at the end |
-| `--spawn-hash` | Print the voxel hash of the chunks within 2 of the spawn's chunk at the end |
+| `--spawn-hash` | Print the voxel hash of the chunks within 2 of the spawn's chunk at the end, after the last frame waits for the stream's chunks in flight to arrive (a `diag:` line names the wait's ms and the chunks); the hash `--switch-at` implies does not wait |
 | `--level` | The bounded level (as `--source level`) |
 | `--thin-rig` | A bounded scene of thin features for the field look |
 | `--seam-rig` | A bounded scene of seams for the field look |
@@ -555,6 +555,7 @@ from the next frame, and the profile row names the fields that wait for a restar
 |------|------|
 | `--load-slice MS` | The start-up step time a loading frame spends before it draws [25] |
 | `--quit-at-loading-frame N` | Act as `Esc` at loading frame `N`, a test's way to end a run while it loads |
+| `--pre-roll-stepped` | With `--headless` (refused without it): wait on the device before every light pre-roll step, with or without the loading screen, and end the pre-roll by its chunks only (no 5 s box, no 120 s cap), so its steps, chunks and samples do not depend on the machine's pace; off by default |
 
 ### Removed flags
 
