@@ -263,9 +263,6 @@
   "frozen": {
     "light/hall-settled-8192-frames.png": "a closed light write-up's figure; the mechanism it shows is gone",
     "light/hall-diff-64-vs-8192-x8.png": "a closed light write-up's figure; the mechanism it shows is gone",
-    "light/hall-diff-2048-vs-8192-x8.png": "a closed light write-up's figure; the mechanism it shows is gone",
-    "hero.png": "today's hero, made by the hero example; hero.webp replaces it when the README is rewritten",
-    "spider-walk.gif": "today's README loop; spider-walk.webp replaces it when the README is rewritten",
-    "walker-walk.gif": "the entities page's loop; walker-walk.webp replaces it when the README is rewritten"
+    "light/hall-diff-2048-vs-8192-x8.png": "a closed light write-up's figure; the mechanism it shows is gone"
   }
 }
