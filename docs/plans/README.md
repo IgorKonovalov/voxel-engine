@@ -50,7 +50,7 @@ what is left under the defaults is in the backlog.
 | [0106](0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md) | No gate test passes by a clock: the red dig test, the sweep, a gate script | approved 11-26 | P1-4, 7, 9 done, P5, 8, 10-11 read: the 30-step recheck, to 0109. P6a-c owed, then the close. |
 | [0107](0107-the-mirrors-slot-image-packed-on-the-stream-workers.md) | The mirror's slot image packed on the stream workers | approved 11-26 | ADR-0056. P1 re-reads the sync and can stop it. Lane after 0101 and 0105 merge. |
 | [0108](0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md) | The start-up readings: a shorter pre-roll, the cold pipelines split | approved 11-26 | A chore, no ADR. Beside 0093. P3 before the next tester archive. |
-| [0109](0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md) | A blocked chunk is checked again when its blocker clears: the streamed start | draft 11-26 | No ADR. P1 the rule, P2-3 readings, P4 the owner's answer. Awaits go. |
+| [0109](0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md) | A blocked chunk is checked again when its blocker clears: the streamed start | approved 11-26 | P1 built (5-10 steps), its stop ruled; P1b the re-pin, P2-3 readings, P4 the owner. |
 <!-- roster:end -->
 
 ## Sequence
