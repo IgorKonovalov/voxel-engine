@@ -14,6 +14,7 @@ use crate::app::{Flythrough, Pending, diag, ms_since};
 use crate::cli::{Args, SOURCES, next_source, parse_args_from};
 use crate::outdoor::{GRASS, SOIL};
 use crate::setup::{Gfx, build_world, load_logic, start_camera};
+use crate::streaming::Stream;
 use svet_app::Gpu;
 use svet_render::{LoadingScreen, LoadingView, wgpu};
 use svet_world::{BRICK_VOXELS, ChunkCoord, VoxelCoord, World};
@@ -114,6 +115,32 @@ fn spawn_block(spawn: VoxelCoord) -> Vec<ChunkCoord> {
         })
         .map(|d| ChunkCoord([c[0] + d[0], c[1] + d[1], c[2] + d[2]]))
         .collect()
+}
+
+/// After the run's last frame, blocks in `Streamer::wait_idle` until no stream job is queued
+/// or running, so the chunks around the spawn that the residency asked for are in the world
+/// whatever the workers' pace; logs `diag: spawn hash: waited <ms> ms for the stream, <n>
+/// chunks arrived (<f> full)`. The events' errors are printed as a frame prints them; the rest
+/// are dropped: no frame follows, and the mirror, the bake queue and the streamer they would
+/// feed are torn down next, while the chunks themselves are already in the world's store.
+pub(crate) fn wait_for_stream(stream: Option<&mut Stream>, world: &World) {
+    let t = crate::now();
+    let ev = stream.map(|s| s.streamer.wait_idle(world));
+    let ms = ms_since(t);
+    let (n, full) = ev.as_ref().map_or((0, 0), |ev| {
+        let full = ev
+            .loaded
+            .iter()
+            .filter(|(_, tier)| *tier == svet_world::Tier::Full)
+            .count();
+        (ev.loaded.len(), full)
+    });
+    for e in ev.iter().flat_map(|ev| &ev.errors) {
+        eprintln!("stream: {e:?}");
+    }
+    diag(format_args!(
+        "spawn hash: waited {ms:.1} ms for the stream, {n} chunks arrived ({full} full)"
+    ));
 }
 
 /// `spawn hash 0x... over 125 chunks around chunk [..], 0 voxels of ids 5 and 6`: the voxel
@@ -362,6 +389,24 @@ mod tests {
         );
         let on = switched_args(&a, 250).expect("parses");
         assert_eq!((on.frames, on.switch_at.as_slice()), (Some(350), &[][..]));
+    }
+
+    /// `--spawn-hash` on the command line sets the stream's wait before the hash, and the
+    /// switched run keeps it (its flags are parsed again from the kept argv); `--switch-at`
+    /// alone prints the hash at the switched run's end and sets no wait, before or after the
+    /// switch.
+    #[test]
+    fn the_spawn_hash_waits_for_the_stream_only_under_its_flag() {
+        let flags = ["--headless", "--frames", "60", "--switch-at", "20"];
+        let given =
+            parse_args_from(argv(&[&flags[..], &["--spawn-hash"]].concat())).expect("parses");
+        assert!(given.spawn_hash && given.spawn_hash_wait);
+        let next = switched_args(&given, 21).expect("the next source parses");
+        assert!(next.spawn_hash && next.spawn_hash_wait);
+        let implied = parse_args_from(argv(&flags)).expect("parses");
+        assert!(!implied.spawn_hash && !implied.spawn_hash_wait);
+        let next = switched_args(&implied, 21).expect("the next source parses");
+        assert!(next.spawn_hash && !next.spawn_hash_wait);
     }
 
     /// A source that refuses the run's flags is passed over: the castle stands only in the

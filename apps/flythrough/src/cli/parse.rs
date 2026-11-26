@@ -165,6 +165,7 @@ impl Args {
             argv: Vec::new(),
             switch_at: Vec::new(),
             spawn_hash: false,
+            spawn_hash_wait: false,
             outdoor: super::OutdoorArgs::default(),
         }
     }

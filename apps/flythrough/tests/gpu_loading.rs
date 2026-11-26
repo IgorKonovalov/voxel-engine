@@ -137,7 +137,11 @@ fn loading_frames(stderr: &str) -> Vec<(String, f32)> {
 /// at 0 and a coarse pass of 16, the screen on with a 0.05 ms slice (one step a loading
 /// frame): the loading frames name the pipelines' build, then the near residency, then
 /// the near chunks' light, then the coarse pass, each at least once and in that order; their fractions never decrease; the
-/// last reads 1. About 21 s on lavapipe here (2026-11-16), so it runs in the soak tier.
+/// last reads 1. The build's stage is named only by a loading frame that finds the build worker
+/// unfinished, a race the run loses only if the main thread stalls through the whole build
+/// (at least 0.2 s warm, seconds cold) between the worker's spawn and the first loading
+/// frame's check, microseconds apart. About 21 s on lavapipe here (2026-11-16), so it runs in
+/// the soak tier.
 #[test]
 #[ignore = "soak"]
 fn the_streamed_load_reports_its_stages_in_order_and_ends_at_one() {
