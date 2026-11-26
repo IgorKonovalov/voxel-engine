@@ -311,3 +311,36 @@ Plan 0100 closed on its Phase 9 (v0.75.0). Against the text above:
   the GPU than the CPU port of the horizon, under `march` and `walk` alike, most on coarse
   blocks; the follow-on plan's first store-reading rig checks it.
 - **The file's name** keeps the first title, so the links to it hold.
+
+## Outcome, added (2026-11-26, Plan 0104's close)
+
+The follow-on plan the text above defers to is
+[Plan 0104](../plans/done/0104-the-wobble-anchored-to-the-owners-eye-clips-he-ranks-a-measure-that-ranks-them-then-the-remedy.md),
+closed 2026-11-26 (v0.77.0) with no remedy, by the owner's call. Nothing above is rewritten.
+
+- **The clause "a setting the follow-on plan does not pick is removed there" is carried out,
+  with one setting kept against it.** The plan picked none. Removed: `lighting.key_cover`'s
+  `record`, `lighting.key_at` whole and `lighting.key_horizon` whole, with the walk's shader
+  and the column map's coarse rows; the horizon is read at the hit by the march, as every
+  profile read it. **`lighting.key_cover` stays, `off` and `ray`, `off` on every profile**:
+  the owner did not answer whether it goes, the question is not one of stability, so it took
+  the recommended option (his rule of 2026-11-03), as the one control for sun under cover
+  that costs nothing when off (his rule of 2026-11-12). The Decision's sentence that a cover
+  source may only add light stands for `ray`; "the baked record at every distance" in the
+  title names a source that no longer exists.
+- **Still deferred, now in the backlog** ("The sun's term at small faces"): the near shadow's
+  hole with the contact ray as its arm (the one exception this ADR allows, by a superseding
+  ADR), and sun under cover as a default. Plan 0104 took up neither.
+- **The wobble.** The owner watched his move as clips and found the defaults "almost good";
+  the edge of light stepping on slopes is close to gone under them. What he still sees is not
+  shown to be the key light's visibility: the sparkle on sunlit crowns reads the same on
+  sunlit leaves with and without the cover ray, and the second of settling after a turn is
+  FSR 2's history (the outlines change 22.05 levels with it and 0.007 without). No measure
+  of the wobble exists; the one reading that followed his eye is provisional, on one pair.
+- **"Unexplained and carried" is closed.** The pixels at W1 that read darker on the GPU than
+  the CPU port are all pixels whose key slot holds the running mean of cast key rays, which
+  the port does not model; where the shader reads the horizon the port agrees on 180 532 of
+  180 532 pixels. It was never a fault of the horizon.
+- **A word left behind.** `Params::column_top` and `GpuWorld::column_top_max` were read by
+  the walk alone and stay, unread by any pass, until the next change to the frame's uniform
+  block (`docs/backlog.md`).

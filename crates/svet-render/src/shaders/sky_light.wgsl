@@ -102,7 +102,7 @@ const KEY_COVER_OFFSET: f32 = 0.01;
 
 // The near cover source (`Lighting::key_cover` `ray`, Plan 0100 Phase 6, ADR-0084) at cube-face
 // hit `rec`, shadow normal `ns`, seen by view `v`: where the far normal's
-// weight is under one half, the column horizon at `key_at`'s point
+// weight is under one half, the column horizon at the hit
 // (`key_horizon_at`, the temporal pass's own read) and, where that reads under 1, the larger of
 // it and one ray from the face's centre (the level-0 voxel's behind the hit, half a voxel along
 // `ns`) toward the disc's centre, times its transmittance; under LIGHTING_PENUMBRA_APPROACH the
@@ -116,7 +116,7 @@ fn key_cover_near(rec: HitRecord, ns: vec3<f32>, v: View) -> f32 {
     if (far_normal_weight(v, rec.t) >= 0.5) {
         return -1.0;
     }
-    let h = key_horizon_at(rec.p, ns, rec.axis);
+    let h = key_horizon_at(rec.p, ns);
     if (h >= 1.0) {
         return h;
     }

@@ -360,7 +360,7 @@ dependencies = [
 
 [[package]]
 name = "chatty-guest"
-version = "0.76.0"
+version = "0.77.0"
 dependencies = [
  "svet-net",
  "svet-script-wasm",
@@ -863,7 +863,7 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
 name = "echo-guest"
-version = "0.76.0"
+version = "0.77.0"
 dependencies = [
  "svet-net",
  "svet-script-wasm",
@@ -965,7 +965,7 @@ dependencies = [
 
 [[package]]
 name = "flythrough"
-version = "0.76.0"
+version = "0.77.0"
 dependencies = [
  "criterion",
  "env_logger",
@@ -988,7 +988,7 @@ dependencies = [
 
 [[package]]
 name = "flythrough-logic"
-version = "0.76.0"
+version = "0.77.0"
 dependencies = [
  "svet-net",
  "svet-script-wasm",
@@ -1233,7 +1233,7 @@ dependencies = [
 
 [[package]]
 name = "greedy-guest"
-version = "0.76.0"
+version = "0.77.0"
 dependencies = [
  "svet-net",
  "svet-script-wasm",
@@ -1288,7 +1288,7 @@ checksum = "e17592d60ebacc7d5e169f4663c5f84f9161cc90328abcfe8456f41e4dfcb284"
 
 [[package]]
 name = "hog-guest"
-version = "0.76.0"
+version = "0.77.0"
 dependencies = [
  "svet-net",
  "svet-script-wasm",
@@ -2387,7 +2387,7 @@ dependencies = [
 
 [[package]]
 name = "probe-guest"
-version = "0.76.0"
+version = "0.77.0"
 dependencies = [
  "getrandom 0.4.3",
  "svet-net",
@@ -2846,7 +2846,7 @@ dependencies = [
 
 [[package]]
 name = "spin-guest"
-version = "0.76.0"
+version = "0.77.0"
 dependencies = [
  "svet-net",
  "svet-script-wasm",
@@ -2875,7 +2875,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "svet-app"
-version = "0.76.0"
+version = "0.77.0"
 dependencies = [
  "log",
  "pollster",
@@ -2885,7 +2885,7 @@ dependencies = [
 
 [[package]]
 name = "svet-assets"
-version = "0.76.0"
+version = "0.77.0"
 dependencies = [
  "svet-entity",
  "svet-world",
@@ -2893,7 +2893,7 @@ dependencies = [
 
 [[package]]
 name = "svet-audio"
-version = "0.76.0"
+version = "0.77.0"
 dependencies = [
  "cpal",
  "criterion",
@@ -2904,14 +2904,14 @@ dependencies = [
 
 [[package]]
 name = "svet-entity"
-version = "0.76.0"
+version = "0.77.0"
 dependencies = [
  "svet-world",
 ]
 
 [[package]]
 name = "svet-net"
-version = "0.76.0"
+version = "0.77.0"
 dependencies = [
  "criterion",
  "svet-net",
@@ -2920,7 +2920,7 @@ dependencies = [
 
 [[package]]
 name = "svet-render"
-version = "0.76.0"
+version = "0.77.0"
 dependencies = [
  "bytemuck",
  "criterion",
@@ -2936,7 +2936,7 @@ dependencies = [
 
 [[package]]
 name = "svet-script-wasm"
-version = "0.76.0"
+version = "0.77.0"
 dependencies = [
  "bytes",
  "criterion",
@@ -2952,7 +2952,7 @@ dependencies = [
 
 [[package]]
 name = "svet-sim"
-version = "0.76.0"
+version = "0.77.0"
 dependencies = [
  "criterion",
  "svet-world",
@@ -2960,7 +2960,7 @@ dependencies = [
 
 [[package]]
 name = "svet-tester"
-version = "0.76.0"
+version = "0.77.0"
 dependencies = [
  "crc32fast",
  "env_logger",
@@ -2973,7 +2973,7 @@ dependencies = [
 
 [[package]]
 name = "svet-world"
-version = "0.76.0"
+version = "0.77.0"
 dependencies = [
  "criterion",
  "svet-world",
@@ -3069,7 +3069,7 @@ dependencies = [
 
 [[package]]
 name = "timer-guest"
-version = "0.76.0"
+version = "0.77.0"
 dependencies = [
  "svet-net",
  "svet-script-wasm",

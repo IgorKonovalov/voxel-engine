@@ -18,14 +18,10 @@
 
 use super::*;
 
-/// The settle at the pose before the move, the window's pre-roll drain: at least `SETTLE_T`
-/// frames, then until no block is fading and either no chunk in view waits for its record or no
-/// chunk has baked over `SETTLE_FLAT` frames (a bounded world's edge chunks may never land), at
-/// most `SETTLE_MAX`. Each settle frame waits for the device, as the window's frame does, so
-/// the queue's readbacks land.
+/// The settle at the pose before the move, the window's pre-roll drain: the shared settle
+/// (`support::baked::settle`: a device wait every frame) for at least `SETTLE_T` frames, then
+/// until no job is open, no block fades and the store's census is whole.
 const SETTLE_T: usize = 720;
-const SETTLE_FLAT: usize = 1200;
-const SETTLE_MAX: usize = 36000;
 /// The move's segments in frames at 60 Hz: the fly, the stop, the turn, the hold after.
 const FLY_T: usize = 300;
 const STOP_T: usize = 300;
@@ -36,24 +32,24 @@ const AFTER_STOP: usize = 30;
 /// The turn in degrees.
 const TURN_DEG: f32 = 60.0;
 /// The fly-through's unshifted fly speed (`fly.rs`'s `SPEED`), voxels a second.
-const FLY_VOX_S: f32 = 30.0;
+pub(super) const FLY_VOX_S: f32 = 30.0;
 /// The approach's length in voxels (20 m) and the hold after it.
 const APPROACH_VOX: f32 = 200.0;
 const APPROACH_HOLD: usize = 60;
 
 /// A pose: the eye in voxels, yaw and pitch in degrees, the clock's minutes, the trees.
-struct Pose {
-    name: &'static str,
-    eye: [f32; 3],
-    yaw: f32,
-    pitch: f32,
-    minutes: f32,
-    forest: bool,
+pub(super) struct Pose {
+    pub(super) name: &'static str,
+    pub(super) eye: [f32; 3],
+    pub(super) yaw: f32,
+    pub(super) pitch: f32,
+    pub(super) minutes: f32,
+    pub(super) forest: bool,
 }
 
 /// The poses Phase 8b names. The still's view angles were set by eye against the owner's still
 /// (`live/window100/3d-record-sunspots.png`, the HUD gives no angles).
-const POSES: [Pose; 3] = [
+pub(super) const POSES: [Pose; 3] = [
     Pose {
         name: "terraces",
         eye: [496.0, -648.7, 456.7],
@@ -84,7 +80,7 @@ const POSES: [Pose; 3] = [
 const STILL_YAW: f32 = 200.0;
 const STILL_PITCH: f32 = -44.0;
 
-fn camera_of(eye: [f32; 3], yaw: f32, pitch: f32) -> Camera {
+pub(super) fn camera_of(eye: [f32; 3], yaw: f32, pitch: f32) -> Camera {
     Camera {
         position: eye.into(),
         yaw: yaw.to_radians(),
@@ -133,10 +129,10 @@ fn path(cam0: &Camera, mv: &str, fly: usize, approach: usize) -> (Camera, Vec<Ca
 }
 
 /// The clearance the fly keeps from every solid voxel, in voxels (a box this far each way).
-const CLEAR_VOX: i32 = 8;
+pub(super) const CLEAR_VOX: i32 = 8;
 
 /// Whether no solid voxel of `world` lies within [`CLEAR_VOX`] of `cam`'s eye.
-fn clear(world: &svet_world::World, cam: &Camera) -> bool {
+pub(super) fn clear(world: &svet_world::World, cam: &Camera) -> bool {
     let e = cam.position.to_array().map(|v| v.floor() as i32);
     let r = CLEAR_VOX;
     (-r..=r).all(|dz| {
@@ -217,7 +213,13 @@ fn pose_rig(pose: &Pose, cams: &[Camera], start: &Camera) -> Option<Rig> {
 const NCLS: usize = 27;
 
 /// One frame's class map over `calm`'s lighting grid.
-fn class_map(rig: &Rig, f: &Frame, cam: &Camera, arm: &Arm, internal: [u32; 2]) -> Vec<u8> {
+pub(super) fn class_map(
+    rig: &Rig,
+    f: &Frame,
+    cam: &Camera,
+    arm: &Arm,
+    internal: [u32; 2],
+) -> Vec<u8> {
     use flythrough::outdoor::{BARK, LEAF, LEAF_2, LEAF_3};
     use svet_render::debug::{read_rgba8, read_rgba16f, read_rgba32f};
     let (d, q) = (&rig.device, &rig.queue);
@@ -444,67 +446,13 @@ mod reading {
             }
             .sky(flythrough::outdoor::BASE_Z as f32),
         ));
-        // The bake as the fly-through configures it (Plan 0100 Phase 6's cover rig).
-        f.set_bake_coarse(
-            svet_render::DEFAULT_COARSE_SAMPLES,
-            svet_render::DEFAULT_NEAR,
-        );
-        f.set_bake_full_first(Some(svet_render::DEFAULT_NEAR));
-        f.set_bake_tiers(svet_render::DEFAULT_TIERS);
-        f.set_bake_drain(Some(svet_render::DEFAULT_DRAIN));
+        // The bake as the fly-through configures it, and the shared settle at the start: a
+        // device wait every frame, at least SETTLE_T frames, until the census is whole.
+        support::baked::fly_through_knobs(&mut f);
         let mut s = Stepper::new(rig, f);
         QUEUE_ON.with(|q| q.set(true));
         let t0 = std::time::Instant::now();
-        let mut settled = 0usize;
-        let (mut last_baked, mut flat_since) = (u64::MAX, 0usize);
-        loop {
-            let q = coarse::step_queue(rig, &mut s.frame, &start);
-            s.run(rig, &start);
-            // A frame waits for the last, as the window's does: the queue's readbacks land.
-            rig.device
-                .poll(svet_render::wgpu::PollType::wait_indefinitely())
-                .expect("the device polls");
-            settled += 1;
-            if q.baked != last_baked {
-                (last_baked, flat_since) = (q.baked, settled);
-            }
-            if settled.is_multiple_of(1200) {
-                println!(
-                    "settle {settled}: baked {} fading {} coarse {} depth {} waiting in view {} \
-                     (reach {} lights {} unbaked {} pool full {} plan stops {:?} in flight full {} \
-                     samples {} cap {})",
-                    q.baked,
-                    q.fading,
-                    q.coarse,
-                    q.depth,
-                    q.drain_waiting,
-                    q.waiting_reach,
-                    q.waiting_lights,
-                    q.unbaked,
-                    q.pool_full,
-                    q.plan_stops,
-                    q.in_flight_full,
-                    q.total_samples,
-                    q.cap
-                );
-            }
-            let drained = q.fading == 0
-                && ((q.drain_waiting == 0 && !q.draining)
-                    || (q.baked > 0 && settled - flat_since >= SETTLE_FLAT));
-            if (settled >= SETTLE_T && drained) || settled >= SETTLE_MAX {
-                println!(
-                    "settled {settled} frames, {:.1} s; the queue: depth {} jobs {} coarse {} \
-                     waiting in view {} draining {}",
-                    t0.elapsed().as_secs_f64(),
-                    q.depth,
-                    q.jobs,
-                    q.coarse,
-                    q.drain_waiting,
-                    q.draining
-                );
-                break;
-            }
-        }
+        let settled = support::baked::settle(rig, &mut s.frame, &start, SETTLE_T, "settle").frames;
         let st = svet_render::debug::read_buffer(
             &rig.device,
             &rig.queue,

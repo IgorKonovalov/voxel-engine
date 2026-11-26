@@ -6,6 +6,23 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.77.0] - 2026-11-26
+
+Plan 0104 (a minor bump, and **a breaking change to `svet-render`'s public settings**: items are removed, none is added; no new ADR, an addition to ADR-0084's Outcome). **The wobble on sunlit parts was anchored on clips the owner watched and ranked blind, and he closed the plan with no remedy**: the defaults are "almost good". No default changed on any profile, and no golden or image bar moved.
+
+- **Removed (`svet-render`), Plan 0100's settings that no plan picked** (ADR-0084: a setting the follow-on plan does not pick is removed there):
+  - `KeyAt` and `Lighting::key_at`, with the settings row `lighting.key_at`. A cube face's column horizon is read at the hit, as every profile read it.
+  - `KeyHorizon` and `Lighting::key_horizon`, with the settings row `lighting.key_horizon`, and `KEY_WALK_WGSL` (the shader `key_walk.wgsl`). The horizon is the march, as every profile read it.
+  - `KeyCover::Record` (the name `record` no longer parses; `KeyCover::ALL` is `off`, `ray`).
+  - The column map's coarse rows and what sized them: `COLUMN_BLOCK`, `COLUMN_BLOCKS`, `column_coarse_texel`, `GpuWorld::column_coarse_bytes`. The column map's texture is the map alone again: 182 784 B back at a window of side 51 and 104 832 B at side 39 (arithmetic, `docs/nfr/03-memory.md`).
+  - A consumer that named any of these fails to compile; one that named none sees no change. `RenderSettings::with_test_value` returns `None` for the two removed rows. Bits 1, 2, 4 and 6 of `Params::lighting2` are free and not renumbered.
+- **Kept (`svet-render`): `KeyCover` and `Lighting::key_cover`, `off` and `ray`, `off` on every profile**, as the one control for sun under cover. `Params::column_top` and `GpuWorld::column_top_max` also stay, though no pass reads the word now (`docs/backlog.md`).
+- **Removed (fly-through):** `--key-at` and `--key-horizon` (unknown arguments now), `--key-cover record` (`--key-cover` takes `off` or `ray`), the debug page's `key at` and `key horizon` entries and their HUD and banner words.
+- **Tests:** the `gpu_wobble` rigs read a baked store: one shared settle with a device wait every frame and a census of the store in view (`apps/flythrough/tests/support/baked.rs`). The forest soak test asserts Plan 0098's rest bars on one such store and fails when the census is not whole; it reads 145 s on the RTX 3080 Laptop and 253 s on lavapipe, quiet, where it read 771 s and 12 538 s. Its far bars are re-set from readings on a baked store (the old ones were read with 5 of 59 chunks baked). The settings-rows walk proves `lighting.key_cover` live with the far normal off, since no face of its small frame is near enough under the defaults.
+- **What the owner saw, and what is left** (`docs/backlog.md`, with his clips as anchors): the edge of light stepping on slopes is close to gone under the defaults. Sunlit tree crowns still sparkle while he moves; the cause is not shown, and it is not shown to be the sun's shadow. The picture settles for about a second after a turn; that is read as FSR 2's history (outlines change 22.05 levels with FSR 2 and 0.007 with no upscaler). The near shadow's hole and sun under cover as a default were not taken up.
+- **Disclosed:** there is no measure of the wobble. The one reading that followed his eye (the lit edge at the terraces, 0.01507 against 0.01123) ordered one pair whose clips also differ in resolution; it is provisional until it ranks a second pair he ranked blind. The other candidate ordered nothing, and the crowns' order was never given as a ranking. No asserting test exists for either.
+- **Read (loaded, `docs/nfr.md` section 7):** the gate tier on the merged tree in parts, 1173.2 s by nextest's summaries against the 19 min line, with another lane building; not a reading against the line. A quiet re-read is owed.
+
 ## [0.76.0] - 2026-11-26
 
 Plan 0099 (a minor bump: new public items on `svet-render` and `svet-world`, and one changed; ADR-0083 accepted with an Outcome, extending ADR-0017). **The live bake queue's step runs on a bake thread.** The owner at the window: "with thread it got so much better, this is the way!". No golden moved, and the light store's bytes are the same in either mode.
