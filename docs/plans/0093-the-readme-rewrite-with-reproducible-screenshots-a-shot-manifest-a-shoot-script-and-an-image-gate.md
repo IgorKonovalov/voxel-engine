@@ -1110,8 +1110,8 @@ chunk or its record.
 | 2d: the check, the batches, the shoot | dev | stopped: `--check` after the shoot over tolerance on `spider-walk` (log) | `3ece99fb` (wip) |
 | 2e: the noise sets, read | dev | stopped: both loops' `--filter off` reads 0, under their noise; the hero 0.004 (log) | `bceef9a9` |
 | 2f: the tolerances, the worst frame, the shoot | dev | done; readings in [the log](logs/0093.md) | `30213ffa` |
-| 3: the image gate, fragments, CI | dev | done; readings in [the log](logs/0093.md) | committed with this row |
-| 4: candidates and contact sheets | dev | not started | |
+| 3: the image gate, fragments, CI | dev | done; readings in [the log](logs/0093.md) | `5b3fdd71` |
+| 4: candidates and contact sheets | dev | done; sheets under `target/shots/candidates/`; readings in [the log](logs/0093.md) | committed with this row |
 | 5: the owner picks | human | not started | |
 | 6: the picks, the final shoot, the rewrite | dev | not started | |
 | 6b: a minimal window as the second example | dev | not started | |
@@ -1195,6 +1195,28 @@ each. Empty is fine.)_
   `scripts/fixtures` on an ordinary run, compares fragments lowercased, and reads a link whose
   label holds an image (`[![..](..)](#license)`); the fixture seeds two fragment findings
   (`backlog.md#gone` and a same-file `#nowhere`).
+- Phase 4: a candidate is a list of flags or `{ "flags": [..], "still_at": .. }`, merged over
+  the entry's flags (a flag the entry has takes the candidate's value, a new one is appended).
+- Phase 4: a loop candidate renders its first 2 seconds of frames only; its tile is that
+  window's middle frame.
+- Phase 4: beside the sheets the script writes `target/shots/candidates/index.html` (every
+  tile with its flags and its bare command) and labels each tile with its number and flags
+  (ffmpeg `drawtext`); a failed candidate is a dark tile marked failed. Neither is in the plan.
+- Phase 4: new entries carry `"tolerance": null` (validate allows it on a draft only;
+  `--check` fails it) and a `shows` line; a tolerance of a draft entry is not read.
+  `validate` now refuses a non-number tolerance (it passed `null` before).
+- Phase 4: `scripts/shoot-images.test.mjs` gained six tests (a file outside the phase's list).
+- Phase 4: the `day-cycle` entry is not written (A7: it drops first at the 5 MB line); no
+  `profiler` entry (Plan 0091); no `minimal_window` still (Phase 6b has not landed).
+- Phase 4: the shot list asks what the fly-through cannot show: the dig's radius (no flag,
+  A6), the castle on a hill (`--vox` is ignored outdoors, Phase 1), wet rock (no surface reads
+  wet in the cave), a dig in the cave away from the lamp's clipped pool from the spawn.
+- Phase 4: two rounds added candidates after one look at the tiles: hero 6-9 (lamp off, lifted
+  `--eye`) and lamp-cave 6-7 (`--exposure 0.5`, `0.25`).
+- Phase 4: the loops' WebPs were not opened in a browser (lane rule 10); they were decoded
+  frame by frame with ffmpeg (log).
+- Phase 4: hero 9 shows a black band between the canopy and the sky across the frame (log);
+  not filed in the backlog here.
 
 ### Close triggers
 

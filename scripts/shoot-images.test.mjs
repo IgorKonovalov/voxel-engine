@@ -7,6 +7,9 @@ import path from "node:path";
 import { test } from "node:test";
 import {
   batchOf,
+  candidateOf,
+  candidateUnits,
+  mergeFlags,
   CELL,
   CELL_LEVEL,
   cellShare,
@@ -123,9 +126,90 @@ test("the CLI prints an entry of a manifest file and refuses an unknown one", ()
 test("parseCli reads the options and refuses an unknown one", () => {
   assert.deepEqual(parseCli(["--only", "a,b", "--check", "--no-build"]), {
     only: ["a", "b"], print: null, check: true, build: false, manifest: MANIFEST, help: false, batch: null,
+    candidates: false, candidate: null,
   });
+  assert.equal(parseCli(["--print", "x", "--candidate", "3"]).candidate, 3);
+  assert.equal(parseCli(["--candidates"]).candidates, true);
   assert.throws(() => parseCli(["--bogus"]), /unknown option --bogus/);
   assert.throws(() => parseCli(["--print"]), /--print needs a value/);
+  assert.throws(() => parseCli(["--candidate", "2"]), /--candidate goes with --print/);
+  assert.throws(() => parseCli(["--print", "x", "--candidate", "10"]), /not 1 to 9/);
+  assert.throws(() => parseCli(["--candidates", "--check"]), /two runs/);
+});
+
+const WITH_CANDIDATES = {
+  ...FIXTURE.shots.still,
+  draft: true,
+  tolerance: null,
+  candidates: [["--shot", "chasm"], ["--eye", "1,2,3,90,-10", "--lamp", "on"], { flags: ["--hud"], still_at: 5 }],
+};
+
+test("mergeFlags: a flag the entry has takes the new value, a new one is appended, a bare one stays once", () => {
+  const base = ["--headless", "--source", "showcase", "--frames", "8"];
+  assert.deepEqual(mergeFlags(base, ["--source", "cave", "--eye", "1,2,3,90,-10"]),
+    ["--headless", "--source", "cave", "--frames", "8", "--eye", "1,2,3,90,-10"]);
+  assert.deepEqual(mergeFlags(base, ["--headless", "--hud"]), [...base, "--hud"]);
+  assert.deepEqual(mergeFlags(["--hud", "--frames", "8"], ["--hud", "x"]), ["--hud", "x", "--frames", "8"]);
+  assert.deepEqual(mergeFlags(base, []), base);
+});
+
+test("candidateOf merges a candidate's flags and still_at; a loop's frames are cut to two seconds", () => {
+  const c1 = candidateOf(WITH_CANDIDATES, 1);
+  assert.deepEqual(c1.flags, ["--headless", "--settled-start", "--source", "showcase", "--render", "320x180", "--frames", "8", "--shot", "chasm"]);
+  assert.equal(c1.still_at, 7);
+  assert.equal(c1.candidates, undefined);
+  assert.equal(candidateOf(WITH_CANDIDATES, 3).still_at, 5);
+  assert.throws(() => candidateOf(WITH_CANDIDATES, 4), /no candidate 4/);
+  const loop = { ...FIXTURE.shots["loop-a"], still_at: "36..96", fps: 20, candidates: [[], []] };
+  assert.equal(candidateOf(loop, 1).still_at, "36..75");
+  assert.equal(candidateOf({ ...loop, still_at: "3..5" }, 2).still_at, "3..5");
+});
+
+test("--print ID --candidate N prints the commands that make that tile alone", () => {
+  const lines = printLines("still", WITH_CANDIDATES, 2);
+  assert.deepEqual(lines, [
+    "# still candidate 2: from the repository root",
+    "rm -rf target/shots/candidates/still/2",
+    "mkdir -p target/shots/candidates/still/2",
+    "flock /home/igor/Work/voxel-engine/.git/svet-perf.lock timeout 300 systemd-run --user --scope --quiet -p MemoryMax=6G -p MemorySwapMax=2G -- target/release/flythrough --headless --settled-start --source showcase --render 320x180 --frames 8 --eye 1,2,3,90,-10 --lamp on --seed 3 --still-at 7 --still-dir target/shots/candidates/still/2",
+    "ffmpeg -v error -y -pattern_type glob -i 'target/shots/candidates/still/2/*.png' -vf 'select=eq(n\\,0)' -frames:v 1 target/shots/candidates/still/2.png",
+  ]);
+  const loop = { ...FIXTURE.shots["loop-a"], still_at: "36..96", fps: 20, candidates: [[], ["--shot", "chasm"]] };
+  const l = printLines("loop-a", loop, 2);
+  assert.match(l[3], / --shot chasm --still-at 36,37,.*,75 --still-dir target\/shots\/candidates\/loop-a\/2$/);
+  assert.match(l[4], /'select=eq\(n\\,20\)' -frames:v 1 target\/shots\/candidates\/loop-a\/2\.png$/);
+  assert.match(l[5], /libwebp_anim .* -loop 0 -frames:v 40 target\/shots\/candidates\/loop-a\/2\.webp$/);
+  assert.deepEqual(candidateUnits(["still", "loop-a"], { shots: { still: WITH_CANDIDATES, "loop-a": loop } }),
+    ["still:1", "still:2", "still:3", "loop-a:1", "loop-a:2"]);
+});
+
+test("the CLI prints a candidate's commands and refuses a number past the list", () => {
+  const dir = fs.mkdtempSync(path.join(ROOT, "target", "shoot-test-"));
+  try {
+    const file = path.join(dir, "shots.json");
+    fs.writeFileSync(file, JSON.stringify({ ...FIXTURE, shots: { ...FIXTURE.shots, still: WITH_CANDIDATES } }));
+    const ok = spawnSync("node", [SCRIPT, "--manifest", file, "--print", "still", "--candidate", "3"], { encoding: "utf8" });
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.equal(ok.stdout, `${printLines("still", WITH_CANDIDATES, 3).join("\n")}\n`);
+    const no = spawnSync("node", [SCRIPT, "--manifest", file, "--print", "still", "--candidate", "4"], { encoding: "utf8" });
+    assert.equal(no.status, 2);
+    assert.match(no.stderr, /still has 3 candidates, not 4/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("validate: candidates are 2 to 9 flag sets; a draft's tolerance may be null, another's may not", () => {
+  const m = (e) => ({ shots: { still: e } });
+  assert.deepEqual(validate(m(WITH_CANDIDATES)), []);
+  assert.deepEqual(validate(m({ ...WITH_CANDIDATES, candidates: [["--shot", "hall"]] })), ["still: candidates is not a list of 2 to 9"]);
+  assert.deepEqual(validate(m({ ...WITH_CANDIDATES, candidates: [["--still-at", "3"], ["hall"]] })), [
+    "still: candidate 1 names --still-at, which the script adds",
+    "still: candidate 2 starts with a value, not a flag",
+  ]);
+  assert.deepEqual(validate(m({ ...WITH_CANDIDATES, candidates: [[], { flags: [], still_at: "1..2" }] })),
+    ["still: candidate 2: a still's still_at is one frame"]);
+  assert.deepEqual(validate(m({ ...WITH_CANDIDATES, draft: undefined })), ["still: tolerance is not a fraction in 0..1"]);
 });
 
 test("diffFraction counts pixels with a channel over the level", () => {
