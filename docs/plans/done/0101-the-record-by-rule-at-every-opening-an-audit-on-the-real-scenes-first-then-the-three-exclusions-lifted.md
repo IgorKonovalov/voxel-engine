@@ -1,26 +1,28 @@
 # 0101: The record by rule at every opening: an audit on the real scenes first, then the three exclusions lifted
 
-> **Status:** in-progress, Phases 4 and 5 implemented (the fix pass's (a), (b) and (c); the pool's job set under a ruled push), awaiting the close review; the close review of 2026-11-26 found two cases where a
-> ruled record is not the one a bake writes, both by reading the code, neither covered by a test
-> or by the audit; section "The close review"); Phases 1 to 3 done 2026-11-26 on lane `plan-0101`; approved (owner, 2026-11-24: lane after Plan 0099 closes; drafted 2026-11-24 with no interview; the guesses
-> and the open questions are under "Risks & open questions", each with a recommended option).
+> **Status:** done, closed 2026-11-26 (v0.78.0): the rule is read at every opening, the audit
+> differs on 0 blocks, the ruled records' bytes are equal across six runs; the time to light it
+> buys is not shown in lockstep (section "The close"). Phases 1 to 5 on lane `plan-0101`; the
+> first close review of 2026-11-26 found two cases by reading the code and Phases 4 and 5 fixed
+> them; approved (owner, 2026-11-24: lane after Plan 0099 closes; drafted 2026-11-24 with no
+> interview; the guesses and the open questions are under "Risks & open questions").
 > **Order (recommended, question 1):** after Plan 0100's Phase 2 and **after Plan 0099 closes**,
 > not ahead of its Phase 1 as Plan 0096's close ruled; the reasons are under "The order".
 > **Created:** 2026-11-24
 > **Milestone:** M10 (the outdoor scenes are where the queue is deep) and cross-cutting, like
-> [Plan 0096](done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md),
+> [Plan 0096](0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md),
 > whose Phase 10b this is.
-> **Related ADRs:** [ADR-0085](../adrs/0085-the-zero-record-is-ruled-on-the-mirror-as-it-stands-exact-by-the-re-list-not-by-the-columns-finality.md)
+> **Related ADRs:** [ADR-0085](../../adrs/0085-the-zero-record-is-ruled-on-the-mirror-as-it-stands-exact-by-the-re-list-not-by-the-columns-finality.md)
 > (proposed with this plan; at acceptance it supersedes one sentence of rule 1 of
-> [ADR-0080](../adrs/0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md)),
-> [ADR-0084](../adrs/0084-the-key-lights-visibility-on-a-world-face-is-fixed-per-face-the-columns-horizon-where-lit-a-cover-source-where-shadowed.md)
+> [ADR-0080](../../adrs/0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md)),
+> [ADR-0084](../../adrs/0084-the-key-lights-visibility-on-a-world-face-is-fixed-per-face-the-columns-horizon-where-lit-a-cover-source-where-shadowed.md)
 > (the bake's key ray at its cap, Plan 0100 Phase 2: this plan's base),
-> [ADR-0070](../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md)
-> (the column clause), [ADR-0076](../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
+> [ADR-0070](../../adrs/0070-sky-light-is-baked-visibility-coloured-at-read-with-a-long-history-ray-where-stale.md)
+> (the column clause), [ADR-0076](../../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
 > rule 3 (one fade a landing), ADR-0083 (Plan 0099, the bake thread).
 > **Source:** `docs/backlog.md`, "The record by rule at every opening, and the bake's key ray
 > at its cap"; Plan 0096's sections "Phase 10", "Phase 10 after its reading" and "The close";
-> the readings in [`logs/0096.md`](logs/0096.md), "Phase 10a" and "Phase 10c".
+> the readings in [`logs/0096.md`](../logs/0096.md), "Phase 10a" and "Phase 10c".
 
 ## TL;DR
 
@@ -656,6 +658,91 @@ the release path above would put double counts in (5)'s zero records and extra l
 `bake queue:` line's zero records beside the zeroed chunks' count of (c)'s hash line: equal,
 or the difference named (a re-list rules a chunk twice by design).
 
+## The close (2026-11-26, architect, second review): closed, v0.78.0
+
+Reviewed cold at `af64b295` with main `36e74d80` merged in (`21261515`, docs only). The three
+findings of the first review are answered in the code and in assertions read by hand, the bytes
+were recomputed from the runs' `run.json`, and the gate tier ran on the merged tree (readings
+log, "The second close review").
+
+**The first review's findings.**
+
+1. **Answered.** `take_listed` reads `rule_holds` again on the pushing step's shadow and drops
+   the listing where it does not hold (`lister.rs`);
+   `a_ruled_verdict_is_read_again_where_its_record_is_written` asserts no zero record, `C` not
+   zeroed and one job at the settle.
+2. **Answered in lockstep; one window is left with the bake thread on (finding A below).**
+   `push_listed` notes a bit per neighbour the shadow does not hold full, `relist_zeroed` lists
+   the chunk again when one is; `a_ruled_chunk_lists_its_border_faces_when_the_neighbour_arrives`
+   asserts more faces, the zero record of those faces, 0 jobs, the flags clear and the second
+   chunk untouched.
+3. **Answered.** Six RTX forest runs (three lockstep, three with the bake thread) zero the same
+   3 589 chunks with every block hash equal chunk by chunk, within each mode and across them;
+   recomputed at this review from `live/p4cr/*/run.json`, 0 differ. The whole store's hash is
+   equal too (a reading).
+
+Phase 5's two tests assert what its done-whens say (the pushing step opens; zeroed once; no
+job).
+
+**Findings of this review** (none needs code before the close; each is in `docs/backlog.md`).
+
+- **A, minor: with the bake thread on, a ruled record's border bits are read on a different
+  view than its faces.** The pool lists a chunk's faces from the world's store, on its own
+  thread, some time after the send (`list_chunk`, `list.rs`); the bits of the neighbours "not
+  held full" are read from the shadow at the push, a step later (`push_listed`). A neighbour
+  that enters the store, uploads and reaches the shadow between the two leaves no bit (its
+  change was read by `relist_zeroed` before the chunk was zeroed), and a neighbour that left
+  the store while the shadow still holds it full leaves none either: the record then lacks
+  those faces until something else lists the chunk. Lockstep lists and pushes in one step and
+  is exact. Read from the code, not from a run: the three thread runs at a still camera show
+  none (3 589 of 3 589 equal to lockstep); a moving camera, where chunks cross the full radius
+  while listings are in the pool's hands, is not read. By the first review's reading of the
+  shaders a missing record in a buried chunk reads dark, as the zero record does, so no image
+  difference is expected; that is still not measured. The fix in hand: the listing carries the
+  neighbours it read as absent, and a push whose shadow disagrees drops the listing.
+  ADR-0085's Outcome states the limit.
+- **B, minor: the lockstep in-view rows compare two starts, not two trees.** Every lockstep
+  RTX forest run whose first world frame came at 10.8 s or later landed its view in 12.0 to
+  13.5 s; every one at 9.7 s or earlier in 30.0 to 37.9 s, on the base, under the audit and
+  at the tip alike. The late starts had a longer pre-roll (378 to 391 steps and 2 109 to
+  2 131 chunks baked before frame 0, 595 and 2 157 on the cold run, against 285 to 315 steps
+  and 1 659 to 1 991 chunks). Phase 3's 13.5 s
+  was a late start beside a base of 35.6 s from an early one; like against like the rule
+  separates nothing in lockstep (early: base 35.6, held back 33.0, tip 37.9, 32.0, 30.0; late:
+  held back 12.0 and 12.8, tip 13.5). **No regression is shown and no gain is shown.** With
+  the bake thread on, early starts read 19.1 and 19.7 s with the rule held back (the audit)
+  and 14.7 and 15.2 s with it: about 4.5 s less on two runs a side, indicative. `docs/nfr.md`
+  is corrected at this close. The reading that would tell: base and tip interleaved with the
+  pre-roll pinned to a step count. The pre-roll's length moving the landing by about 20 s is a
+  lead of its own, routed to Plan 0108 (the backlog).
+- **C, minor: the followups were in the plan and the log only.** The lockstep opening that
+  only rules and sets `quiet_until`, the census and `counted_idle` missing a ruled chunk for
+  one opening, the gate-sized rule rig, the `faceless` set's neighbours and a re-listed
+  chunk's place in the order are in the backlog now.
+- **Nit:** with the bake thread on the run's-end `rule hashes` line repeats the answer of the
+  first emptiness (its `at step` says so); `docs/flythrough.md` does not. A reading's line.
+
+**Rulings on what the lane disclosed.**
+
+- **`--report` without a path under `--queue-rule-reading`, and the files outside `Files
+  touched`:** accepted. Done-when (4) needs each chunk's hash in `run.json`, which was written
+  only on a path run; the change is a reading's, documented in `--help` and
+  `docs/flythrough.md`, and a path run's report is unchanged. `books.rs`, `reads.rs`,
+  `link.rs` and `lib.rs` carry the bake thread's answer, which the phase text asked for.
+- **The whole store's hash leaves the landing word out:** right; that word is the frame a
+  block landed in and differs run to run by construction.
+- **The step:** lockstep p50 15.148, 13.356, 14.218 ms against 14.347 (+5.6, -6.9, -0.9 %),
+  quiet at each start: under the 10 % stop, not separable from the base. The p99 reads 35.9 to
+  40.4 ms against the base's 28.5 and Phase 3's 33.7; no done-when bars it, and it is the
+  lockstep step, which the bake thread takes off the render thread (0.75 to 0.80 ms p50
+  there). Stated in the nfr rows.
+- **The lavapipe holds and one quick-tier run under load:** they assert bytes and counts, not
+  time; the gate at this review ran them again.
+- **Not run by the lane:** the gate tier (run here); a debug build with the bake thread on a
+  real scene (readings log, "The second close review"); the second adapter and the hills at
+  the fix pass's tip (Phase 4 names the RTX forest; Phase 3 read all four at `85bf694d`, and
+  Phases 4 and 5 change no GPU work); Windows (owner, 2026-11-15).
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
@@ -667,11 +754,11 @@ or the difference named (a re-list rules a chunk twice by design).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The audit and the re-read, no behaviour change | dev | done: 0 blocks differ in every case on all runs, both forests over the 10 % job line ([readings log](logs/0101.md)) | wip `67062697`; the readings `30e771b9` |
-| 2: The rule at every opening | dev | done: the rule on every ready candidate; CPU tests (1)-(3), two soak-born lavapipe rigs (4) ([readings log](logs/0101.md)) | `85bf694d` |
-| 3: The readings on both adapters, the audit at the tip, and the documents | dev | done but (5): audit 0 differ on four runs, the step under the base, gate 1 443 of 1 443; the bytes not read ([readings log](logs/0101.md)) | `5312afb7` |
-| 4: The fix pass | dev | done: (a) the verdict read at the push, (b) the border faces, each red then green; (c) the hash line, RTX forest 3 lockstep and 3 thread runs zero the same 3 589 chunks, every hash equal, thread audit 0 differ, step B p50 -6.9 to +5.6 % of the base ([readings log](logs/0101.md)) | (a) `1c85d787`; (b) `11445eb6`; (c) `2c1b860f`, `fca23ca9`, readings committed with this row |
-| 5: The pool counts a ruled chunk awaiting its block as in a job | dev | done: both tests red on `9838fb4d`'s code (test 2 red in release too, `zeroed` 2), green with `ruled` in `sync_pool`'s job set ([readings log](logs/0101.md)) | `248f1511` |
+| 1: The audit and the re-read, no behaviour change | dev | done: 0 blocks differ in every case on all runs, both forests over the 10 % job line ([readings log](../logs/0101.md)) | wip `67062697`; the readings `30e771b9` |
+| 2: The rule at every opening | dev | done: the rule on every ready candidate; CPU tests (1)-(3), two soak-born lavapipe rigs (4) ([readings log](../logs/0101.md)) | `85bf694d` |
+| 3: The readings on both adapters, the audit at the tip, and the documents | dev | done but (5): audit 0 differ on four runs, the step under the base, gate 1 443 of 1 443; the bytes not read ([readings log](../logs/0101.md)) | `5312afb7` |
+| 4: The fix pass | dev | done: (a) the verdict read at the push, (b) the border faces, each red then green; (c) the hash line, RTX forest 3 lockstep and 3 thread runs zero the same 3 589 chunks, every hash equal, thread audit 0 differ, step B p50 -6.9 to +5.6 % of the base ([readings log](../logs/0101.md)) | (a) `1c85d787`; (b) `11445eb6`; (c) `2c1b860f`, `fca23ca9`, readings committed with this row |
+| 5: The pool counts a ruled chunk awaiting its block as in a job | dev | done: both tests red on `9838fb4d`'s code (test 2 red in release too, `zeroed` 2), green with `ruled` in `sync_pool`'s job set ([readings log](../logs/0101.md)) | `248f1511` |
 
 ### Notes
 

@@ -213,6 +213,16 @@ RENOIR forest 14.1 s (17.3), hills 10.2 (13.7); the RTX's 13.5 (35.6) and 11.0 (
 residency, are inside the run-to-run spread of the same behaviour (not separable). The queue's
 step, regime B, RTX forest p50 / p99 13.008 / 33.734 ms (14.347 / 28.525). The lines above keep
 their standing. Every row: [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md).
+**Read again at the plan's fix pass and close** (release `2c1b860f` and `fca23ca9`, RTX forest,
+still camera, three runs a mode, quiet at the start but one): lockstep in view 37.9, 32.0 and
+30.0 s, residency 46.0, 39.8 and 38.2 s, step p50 13.356 to 15.148 ms and p99 35.877 to 40.431;
+with the bake thread on in view 14.7, 15.2 and 6.2 s, residency 22.9, 24.7 and 22.7 s. **The
+RTX's 13.5 s above is not a gain of the rule:** every run whose pre-roll ran 378 steps or more
+landed its view in 12.0 to 13.5 s (6.2 with the thread) and every run of 285 to 315 steps in 30.0
+to 37.9 s (14.7 to 19.7), on the base and at the tip alike; like against like the rule is not
+separable in lockstep and reads about 4.5 s sooner with the thread on, two runs a side
+(indicative). The zeroed chunks' blocks are equal chunk by chunk across the six runs (3 589
+chunks). The RENOIR and the hills were not read again.
 
 Every reading against this budget, with its machine, scene and commit, is in
 [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md); new readings go there.
