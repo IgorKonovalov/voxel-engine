@@ -763,7 +763,7 @@ a cheap query.
   positional voice as an audio source through M4's occlusion.
 - **ADRs expected:** transport; voice codec.
 
-### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0; Plan 0094 closed 2026-11-20, v0.68.0; Plan 0095 closed 2026-11-21, v0.69.0; Plan 0097 closed 2026-11-23, v0.70.0; Plan 0096 closed 2026-11-23, v0.71.0; Plan 0098 closed 2026-11-24, v0.72.0)
+### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0; Plan 0094 closed 2026-11-20, v0.68.0; Plan 0095 closed 2026-11-21, v0.69.0; Plan 0097 closed 2026-11-23, v0.70.0; Plan 0096 closed 2026-11-23, v0.71.0; Plan 0098 closed 2026-11-24, v0.72.0; Plan 0100 closed 2026-11-25, v0.75.0)
 
 The open-sky half of the "Floor, profiles and scene scale" decision, as general engine
 mechanisms: the first consumer is underground, so nothing here is on its P0 list, and terrain
@@ -857,10 +857,26 @@ against the baked store: no probe or store term takes sun or sky light.
   1080p 1.6 to 2.1 ms, under its line). A dig's near ring jumps the queue and lands in 1 or 2
   frames on both adapters, the hole holding a record in the store until then (window 98e: "so
   much better, not ideal but acceptable"). Five owner windows. Left open: no sun under cover,
-  the noon terraces' step shadows and the coarse tier's wobble (Plan 0100, approved); the
+  the noon terraces' step shadows and the coarse tier's wobble (Plan 0100, closed 2026-11-25
+  with the first two still open, see the next entry); the
   distant trees under FSR 2 (the backlog, Plan 0033's re-read); the slight colour change at a
   dig's landing and the staged-records delay (the backlog); the bake step on the main thread
   (Plan 0099).
+- **A sun fixed in the world** ([Plan 0100](plans/done/0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md),
+  closed 2026-11-25, v0.75.0; ADR-0084 accepted with an Outcome, superseding two clauses of
+  ADR-0079). **The wobble it was written to remove is still there**, on sunlit faces, and no
+  reading of the plan shows it; the plan closed on what the owner's window left standing. No
+  default changed on any profile. The one change every build takes: a baked key ray that
+  ends under its column's top is not lit (a closed cave no longer bakes sunlit). Kept as
+  settings, off: `key cover ray|record` (sun under cover, a source that only adds light),
+  `key at face|face-smooth`, `key horizon walk` (every cell of the column map). Under `key
+  far column` no key ray is cast at a cube face for the penumbra. Closed with no change:
+  the near trunks under coarse light (no fault read or seen). Left open, to the follow-on
+  plan (the backlog's "The sun's term at small faces"): the wobble, the tunnel slot's
+  shimmer, the near shadow's hole, sun under cover as a default; it starts from clips the
+  owner judges, then a measure that ranks what he ranked. **Drafted 2026-11-25 as
+  [Plan 0104](plans/0104-the-wobble-anchored-to-the-owners-eye-clips-he-ranks-a-measure-that-ranks-them-then-the-remedy.md)**,
+  which awaits the owner's go: no remedy is built or picked before a clip is anchored.
 - **A surface detail layer** ([Plan 0081](plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
   drafted 2026-11-16, awaits the owner's go; ADR-0063 proposed): grass, moss, strands,
   fungus caps, flowers, pebbles and snow tufts as a procedural shell marched in the hit pass

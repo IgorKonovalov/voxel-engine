@@ -139,7 +139,7 @@ test("a run's command keeps its flags, drops the rehearsal's own and adds them",
   assert.deepEqual(commandOf(run, opts, "out"), [
     "--hud", "--sun", "10,180",
     "--headless", "--adapter", "llvmpipe", "--frames", "30", "--render", "320x180",
-    "--dig-at", "5", "--still", "out/a.ppm", "--mode-text", "out/a.txt",
+    "--dig-at", "5", "--still", path.join("out", "a.ppm"), "--mode-text", path.join("out", "a.txt"),
   ]);
   const own = commandOf({ name: "b", args: ["--render", "64x36"], dig: null }, opts, "o");
   assert.equal(own.filter((w) => w === "--render").length, 1);

@@ -55,7 +55,9 @@ pub struct Params {
     /// [`SurfaceTuning::face_mix`].
     pub face_mix: f32,
     pub window_size: [i32; 3],
-    pub _pad3: i32,
+    /// The window's highest column top ([`crate::GpuWorld::column_top_max`]): where the
+    /// horizon's walk ([`KeyHorizon::Walk`]) ends once no top can raise it.
+    pub column_top: i32,
     pub size: [u32; 2],
     /// [`Lighting::light_floor`]: a list light reaches `sqrt(intensity / light_floor)` voxels;
     /// the slot rule copies it into each list light's slot (the headlamp's slot takes 0).
@@ -292,6 +294,27 @@ pub(crate) const LIGHTING_KEY_STEP: u32 = 1 << 26;
 /// `Params::lighting2` bit ([`Lighting::sky_down_skip`]): no sky ray from a face whose normal
 /// points down.
 pub(crate) const LIGHTING2_SKY_DOWN_SKIP: u32 = 1;
+
+/// `Params::lighting2` bit ([`KeyAt::Face`]): a cube face's column horizon is read at the face's
+/// centre.
+pub(crate) const LIGHTING2_KEY_AT_FACE: u32 = 1 << 1;
+
+/// `Params::lighting2` bit ([`KeyAt::FaceSmooth`]): a cube face's column horizon is the bilinear
+/// blend of the four face centres of its plane nearest the hit.
+pub(crate) const LIGHTING2_KEY_AT_SMOOTH: u32 = 1 << 2;
+
+/// `Params::lighting2` bit ([`KeyHorizon::Walk`]): the key light's column horizon walks every
+/// map cell to the window's side over the coarse levels, not the march.
+pub(crate) const LIGHTING2_KEY_WALK: u32 = 1 << 4;
+
+/// `Params::lighting2` bit ([`KeyCover::Ray`]): near a cube face the
+/// horizon reads under 1 at, the light pass casts one ray from the face's centre toward the key
+/// light's disc centre and the shown visibility is the larger of the two.
+pub(crate) const LIGHTING2_KEY_COVER_RAY: u32 = 1 << 5;
+
+/// `Params::lighting2` bit ([`KeyCover::Record`]): a cube face whose own store cell
+/// holds a fresh baked key visibility shows the larger of it and the horizon.
+pub(crate) const LIGHTING2_KEY_COVER_RECORD: u32 = 1 << 6;
 
 /// The light passes' reading hooks ([`Frame::set_light_hooks`]): switches that take a term or a
 /// test out of the frame to attribute what the image does to it. All off by default; each is
@@ -952,6 +975,13 @@ pub struct Lighting {
     /// radius, before the live queue re-bakes the block's key visibilities alone (ADR-0079;
     /// default [`DEFAULT_KEY_STEP`]).
     pub key_step: f32,
+    /// Where on a cube face the key light's column horizon is read ([`KeyAt`]; default `Hit`).
+    pub key_at: KeyAt,
+    /// How the key light's column horizon reads the map ([`KeyHorizon`]; default `March`).
+    pub key_horizon: KeyHorizon,
+    /// The source that adds the key light back where the horizon reads shadow ([`KeyCover`];
+    /// default `Off`).
+    pub key_cover: KeyCover,
 }
 
 /// [`Lighting::key_step`] by default, in degrees (Plan 0095 Phase 8, a guess: 10 s of the
@@ -1013,6 +1043,9 @@ impl Default for Lighting {
             sky_down_skip: false,
             column_wait: false,
             key_step: DEFAULT_KEY_STEP,
+            key_at: KeyAt::Hit,
+            key_horizon: KeyHorizon::March,
+            key_cover: KeyCover::Off,
         }
     }
 }
@@ -1108,6 +1141,26 @@ impl Lighting {
             } else {
                 0
             }
+    }
+
+    /// The bits of `Params::lighting2`.
+    pub fn flags2(&self) -> u32 {
+        (if self.sky_down_skip {
+            LIGHTING2_SKY_DOWN_SKIP
+        } else {
+            0
+        }) | match self.key_at {
+            KeyAt::Hit => 0,
+            KeyAt::Face => LIGHTING2_KEY_AT_FACE,
+            KeyAt::FaceSmooth => LIGHTING2_KEY_AT_SMOOTH,
+        } | match self.key_horizon {
+            KeyHorizon::March => 0,
+            KeyHorizon::Walk => LIGHTING2_KEY_WALK,
+        } | match self.key_cover {
+            KeyCover::Off => 0,
+            KeyCover::Ray => LIGHTING2_KEY_COVER_RAY,
+            KeyCover::Record => LIGHTING2_KEY_COVER_RECORD,
+        }
     }
 
     /// The manual exposure, or 1.0 in auto.

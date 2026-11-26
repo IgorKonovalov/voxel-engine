@@ -572,3 +572,154 @@ fn dig_hold_is_on_rays_and_off_names_itself() {
     }
     assert!(parse_args_from(argv(&["--dig-hold", "maybe"])).is_err());
 }
+
+/// Plan 0100 Phase 1: `--key-at` is `hit` unless named, which the lighting row and the banner
+/// leave out; `face` and `face-smooth` reach the lighting, the row and the banner; the withdrawn
+/// `centre` is refused (Plan 0100 Phase 9); the debug page's `key at` cycles hit, face,
+/// face-smooth and its row reads the value.
+#[test]
+fn key_at_is_hit_unless_named() {
+    use crate::hud::HudRow;
+    use svet_render::KeyAt;
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(r.start_lighting().key_at, KeyAt::Hit);
+    let m = r.start_modes(0.0);
+    assert!(!m.row(HudRow::Lighting).contains("key at"));
+    assert!(!m.banner(0.0).unwrap().contains("key at"));
+    for (name, k) in [("face", KeyAt::Face), ("face-smooth", KeyAt::FaceSmooth)] {
+        let r = parse_args_from(argv(&["--source", "outdoor", "--key-at", name])).unwrap();
+        assert_eq!(r.start_lighting().key_at, k);
+        let m = r.start_modes(0.0);
+        let word = format!("key at {name}, ");
+        let row = m.row(HudRow::Lighting);
+        assert!(row.contains(&word), "{row}");
+        let banner = m.banner(0.0).unwrap().replace('\n', ", ");
+        assert!(banner.contains(&word), "{banner}");
+    }
+    assert!(parse_args_from(argv(&["--key-at", "center"])).is_err());
+    assert!(parse_args_from(argv(&["--key-at", "centre"])).is_err());
+    let tog = crate::toggles::TOGGLES
+        .iter()
+        .find(|t| t.name == "key at")
+        .unwrap();
+    let mut m = r.start_modes(0.0);
+    m.lighting.key_at = KeyAt::Hit;
+    for want in ["key at face", "key at face-smooth", "key at hit"] {
+        (tog.flip)(&mut m, 0.0);
+        assert_eq!((tog.get)(&m), want);
+    }
+}
+
+/// Plan 0100 Phase 5b: `--key-horizon` is `march` unless named, which the lighting row and the
+/// banner leave out; `walk` reaches the lighting, the row and the banner; the debug page's
+/// `key horizon` cycles march and walk and its row reads the value.
+#[test]
+fn key_horizon_is_march_unless_named() {
+    use crate::hud::HudRow;
+    use svet_render::KeyHorizon;
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(r.start_lighting().key_horizon, KeyHorizon::March);
+    let m = r.start_modes(0.0);
+    assert!(!m.row(HudRow::Lighting).contains("key horizon"));
+    assert!(!m.banner(0.0).unwrap().contains("key horizon"));
+    let r = parse_args_from(argv(&["--source", "outdoor", "--key-horizon", "walk"])).unwrap();
+    assert_eq!(r.start_lighting().key_horizon, KeyHorizon::Walk);
+    let m = r.start_modes(0.0);
+    let row = m.row(HudRow::Lighting);
+    assert!(row.contains("key horizon walk, "), "{row}");
+    let banner = m.banner(0.0).unwrap().replace('\n', ", ");
+    assert!(banner.contains("key horizon walk, "), "{banner}");
+    assert!(parse_args_from(argv(&["--key-horizon", "exact"])).is_err());
+    let tog = crate::toggles::TOGGLES
+        .iter()
+        .find(|t| t.name == "key horizon")
+        .unwrap();
+    let mut m = r.start_modes(0.0);
+    for want in ["key horizon march", "key horizon walk"] {
+        (tog.flip)(&mut m, 0.0);
+        assert_eq!((tog.get)(&m), want);
+    }
+}
+
+/// Plan 0100 Phase 6: `--key-cover` is `off` unless named, which the lighting row and the banner
+/// leave out; each arm reaches the lighting, the row and the banner; the withdrawn `ray-record`
+/// is refused (Plan 0100 Phase 9); the debug page's `key cover` cycles the three and its row
+/// reads the value.
+#[test]
+fn key_cover_is_off_unless_named() {
+    use crate::hud::HudRow;
+    use svet_render::KeyCover;
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(r.start_lighting().key_cover, KeyCover::Off);
+    let m = r.start_modes(0.0);
+    assert!(!m.row(HudRow::Lighting).contains("key cover"));
+    assert!(!m.banner(0.0).unwrap().contains("key cover"));
+    for k in [KeyCover::Ray, KeyCover::Record] {
+        let r = parse_args_from(argv(&["--source", "outdoor", "--key-cover", k.name()])).unwrap();
+        assert_eq!(r.start_lighting().key_cover, k);
+        let m = r.start_modes(0.0);
+        let want = format!("key cover {}, ", k.name());
+        let row = m.row(HudRow::Lighting);
+        assert!(row.contains(&want), "{row}");
+        let banner = m.banner(0.0).unwrap().replace('\n', ", ");
+        assert!(banner.contains(&want), "{banner}");
+    }
+    assert!(parse_args_from(argv(&["--key-cover", "both"])).is_err());
+    assert!(parse_args_from(argv(&["--key-cover", "ray-record"])).is_err());
+    let tog = crate::toggles::TOGGLES
+        .iter()
+        .find(|t| t.name == "key cover")
+        .unwrap();
+    let mut m = r.start_modes(0.0);
+    for want in ["key cover ray", "key cover record", "key cover off"] {
+        (tog.flip)(&mut m, 0.0);
+        assert_eq!((tog.get)(&m), want);
+    }
+}
+
+/// Plan 0100 Phase 9: every profile keeps `key at`, `key horizon` and `key cover` at their
+/// defaults (`key at hit`, `key horizon march`, `key cover off`), and `--profile` gives them as
+/// the profile holds them.
+#[test]
+fn the_profiles_keep_the_key_defaults() {
+    use svet_render::{KeyAt, KeyCover, KeyHorizon, Profile, RenderSettings};
+    for p in Profile::ALL {
+        let want = RenderSettings::profile(p).lighting;
+        assert_eq!(
+            (want.key_at, want.key_horizon, want.key_cover),
+            (KeyAt::Hit, KeyHorizon::March, KeyCover::Off),
+            "{}",
+            p.name()
+        );
+        let r = parse_args_from(argv(&["--source", "outdoor", "--profile", p.name()])).unwrap();
+        let l = r.render_settings().lighting;
+        assert_eq!(
+            (l.key_at, l.key_horizon, l.key_cover),
+            (want.key_at, want.key_horizon, want.key_cover),
+            "{}",
+            p.name()
+        );
+    }
+}
+
+/// `--eye`: the outdoor camera starts at the named point and view in place of the spawn's;
+/// unset, the spawn's camera; a wrong count or a pitch past 89 degrees is refused.
+#[test]
+fn eye_places_the_outdoor_camera() {
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(r.outdoor.eye, None);
+    let r = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--eye",
+        "496.0,-648.7,456.7,34.5,-46.2",
+    ]))
+    .unwrap();
+    let cam = crate::setup::outdoor_camera(&r);
+    assert_eq!(<[f32; 3]>::from(cam.position), [496.0, -648.7, 456.7]);
+    assert_eq!(cam.yaw, 34.5f32.to_radians());
+    assert_eq!(cam.pitch, (-46.2f32).to_radians());
+    assert!(parse_args_from(argv(&["--eye", "1,2,3,4"])).is_err());
+    assert!(parse_args_from(argv(&["--eye", "1,2,3,4,90"])).is_err());
+    assert!(parse_args_from(argv(&["--eye", "1,2,x,4,5"])).is_err());
+}

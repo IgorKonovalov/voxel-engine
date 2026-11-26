@@ -1,6 +1,8 @@
 # ADR-0079: The key light's visibility is read with no screen history: the baked record where fresh, else the column map's horizon at the far band; a deterministic penumbra near; the record or the horizon seeds any ray mean that is left
 
-> **Status:** accepted (2026-11-21, Plan 0095's close), with the Outcome below; amended
+> **Status:** accepted (2026-11-21, Plan 0095's close), with the Outcome below; **two clauses
+> superseded by ADR-0084 (2026-11-25, Plan 0100's close), see "Superseded in part" at the
+> end**; amended
 > 2026-11-20 while proposed, at Plan 0095's window W1: the far's instant estimate and the
 > near's deterministic penumbra added, the bake kept as the far's refinement, see "Context,
 > amended"
@@ -392,3 +394,18 @@ Plan 0095 built the decision as amended; what it read against the body above (th
 - **The owner at W2:** the default against the before, "before - grain"; overall "we are much
   better than before". The step lines along slopes (both arms) went to the backlog and the
   exposure in deep shade to Plan 0097.
+
+## Superseded in part (2026-11-25, ADR-0084, Plan 0100's close)
+
+The body above is not edited. Two of its clauses no longer hold, by
+[ADR-0084](0084-the-key-lights-visibility-on-a-world-face-is-fixed-per-face-the-columns-horizon-where-lit-a-cover-source-where-shadowed.md):
+
+- **"The bake and the sun's motion":** "a ray ending at the cap, an absent chunk or the
+  window's side counting as lit". A baked key ray that ends there is lit only if its end
+  point is at or above its column's top (Plan 0100 Phase 2).
+- **"The near: the closest-approach penumbra", as far as `key far column` goes:** no key
+  ray is cast at a cube face for the penumbra there; `penumbra approach` scores
+  `key_cover ray`'s ray where one is cast and changes nothing else (Plan 0100 Phase 9).
+
+Everything else stands: the horizon and its march, the record's bake and re-key, the band,
+the fade at a landing, and the near penumbra under the other `key far` modes.

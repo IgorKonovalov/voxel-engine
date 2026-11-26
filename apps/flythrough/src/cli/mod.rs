@@ -1058,6 +1058,9 @@ impl Args {
             sky_bounce: self.outdoor.sky_bounce,
             key_cap: self.outdoor.key_cap,
             sky_down_skip: self.outdoor.sky_down_skip,
+            key_at: self.outdoor.key_at,
+            key_horizon: self.outdoor.key_horizon,
+            key_cover: self.outdoor.key_cover,
             ..crate::default_lighting()
         })
     }

@@ -95,7 +95,7 @@
 // half under LIGHTING_KEY_STEP) the visibility is that estimate with no screen history, a
 // switch of its source riding one fade (`key_far_fade`, the pair's g tagged by the source);
 // elsewhere the mean, seeded from the estimate at a reset, blended toward it by `w`
-// (LIGHTING_KEY_STEP: none below one half). Under LIGHTING_PENUMBRA_APPROACH a cast sample
+// (LIGHTING_KEY_STEP: none below one half). Under `key_approach_at` a cast sample
 // is the closest-approach visibility of the disc's centre ray, a function of the hit alone,
 // taken as it is with no mean and nothing for a reset to restart; the pair's g holds it where
 // `w` is 0, and inside the band the far estimate with its landing's fade.
@@ -761,6 +761,8 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // The store's key light visibility at a cube face (ADR-0079) in x, with a 1 in y where its
     // cell holds a fresh one under LIGHTING_KEY_BAKED; 0 in y for none.
     var key_store = vec2<f32>(0.0);
+    // The face's own cell's key visibility under LIGHTING2_KEY_COVER_RECORD (`store_key_cell`).
+    var key_own = vec2<f32>(0.0);
     let fresh = sample.w > 0.5 && view_mode() != VIEW_STEPS;
     sample.w = 0.0;
     var stored = false;
@@ -822,6 +824,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         if (!on_entity && (params.lighting & (LIGHTING_KEY_BAKED | LIGHTING_KEY_COLUMN)) == LIGHTING_KEY_BAKED) {
             key_store = store_key_visibility(head, store_voxel(rec.p, nf), face, rec.n);
+        }
+        if (!on_entity && (params.lighting2 & LIGHTING2_KEY_COVER_RECORD) != 0u) {
+            key_own = store_key_cell(head, store_voxel(rec.p, nf) >> vec3<u32>(head.shift), face);
         }
         // The sky's term (ADR-0070) where no ray was cast: a face's baked visibility, else the
         // missing-light chain's, coloured by the sky now. An entity keeps its sky rays.
@@ -1115,12 +1120,14 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (far_on && (!key_cast || w > 0.0 || reset)) {
             k_far = key_store.x;
             if (key_store.y == 0.0) {
-                k_far = column_key_visibility(rec.p, lift_n);
-                far_src = KEY_SRC_HORIZON;
+                let near = select(-1.0, vis.y, vis.z < 2.0 * KEY_FROM_STORE && vis.z > 1.25 * KEY_FROM_STORE);
+                let f = key_cover_far(rec.p, lift_n, rec.axis, near, key_own);
+                k_far = f.x;
+                far_src = u32(f.y);
             }
         }
         var k = 0.0;
-        if (key_cast && (params.lighting & LIGHTING_PENUMBRA_APPROACH) != 0u) {
+        if (key_cast && key_approach_at(rec)) {
             // The approach penumbra (ADR-0079's near): the frame's value as it is, no mean, so
             // a reset changes nothing. The slot needs no history for it, so inside the band it
             // carries the far estimate through its landing's fade, as at a pixel with no ray.

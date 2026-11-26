@@ -32,7 +32,9 @@
 //                                        and 1 in b where the key light falls on the face, else
 //                                        0 in both; KEY_FROM_STORE in b and 0 in g where it
 //                                        falls on the face and the temporal pass's far estimate
-//                                        answers it with no ray (`key_from_store`); the key
+//                                        answers it with no ray (`key_from_store`); KEY_COVER
+//                                        in b and the near cover source's value in g where
+//                                        that also answers (`key_cover_near`); the key
 //                                        light is not in
 //                                        `direct_out`
 //
@@ -96,7 +98,8 @@ fn sky_baked(v: vec3<i32>, face: u32) -> bool {
 // LIGHTING_KEY_COLUMN), where the far normal's weight is 1 (at least one half under
 // LIGHTING_KEY_STEP). Also at every distance where a cast sample would be shown nowhere
 // (ADR-0082): the light history's setting off (`Params::history` bit 0 clear on a frame whose
-// history is valid, bit 1 set), not the approach penumbra and no sky jump. There the temporal
+// history is valid, bit 1 set), no sky jump and no approach penumbra's ray at the face
+// (`key_approach_at`: none at a cube face under LIGHTING_KEY_COLUMN). There the temporal
 // pass's key branch resets at every pixel, and a reset mean under the far estimate is its
 // seed, the far estimate itself, which the no-ray branch shows too (`key_mean`, `key_far_fade`
 // with no history taken). A frame whose history is invalid clears both bits whatever the
@@ -106,8 +109,8 @@ fn key_from_store(rec: HitRecord, view: View) -> bool {
     if ((params.lighting & LIGHTING_KEY_BAKED) == 0u || !reads_store(rec)) {
         return false;
     }
-    if ((params.history & 3u) == 2u
-        && (params.lighting & (LIGHTING_PENUMBRA_APPROACH | LIGHTING_SKY_CHANGED)) == 0u) {
+    if ((params.history & 3u) == 2u && (params.lighting & LIGHTING_SKY_CHANGED) == 0u
+        && !key_approach_at(rec)) {
         return true;
     }
     let at = select(1.0, 0.5, (params.lighting & LIGHTING_KEY_STEP) != 0u);
@@ -231,7 +234,7 @@ fn shade_px(gid: vec3<u32>) {
             if (any(key_light_at(rec.p, rec.n) > vec3<f32>(0.0))
                 && !key_from_store(rec, params.views[view_of(full_px(gid.xy))])) {
                 var d = disc_direction(sky.key_dir, sky.key_radius, rand(gid.xy, KEY_DIM), rand(gid.xy, KEY_DIM + 1u));
-                let approach = (params.lighting & LIGHTING_PENUMBRA_APPROACH) != 0u;
+                let approach = key_approach_at(rec);
                 if (approach) {
                     d = sky.key_dir;
                     approach_tan = max(tan(sky.key_radius), 1.0e-4);
@@ -277,9 +280,13 @@ fn shade_px(gid: vec3<u32>) {
                 if (any(key_light_at(rec.p, n) > vec3<f32>(0.0))
                     && (params.lighting & LIGHTING_HOOK_KEY_OFF) == 0u) {
                     vis = vec4<f32>(0.0, 0.0, KEY_FROM_STORE, 0.0);
+                    let c = key_cover_near(rec, ns, view_here);
+                    if (c >= 0.0) {
+                        vis = vec4<f32>(0.0, c, KEY_COVER, 0.0);
+                    }
                 }
             } else {
-                let kv = key_visibility(rec.p, n, ns, gid.xy);
+                let kv = key_visibility(rec.p, n, ns, gid.xy, key_approach_at(rec));
                 if (kv >= 0.0) {
                     vis = vec4<f32>(0.0, kv, 1.0, 0.0);
                 }

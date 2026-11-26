@@ -10,7 +10,9 @@
 //! term's cosine or its hit, by over 5 %), else the sky's shown visibility (by over 0.02), else
 //! none (the upscaler's own). The protocol: 600 settle frames with the queue stepping, the
 //! exposure pinned at its settled value, the queue stopped, 32 still frames (the jitter's
-//! phases), then a fly of 120 frames at 0.5 m/s. Nothing is asserted.
+//! phases), then a fly of 120 frames at 0.5 m/s. Nothing is asserted. Plan 0100 Phase 1 adds
+//! window W3's noon pose (`terraces_w3`: the eye at x 496.0 y -648.7 z 456.7, looking down the
+//! slope) beside the spawn's.
 
 use super::*;
 
@@ -41,6 +43,55 @@ fn slope_rig() -> Option<(Rig, Camera)> {
     Some((rig, cam))
 }
 
+/// Window W3's noon eye in voxels (Plan 0100 Phase 1, the HUD's position of `2-noon-settled`).
+const W3_EYE: [f32; 3] = [496.0, -648.7, 456.7];
+
+/// How far ahead of W3's eye, in voxels across the ground, the camera looks down the slope.
+const W3_AHEAD: f32 = 40.0;
+
+/// The span in voxels either side of a column over which the slope's fall is read.
+const W3_SPAN: f32 = 16.0;
+
+/// The noon slope's source as [`slope_rig`]'s, the chunks within 4 of W3's eye's (2 down, 3 up),
+/// the camera at W3's eye looking at the ground [`W3_AHEAD`] voxels away down the slope's fall
+/// (the surface's height read [`W3_SPAN`] voxels either side of the eye's column).
+pub(super) fn w3_rig() -> Option<(Rig, Camera)> {
+    use flythrough::outdoor::OutdoorSource;
+    use flythrough::trees::{ForestSource, LEAF_FILL, TreeDensity};
+    use svet_world::{ChunkExtent, VoxelCoord, World};
+    let source = ForestSource::new(OutdoorSource::new(1), TreeDensity::Sparse, LEAF_FILL);
+    let eye = VoxelCoord(W3_EYE.map(|v| v.floor() as i32));
+    let c = eye.chunk().0;
+    let extent = ChunkExtent::new(
+        [c[0] - 4, c[1] - 4, c[2] - 2],
+        [c[0] + 5, c[1] + 5, c[2] + 3],
+    );
+    let h = |x: f32, y: f32| source.base().height(x.round() as i32, y.round() as i32) as f32;
+    let [x, y, _] = W3_EYE;
+    let fall = [
+        h(x - W3_SPAN, y) - h(x + W3_SPAN, y),
+        h(x, y - W3_SPAN) - h(x, y + W3_SPAN),
+    ];
+    let len = (fall[0] * fall[0] + fall[1] * fall[1]).sqrt();
+    let d = if len > 0.0 {
+        fall.map(|v| v / len)
+    } else {
+        [1.0, 0.0]
+    };
+    let target = [x + d[0] * W3_AHEAD, y + d[1] * W3_AHEAD];
+    let ground = h(target[0], target[1]) + 1.0;
+    println!(
+        "w3: ground under the eye z {}, the target ({:.1}, {:.1}, {ground})",
+        h(x, y) + 1.0,
+        target[0],
+        target[1]
+    );
+    let world = World::generate(extent, &source, &flythrough::outdoor_materials());
+    let rig = support::terms::mirrored(world, eye)?;
+    let cam = flythrough::camera_looking_at(W3_EYE, [target[0], target[1], ground]);
+    Some((rig, cam))
+}
+
 /// One frame's reads per lighting pixel: the key visibility (the pair's g decoded), whether the
 /// key light falls on the face, the direct part's luminance, the sky's shown visibility and the
 /// far normal's weight; the display's luma and the grid's width.
@@ -50,6 +101,7 @@ struct Read {
     direct: Vec<f32>,
     sky: Vec<f32>,
     w: Vec<f32>,
+    hit: Vec<[f32; 4]>,
     luma: Vec<u8>,
     gw: usize,
     light_ms: f64,
@@ -101,6 +153,7 @@ fn read_frame(rig: &Rig, s: &mut Stepper, cam: &Camera, arm: &Arm, internal: [u3
             .collect(),
         sky: pair.iter().map(|p| p[0]).collect(),
         w: shot.hits.iter().map(weight).collect(),
+        hit: shot.hits.clone(),
         luma: lumas(&shot.display),
         gw,
         light_ms: ms("light"),
@@ -148,12 +201,20 @@ fn edge_class(r: &Read) -> Vec<u8> {
 }
 
 /// A pair's figures per weight bin: the class's display pixels, those over 4 levels, and of
-/// those the term that moved (key, direct, sky, none).
+/// those the term that moved (key, direct, sky, none); and the display pixels over 4 levels
+/// anywhere on the display, the figure arms on different lighting grids compare on.
 #[derive(Clone, Copy, Default)]
 struct PairRow {
     n: [u64; 3],
     over: [u64; 3],
     by: [[u64; 4]; 3],
+    key_plane: [u64; 3],
+    display: u64,
+}
+
+/// Whether two hits lie on one voxel face plane: a coordinate both hold at the same integer.
+fn one_plane(a: &[f32; 4], b: &[f32; 4]) -> bool {
+    (0..3).any(|k| (a[k] - a[k].round()).abs() < 1e-3 && (a[k] - b[k]).abs() < 1e-3)
 }
 
 fn pair_row(a: &Read, b: &Read) -> PairRow {
@@ -162,6 +223,9 @@ fn pair_row(a: &Read, b: &Read) -> PairRow {
     let gl = a.key.len();
     let mut r = PairRow::default();
     for i in 0..dw * dh {
+        if a.luma[i].abs_diff(b.luma[i]) > 4 {
+            r.display += 1;
+        }
         let g = grid_of(i, dw, dh, a.gw, gl);
         let c = cls[g];
         if c == 255 {
@@ -185,6 +249,9 @@ fn pair_row(a: &Read, b: &Read) -> PairRow {
             3
         };
         r.by[c][k] += 1;
+        if k == 0 && one_plane(&a.hit[g], &b.hit[g]) {
+            r.key_plane[c] += 1;
+        }
     }
     r
 }
@@ -198,9 +265,11 @@ fn segment_line(name: &str, rows: &[PairRow]) -> String {
         let n: u64 = rows.iter().map(|r| r.n[c]).sum();
         let over: u64 = rows.iter().map(|r| r.over[c]).sum();
         let by: [u64; 4] = std::array::from_fn(|k| rows.iter().map(|r| r.by[c][k]).sum());
+        let plane: u64 = rows.iter().map(|r| r.key_plane[c]).sum();
         let m = over.max(1) as f64;
         out.push_str(&format!(
-            " {}: {:.2} % of {} px a pair (key {:.0} %, direct {:.0} %, sky {:.0} %, none {:.0} %);",
+            " {}: {:.2} % of {} px a pair (key {:.0} %, direct {:.0} %, sky {:.0} %, none {:.0} %; \
+             key on one plane {:.0} %);",
             bin,
             100.0 * over as f64 / n.max(1) as f64,
             n / rows.len().max(1) as u64,
@@ -208,8 +277,15 @@ fn segment_line(name: &str, rows: &[PairRow]) -> String {
             100.0 * by[1] as f64 / m,
             100.0 * by[2] as f64 / m,
             100.0 * by[3] as f64 / m,
+            100.0 * plane as f64 / by[0].max(1) as f64,
         ));
     }
+    let moved: u64 = rows.iter().map(|r| r.display).sum();
+    out.push_str(&format!(
+        " display: {:.1} px a pair over 4 ({:.4} %);",
+        moved as f64 / rows.len().max(1) as f64,
+        100.0 * moved as f64 / (rows.len().max(1) as f64 * f64::from(OUT[0] * OUT[1])),
+    ));
     out
 }
 
@@ -233,11 +309,27 @@ mod reading {
     #[test]
     #[ignore = "reading"]
     fn terraces() {
-        let arm = Arm::parse();
         let Some((mut rig, cam0)) = slope_rig() else {
             return;
         };
-        let rig = &mut rig;
+        terraces_on(&mut rig, cam0, "");
+    }
+
+    /// [`terraces`] at window W3's pose ([`w3_rig`]), written to
+    /// `live/wobble/terraces/w3-<arm>.txt`.
+    #[test]
+    #[ignore = "reading"]
+    fn terraces_w3() {
+        let Some((mut rig, cam0)) = w3_rig() else {
+            return;
+        };
+        terraces_on(&mut rig, cam0, "w3-");
+    }
+
+    /// The protocol on `rig` from `cam0`, its files named `<prefix><arm>`.
+    fn terraces_on(rig: &mut Rig, cam0: Camera, prefix: &str) {
+        let arm = Arm::parse();
+        let name = format!("{prefix}{}", arm.name);
         let internal = if arm.upscaler == "off" { OUT } else { INTERNAL };
         let mut f = frame_for(rig, &arm);
         f.set_sky(Some(
@@ -270,13 +362,15 @@ mod reading {
             s.run(rig, &cam0);
         }
         let mut out = format!(
-            "terraces {} on {}: eye {:?}, exposure pinned {e:.3e}, the queue stopped\n",
-            arm.name,
+            "terraces {name} on {}: eye {:?} yaw {:.1} pitch {:.1} deg, exposure pinned {e:.3e}, \
+             the queue stopped\n",
             rig.adapter,
-            cam0.position.to_array()
+            cam0.position.to_array(),
+            cam0.yaw.to_degrees(),
+            cam0.pitch.to_degrees()
         );
         support::write_png(
-            &dir_of().join(format!("{}-still.png", arm.name)),
+            &dir_of().join(format!("{name}-still.png")),
             &reads_png(rig, &s),
             OUT[0],
             OUT[1],
@@ -309,6 +403,6 @@ mod reading {
         out.push('\n');
         print!("{out}");
         let dir = dir_of();
-        std::fs::write(dir.join(format!("{}.txt", arm.name)), out).expect("the table");
+        std::fs::write(dir.join(format!("{name}.txt")), out).expect("the table");
     }
 }

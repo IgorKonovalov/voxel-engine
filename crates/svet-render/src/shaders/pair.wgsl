@@ -29,10 +29,6 @@ const SEED_AGE: f32 = 8.0;
 // samples outweigh it sooner.
 const SEED_COLUMN: f32 = 2.0;
 
-// How far a seed's column test lifts the hit along the face normal, in voxels: past the
-// column map's cell, so the point is not read in the wall's own cell (whose top is the wall's).
-const SEED_LIFT: f32 = f32(COLUMN_CELL) + 0.5;
-
 // A reset pair's seed with no record: the column map's answer (ADR-0070's sky rule) at hit `p`
 // lifted SEED_LIFT voxels along `n` into the air the face looks into, 1 above its column's
 // top of solid, else 0.
@@ -40,117 +36,24 @@ fn column_estimate(p: vec3<f32>, n: vec3<f32>) -> f32 {
     return select(0.0, 1.0, above_column(p + n * SEED_LIFT));
 }
 
-// The key light's horizon over the column map (ADR-0079, `column_key_visibility`): the coarse
-// march's distances, COLUMN_KEY_STEPS of them in a geometric series from COLUMN_KEY_D0 to
-// COLUMN_KEY_D1 voxels, and the most cells the refinement walks inside one of its intervals.
-const COLUMN_KEY_STEPS: u32 = 12u;
-const COLUMN_KEY_D0: f32 = 4.0;
-const COLUMN_KEY_D1: f32 = 512.0;
-const COLUMN_KEY_REFINE: u32 = 8u;
-
-// The column map's texel for a column with no opaque voxel (`gpu_world::COLUMN_NONE`).
-const COLUMN_NONE_I: i32 = -2147483647 - 1;
-
-// The column map's height (the top voxel's z plus 1) over map cell `c` (global cell
-// coordinates, COLUMN_CELL voxels an edge): -1e9 where the column holds no opaque voxel, and
-// 3e38 outside the window's footprint, which the march reads as its end.
-fn column_cell_height(c: vec2<i32>) -> f32 {
-    let x = c * COLUMN_CELL;
-    let lo = params.window_min.xy * 64;
-    let hi = (params.window_min.xy + params.window_size.xy) * 64;
-    if (any(x < lo) || any(x >= hi)) {
-        return 3.0e38;
+// The far estimate where no record answers (Plan 0100 Phase 6, ADR-0084, `Lighting::key_cover`)
+// in x, its source (KEY_SRC_HORIZON or _RECORD) in y: the column horizon at `key_at`'s point
+// (`key_horizon_at` of hit `p`, face normal `nf`, `axis`), and with the cover arms
+// the larger of it and a source. `near` is the light pass's near cover answer (`key_cover_near`,
+// already the larger of the horizon and its ray), -1 where it read none; where it read one it is
+// the value. Under LIGHTING2_KEY_COVER_RECORD the answer is the larger of the horizon and `own`,
+// the face's own cell's fresh baked key visibility (`own.y` 1), tagged as the record so its
+// landing rides the slot's fade; else the horizon.
+fn key_cover_far(p: vec3<f32>, nf: vec3<f32>, axis: i32, near: f32, own: vec2<f32>) -> vec2<f32> {
+    if (near >= 0.0) {
+        return vec2<f32>(near, f32(KEY_SRC_HORIZON));
     }
-    let k = x >> vec2<u32>(6u);
-    let w = params.window_size.xy;
-    let tile = ((k % w) + w) % w;
-    let top = textureLoad(column_map, tile * COLUMN_CELLS + (x - k * 64) / COLUMN_CELL, 0).x;
-    return select(f32(top) + 1.0, -1.0e9, top == COLUMN_NONE_I);
-}
-
-// The ray parameter at which a horizontal ray from `q` along unit `u` enters map cell `c`
-// (the larger of the axes' near-plane crossings; an axis `u` does not move along is entered
-// at -3e38).
-fn column_cell_entry(q: vec2<f32>, u: vec2<f32>, c: vec2<i32>) -> f32 {
-    let lo = vec2<f32>(c * COLUMN_CELL);
-    let near = select(lo + f32(COLUMN_CELL), lo, u > vec2<f32>(0.0));
-    let t = select(vec2<f32>(-3.0e38), (near - q) / u, abs(u) > vec2<f32>(1.0e-6));
-    return max(t.x, t.y);
-}
-
-// The key light's visibility at hit `p` with face normal `n` from the column map's tops
-// (ADR-0079's horizon, no state): the hit lifted SEED_LIFT voxels along `n` to `q`; the
-// horizon's tangent toward the sun the largest `(height - q.z) / t` over the map cells along the
-// sun's horizontal direction, `t` the distance at which the ray from `q` enters the cell (so a
-// box heightfield's edge stands where its cell begins): the cell at each of the coarse march's
-// distances, then every cell (at most COLUMN_KEY_REFINE) of the one interval between two of
-// those distances whose far cell's height over its near end's distance is largest. A point
-// under its own cell's top reads 0 (inside the heightfield). A cell outside the
-// window's footprint ends the march (the rest is lit); a column with no opaque voxel casts
-// nothing. The visibility is `clamp((tan e - tan h) / (2 tan r) + 1/2, 0, 1)`, `e` the sun's
-// elevation, `h` the horizon's, `r` the disc's radius: 1 above every top, 0 under one, the
-// disc's width of ramp between. 0 where the sun is at or under the horizon.
-fn column_key_visibility(p: vec3<f32>, n: vec3<f32>) -> f32 {
-    let l = sky.key_dir;
-    if (l.z <= 0.0) {
-        return 0.0;
+    let h = key_horizon_at(p, nf, axis);
+    var far = vec2<f32>(h, f32(KEY_SRC_HORIZON));
+    if ((params.lighting2 & LIGHTING2_KEY_COVER_RECORD) != 0u && own.y > 0.0) {
+        far = vec2<f32>(max(h, own.x), f32(KEY_SRC_RECORD));
     }
-    let q = p + n * SEED_LIFT;
-    let flat = length(l.xy);
-    let tan_e = l.z / max(flat, 1.0e-6);
-    let u = select(vec2<f32>(1.0, 0.0), l.xy / flat, flat > 1.0e-6);
-    // Under its own column's top the lifted point is inside the heightfield: shadowed at any
-    // elevation, as the sky's column test reads it (`column_estimate`).
-    let own = column_cell_height(vec2<i32>(floor(q.xy / f32(COLUMN_CELL))));
-    if (own < 1.0e38 && own > q.z) {
-        return 0.0;
-    }
-    var tan_h = -3.0e38;
-    let ratio = pow(COLUMN_KEY_D1 / COLUMN_KEY_D0, 1.0 / f32(COLUMN_KEY_STEPS - 1u));
-    var d = COLUMN_KEY_D0;
-    var d_prev = f32(COLUMN_CELL);
-    var best = -3.0e38;
-    var seg = vec2<f32>(0.0, -1.0);
-    for (var k = 0u; k < COLUMN_KEY_STEPS; k++) {
-        let c = vec2<i32>(floor((q.xy + u * d) / f32(COLUMN_CELL)));
-        let h = column_cell_height(c);
-        if (h > 1.0e38) {
-            break;
-        }
-        let t = max(column_cell_entry(q.xy, u, c), 0.5);
-        tan_h = max(tan_h, (h - q.z) / t);
-        let score = (h - q.z) / d_prev;
-        if (score > best) {
-            best = score;
-            seg = vec2<f32>(d_prev, d);
-        }
-        d_prev = d;
-        d *= ratio;
-    }
-    // The refinement: the interval's cells in order, from the one holding its start.
-    if (seg.y > seg.x) {
-        var c = vec2<i32>(floor((q.xy + u * seg.x) / f32(COLUMN_CELL)));
-        let s = vec2<i32>(sign(u));
-        for (var i = 0u; i < COLUMN_KEY_REFINE; i++) {
-            let t = column_cell_entry(q.xy, u, c);
-            if (t >= seg.y) {
-                break;
-            }
-            let h = column_cell_height(c);
-            if (h > 1.0e38) {
-                break;
-            }
-            if (t > 0.5) {
-                tan_h = max(tan_h, (h - q.z) / t);
-            }
-            // The next cell: across the face the ray leaves through first.
-            let far = vec2<f32>(c * COLUMN_CELL) + select(vec2<f32>(0.0), vec2<f32>(f32(COLUMN_CELL)), u > vec2<f32>(0.0));
-            let tx = select(vec2<f32>(3.0e38), (far - q.xy) / u, abs(u) > vec2<f32>(1.0e-6));
-            c += select(vec2<i32>(0, s.y), vec2<i32>(s.x, 0), tx.x <= tx.y);
-        }
-    }
-    let r = max(tan(sky.key_radius), 1.0e-4);
-    return clamp((tan_e - tan_h) / (2.0 * r) + 0.5, 0.0, 1.0);
+    return far;
 }
 
 // The key slot (the pair's g) at a pixel where the light pass cast no key ray holds the far

@@ -13,6 +13,9 @@ use crate::trees::{LEAF_FILL, TreeDensity};
 pub struct OutdoorArgs {
     /// `--spawn outside|inside`: where `--source outdoor` stands the camera.
     pub(crate) spawn: Spawn,
+    /// `--eye X,Y,Z,YAW,PITCH`: the camera's start in voxels and its view in degrees, in place
+    /// of the spawn's camera; the streamer centres on its voxel.
+    pub(crate) eye: Option<[f32; 5]>,
     /// `--time` and `--day-length`: the clock the run starts with, its cycle paused.
     pub(crate) clock: Clock,
     /// `--sky on|off`: a sky is set; unset, on for `--source outdoor` alone.
@@ -94,6 +97,15 @@ pub struct OutdoorArgs {
     /// (`AutoExposure::highlight_percentile`, 0 for off); unset, the preset's
     /// (`svet_render::DEFAULT_EXPOSURE_HIGHLIGHT`).
     pub(crate) exposure_highlight: Option<f32>,
+    /// `--key-at hit|face|face-smooth`: where on a cube face the key light's column horizon is
+    /// read (`Lighting::key_at`).
+    pub(crate) key_at: svet_render::KeyAt,
+    /// `--key-horizon march|walk`: how the key light's column horizon reads the map
+    /// (`Lighting::key_horizon`).
+    pub(crate) key_horizon: svet_render::KeyHorizon,
+    /// `--key-cover off|ray|record`: the source that adds the key light back where
+    /// the horizon reads shadow (`Lighting::key_cover`).
+    pub(crate) key_cover: svet_render::KeyCover,
 }
 
 impl OutdoorArgs {
@@ -153,6 +165,33 @@ pub(super) fn source_flags() -> Vec<Flag<Parsing>> {
     )]
 }
 
+/// `--eye`: the outdoor camera's start point and view.
+fn eye_flag() -> Flag<Parsing> {
+    Flag::value(
+        &["--eye"],
+        "X,Y,Z,YAW,PITCH",
+        "with --source outdoor, start the camera at this point in voxels (as the HUD \
+             reads it), facing YAW degrees (counter-clockwise from +x, 90 north) and \
+             PITCH degrees up, in place of --spawn's camera; the streamer centres on it",
+        |p: &mut Parsing, v| {
+            let n: Vec<f32> = v
+                .text
+                .split(',')
+                .map(|s| s.trim().parse::<f32>())
+                .collect::<Result<_, _>>()
+                .map_err(|_| v.takes("five numbers X,Y,Z,YAW,PITCH"))?;
+            let eye: [f32; 5] = n
+                .try_into()
+                .map_err(|_| v.takes("five numbers X,Y,Z,YAW,PITCH"))?;
+            if eye.iter().any(|f| !f.is_finite()) || eye[4].abs() > 89.0 {
+                return Err(v.takes("finite numbers, the pitch within 89 degrees"));
+            }
+            p.args.outdoor.eye = Some(eye);
+            Ok(())
+        },
+    )
+}
+
 /// The outdoor testbed's section.
 pub(super) fn sections() -> Vec<Section<Parsing>> {
     let mut flags = vec![
@@ -168,6 +207,7 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
                 Ok(())
             },
         ),
+        eye_flag(),
         Flag::value(
             &["--trees"],
             "none|sparse|forest",
@@ -286,6 +326,7 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
         ),
     ];
     flags.extend(sky_light_flags());
+    flags.extend(key_face_flags());
     flags.extend(ray_lever_flags());
     flags.push(dig_hold_flag());
     flags.extend(ceiling_flags());
@@ -447,6 +488,50 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
             |p: &mut Parsing, v| {
                 p.args.outdoor.sky_normal =
                     v.named(svet_render::SkyNormal::from_name, "face or smoothed")?;
+                Ok(())
+            },
+        ),
+    ]
+}
+
+/// The section's flags of the key light on a cube face (Plan 0100): where its horizon is read,
+/// how it reads the map and the source that adds it back under cover.
+fn key_face_flags() -> Vec<Flag<Parsing>> {
+    vec![
+        Flag::value(
+            &["--key-at"],
+            "hit|face|face-smooth",
+            "where on a cube face the key light's column horizon is read: at the hit, at the \
+                 centre of the hit's voxel face (one value a face), or blended from the four \
+                 face centres nearest the hit (a ramp a voxel wide) [hit]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.key_at =
+                    v.named(svet_render::KeyAt::from_name, "hit, face or face-smooth")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--key-horizon"],
+            "march|walk",
+            "how the key light's column horizon reads the map: the march (12 distances to 512 \
+                 voxels and one interval's cells) or a walk over every cell to the window's \
+                 side, passing 32 x 32 and 8 x 8 blocks whose tops cannot shade [march]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.key_horizon =
+                    v.named(svet_render::KeyHorizon::from_name, "march or walk")?;
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--key-cover"],
+            "off|ray|record",
+            "the source that adds the key light back on a cube face where its horizon reads \
+                 shadow, the larger of the two shown: one ray from the face's centre toward \
+                 the sun's disc centre near, or the face's own baked key record at every \
+                 distance [off]",
+            |p: &mut Parsing, v| {
+                p.args.outdoor.key_cover =
+                    v.named(svet_render::KeyCover::from_name, "off, ray or record")?;
                 Ok(())
             },
         ),

@@ -527,6 +527,22 @@ fn an_absent_chunk_below_the_column_top_is_rock_to_the_sky_ray() {
     assert!(rule.iter().all(|&v| v < bar), "{rule:?} against {bar}");
 }
 
+/// The column map texture's texels for a window `tiles` chunks wide in x and y: the map's
+/// `COLUMN_CELLS` per tile on each axis, then the rows under it that hold the coarse levels, as
+/// many as the last coarse texel `column_coarse_texel` places needs (the tiles' own texels
+/// come after every block's), at the map's width.
+fn column_map_texels(tiles: [i32; 2]) -> usize {
+    let cells = svet_render::COLUMN_CELLS;
+    let per = svet_render::COLUMN_BLOCKS * svet_render::COLUMN_BLOCKS;
+    let slots = tiles[0] * tiles[1];
+    let last = (0..slots)
+        .flat_map(|slot| (0..=per).map(move |j| (slot, j)))
+        .map(|(slot, j)| svet_render::column_coarse_texel(tiles, slot, j)[1])
+        .max()
+        .expect("a tile");
+    (tiles[0] * cells) as usize * (last as usize + 1)
+}
+
 /// Plan 0086 Phase 9 bar 1: the column map is the top of opaque voxels. A 3 x 3 x 3-chunk
 /// stepped terrain (rock below `h(x, y)`, a 4 x 4-voxel shaft of air through every z at
 /// x, y 70..74), chunk (0, 0, 0) mirrored LOD-only from its mips. Each map texel (a 2 x 2
@@ -559,9 +575,17 @@ fn the_column_map_is_the_top_of_solid() {
     let mut gpu = mirror(&device, &queue, &world, Some(extent));
     assert!(gpu.is_lod(lod), "chunk (0, 0, 0) is LOD-only");
     let side = 3 * svet_render::COLUMN_CELLS;
-    let read = |gpu: &GpuWorld| svet_render::debug::read_r32i(&device, &queue, gpu.column_map());
+    let read = |gpu: &GpuWorld| {
+        let map = svet_render::debug::read_r32i(&device, &queue, gpu.column_map());
+        assert_eq!(gpu.column_tiles(), [3, 3], "the window's tiles");
+        assert_eq!(
+            map.len(),
+            column_map_texels(gpu.column_tiles()),
+            "the map's rows, then its coarse levels'"
+        );
+        map
+    };
     let map = read(&gpu);
-    assert_eq!(map.len(), (side * side) as usize);
     let mut checked = [0u32; 3];
     for j in 0..side {
         for i in 0..side {
@@ -626,6 +650,111 @@ fn the_column_map_is_the_top_of_solid() {
     sync(&mut gpu);
     let stamped = texel(&read(&gpu));
     assert_eq!(stamped, top + 5, "the stamp raises the texel at its sync");
+}
+
+/// Plan 0100 Phase 5b: the column map's coarse levels are its maximum. Read back after each
+/// sync, every block-map texel equals the largest of its 8 x 8 map texels, every chunk-map
+/// texel the largest of its tile, and `column_top_max` the largest chunk texel: after the first
+/// sync, after a dig and a stamp, and at every sync of a following window's move across a
+/// 6 x 6 x 3-chunk terrain (a stale coarse texel is a wrong shadow under `key horizon walk`).
+#[test]
+fn the_column_coarse_levels_are_the_maps_maximum() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let h = |x: i32, y: i32| 20 + (x * 7 + y * 13).rem_euclid(37) + 40 * ((x / 64 + y / 64) % 2);
+    let f = move |p: [i32; 3]| if p[2] < h(p[0], p[1]) { ROCK } else { AIR };
+    let world = World::generate(
+        ChunkExtent::new([0, 0, 0], [6, 6, 3]),
+        &FnSource(f),
+        &table(),
+    );
+    let mut gpu = GpuWorld::with_config(&device, MirrorConfig::new(Window::Follow { side: 3 }));
+    gpu.set_focus(VoxelCoord([96, 96, 64]));
+    let sync = |gpu: &mut GpuWorld| {
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        gpu.sync(&world, &queue, &mut enc).expect("the mirror fits");
+        queue.submit([enc.finish()]);
+    };
+    let check = |gpu: &GpuWorld, when: &str| -> i32 {
+        let map = svet_render::debug::read_r32i(&device, &queue, gpu.column_map());
+        let tiles = gpu.column_tiles();
+        assert_eq!(
+            map.len(),
+            column_map_texels(tiles),
+            "{when}: the texture's texels"
+        );
+        let (b, e, cells) = (
+            svet_render::COLUMN_BLOCKS,
+            svet_render::COLUMN_BLOCK,
+            svet_render::COLUMN_CELLS,
+        );
+        let w = tiles[0] * cells;
+        let at = |t: [u32; 2]| map[(t[1] as i32 * w + t[0] as i32) as usize];
+        let mut top = svet_render::COLUMN_NONE;
+        for ty in 0..tiles[1] {
+            for tx in 0..tiles[0] {
+                let slot = tx + tiles[0] * ty;
+                let coarse = |j| at(svet_render::column_coarse_texel(tiles, slot, j));
+                let mut tile_max = svet_render::COLUMN_NONE;
+                for j in 0..b * b {
+                    let (bx, by) = (tx * b + j % b, ty * b + j / b);
+                    let want = (0..e * e)
+                        .map(|i| map[((by * e + i / e) * w + bx * e + i % e) as usize])
+                        .max()
+                        .expect("cells");
+                    assert_eq!(coarse(j), want, "{when}: tile {tx} {ty} block {j}");
+                    tile_max = tile_max.max(want);
+                }
+                assert_eq!(coarse(b * b), tile_max, "{when}: tile {tx} {ty}");
+                top = top.max(tile_max);
+            }
+        }
+        assert_eq!(
+            gpu.column_top_max(),
+            top,
+            "{when}: the window's highest top"
+        );
+        top
+    };
+    sync(&mut gpu);
+    let first = check(&gpu, "first sync");
+    assert!(first > 0, "the terrain tops the window: {first}");
+    let centre = |v: [i32; 3]| centre_of_voxel(v);
+    let (x, y) = (100, 100);
+    let top = h(x, y) - 1;
+    world
+        .apply(&EditOp::box_(
+            centre([x - 8, y - 8, top - 6]),
+            centre([x + 8, y + 8, top + 1]),
+            Mode::Carve,
+        ))
+        .expect("the dig");
+    sync(&mut gpu);
+    check(&gpu, "the dig");
+    world
+        .apply(&EditOp::box_(
+            centre([x, y, 150]),
+            centre([x + 1, y + 1, 151]),
+            Mode::Fill(ROCK),
+        ))
+        .expect("the stamp");
+    sync(&mut gpu);
+    assert_eq!(
+        check(&gpu, "the stamp"),
+        150,
+        "the stamp (voxel z 150) tops the window"
+    );
+    gpu.set_focus(VoxelCoord([300, 280, 64]));
+    for i in 0..4 {
+        sync(&mut gpu);
+        check(&gpu, &format!("the move, sync {i}"));
+    }
+    println!(
+        "coarse levels: {} bytes beside the map's {}",
+        gpu.column_coarse_bytes(),
+        gpu.column_map_bytes()
+    );
 }
 
 /// Bar 6's flags: turning the sun by 10 degrees in one frame raises the sky-change bit on that
