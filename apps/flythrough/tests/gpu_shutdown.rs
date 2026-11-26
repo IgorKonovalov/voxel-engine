@@ -212,6 +212,10 @@ fn headless_run(extra: &[&str]) -> Option<(std::process::ExitStatus, String)> {
         }
         std::thread::sleep(Duration::from_millis(20));
     };
+    println!(
+        "the headless fly-through ran {:.1} s of its {RUN_BOUND:?} guard",
+        t.elapsed().as_secs_f64()
+    );
     let err = reader.join().expect("stderr is read");
     let _ = out_reader.join();
     if !status.success() && err.contains("no adapter") {
