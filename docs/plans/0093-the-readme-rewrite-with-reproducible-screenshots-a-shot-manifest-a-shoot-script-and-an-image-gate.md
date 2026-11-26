@@ -707,6 +707,176 @@ The owner answered A11's questions (2026-11-26): "all recommended except 3 - in 
 Phase 6's Done when gains: the README holds the two `rust` fences in `Use it as a library`,
 in that order. The Implementation log gains a row for Phase 6b.
 
+## Amended 2026-11-26 (architect, the image check)
+
+Phase 2 stopped on "`--check` right after the shoot exits 0". Three rulings: `--check`
+compares cell means of the decoded files, not pixels; a shot is taken of a settled world, by a
+headless start the fly-through gains here; the script holds the GPU lock per batch of renders,
+not per entry. Phase 2's remainder is Phases 2b to 2d below; Phase 3 changes in two places.
+
+### B1. What Phase 2 read (RTX 3080 Laptop, [the log](logs/0093.md), Phase 2)
+
+- The shoot works and re-encoding its frames gives the same bytes. `--check` after it: `hero`
+  0.117263 against 0.007, the two clips 0 against 0.
+- The tolerance was read from PNG pairs; `--check` compares two lossy files. One metric, the
+  same pairs: shoot and check 0.000815 as PNG, 0.117263 as WebP (0.003365 at level 8, 0.000396
+  at 16); `hero-a` and `hero-b` 0.031967 as PNG, 0.244797 as WebP. The encoder turns a frame
+  that moved in 0.08 % of its pixels into one that moved in 11 %.
+- **No hero run shot a loaded world.** `hero-a`, the run the log calls the outlier, is the one
+  complete run: its pipelines built for 40.9 s, the workers streamed meanwhile, and frame 0
+  saw `full residency: 17077 full, 40700 LOD-only chunks` and 0 provisional chunks. The warm
+  runs drew frame 95 with 12172, 24937 and 26720 LOD chunks and 1171 to 1947 chunks baked
+  provisional. They agree with each other (0.0007) on a world still loading, and the committed
+  hero would show a far field cut short by how fast the machine was that minute.
+- A later frame does not converge: two 240-frame runs differ by 0.000655 at frame 95, 0.000928
+  at 191 and 0.001160 at 239.
+- Three renders of 10 to 18 s in the lock took 2327 s; the check 1151 s. The rest is the wait
+  for the lock, once per entry.
+
+### B2. Ruling 1: `--check` compares cell means, and the tolerance is read in that quantity
+
+`--check` renders and encodes as today, decodes the new and the committed file, cuts every
+frame into cells of C x C pixels (the right and bottom cells smaller), takes each cell's mean
+per channel, and reads **the share of cells whose largest channel mean differs by more than L
+levels**; it prints the share and the largest cell difference, and exits 1 when the share is
+over the entry's `tolerance`. C and L are two constants of the script, picked by Phase 2c's
+reading. Encoder noise and a leaf that moved one pixel under the jitter average out inside a
+cell (expected, not read: the reading is 2c); a changed scene, a missing pass or another hour
+moves whole cells. Nothing new is committed: the reference is the WebP the README shows.
+The 0.007 is void: it was a reading of PNG pixels, and no tolerance stands on a reading of
+another quantity. Reading a new one is not loosening the old one.
+
+Rejected: **a committed PNG frame as the reference** (0.4 to 0.8 MB a still at 720p, more at
+1080p, twice the README's whole image budget for files no reader sees); **the pixel share at
+level 8 or 16 on the decoded files** (two noise readings and no reading of a wrong picture;
+it moves with `quality` and the encoder's version; 2c reads it beside the cells, as the
+fallback its stop names); **a perceptual metric (SSIM)** (a new dependency or an ffmpeg
+filter whose score has no reading here, and one number for the whole image hides a local
+change); **a hash of the reference frame in the manifest** (only bit-identical renders pass).
+
+**CI renders nothing.** Phase 3's gate stays static (files, sizes, references, alt text).
+The rendered check is local, on the adapter each entry's `note` names: Phase 6's Done when,
+and A7's use after a plan that changes the look. A render of the hero on lavapipe is a
+different picture and far over the soak line (a guess, not read); it is not asked for.
+
+### B3. Ruling 2: a shot is taken of a settled world; the fly-through gains the start here
+
+The fly-through gains a headless-only settled start (Phase 2b). With it, frame 0 is drawn
+once the streamer holds every chunk of its radii and the light queue has no job and no chunk
+left to refine, ended by that state and by no wall time. Every `flythrough` entry carries
+it, so `still_at` counts frames of a world that no longer changes. This is the stable-image
+rule applied to the shot: the scene is not simplified and no bar moves.
+
+Rejected: **accept it inside the tolerance** (3.2 % of pixels is a bar loosened to pass, and
+the picture stays a matter of the machine's speed); **a warm-up run in the script** (the
+warm runs are the incomplete ones; warming makes them agree on a part-loaded world); **a
+later still frame** (B1: no convergence, and residency is paced by the wall, not by frames);
+**`--pre-roll-drain SECONDS` as it is** (it drains the light queue from the first drawn frame
+against a wall-clock idle time, so the frame it lands on differs per run, and it does not
+wait for residency); **waiting for Plan 0106's `--pre-roll-stepped`** (it ends the pre-roll
+by its coarse pass and not its 5 s box, which is one of the three waits; it is on another
+lane and not in this tree). A note, not a dependency: if 2c's settled pairs still differ and
+the logs show the pre-roll's box ending at different chunk counts, the entries take that
+flag when the lane merges main before Phase 6's final shoot, and 2c's table is read again.
+
+### B4. Ruling 3: one hold of the lock per batch, never past 15 minutes
+
+The script takes the lock once and renders entry after entry inside the hold. It starts no
+render once the hold is 600 s old; it then releases, takes the lock again and goes on. A
+render's timeout drops from 900 s to 300 s, so the longest hold is 900 s, under the
+20-minute line. The unit is one render: a time lapse's 24 stills and Phase 4's candidates
+split across holds. Encoding and the comparison run after the hold, on the CPU. The
+live-runner check runs before every hold, not once. Rejected: **a hold per entry** (B1: 38
+minutes for 45 s of rendering; the final set and Phase 4's sweep would wait for hours);
+**one hold for the whole shoot** (Phase 4's sweep is about a hundred renders, unbounded).
+
+### Phase 2b: The settled start in the fly-through (a fix)
+- **Owner skill:** dev
+- **What:** a flag (the name is the dev's; `--settled-start` below), refused without
+  `--headless` naming both, so no window holds its camera and no on-screen mode is owed. On:
+  before frame 0 the start-up waits for full residency (the state `autopilot.rs`'s settle leg
+  and the `full residency after` line already read) and then steps the light queue in
+  lockstep until it holds no job and no chunk to refine (`run/queue.rs`'s idle predicate),
+  with no wall-clock idle time and no box. It prints `settled: F full, L lod chunks, 0 jobs,
+  0 to refine after S steps`. A cap in steps ends it with a message and a non-zero exit: an
+  unsettled frame is never shot. Off, every path is as today.
+- **Files touched:** `apps/flythrough/src/cli/*.rs` and `cli/tests/still.rs`,
+  `apps/flythrough/src/run/` (the start-up and the queue; the tree's names win),
+  `apps/flythrough/tests/gpu_still.rs`, `docs/flythrough.md` (one row),
+  `docs/plans/logs/0093.md`.
+- **Done when:** the CLI tests assert the refusal in a window and the parse (milliseconds).
+  `gpu_still` gains a test: a small streamed outdoor run (`--residency` at its smallest,
+  `--render 320x180 --frames 2`) with the flag prints the `settled:` line whose full count
+  equals the run's closing `world N full` count and whose jobs and to-refine are 0 (expected
+  10 to 30 s on lavapipe, a guess; born `#[ignore = "soak"]` if it reads over 10 s, and then
+  the phase's proof is the reading below). On the RTX, the hero's flags with the flag, twice,
+  one hold: both print `17077 full, 40700 lod` (or the same two counts as each other), 0
+  provisional chunks at the pre-roll's line or at `settled:`, and the log records the wait's
+  steps and seconds. `test-changed.mjs --profile quick` and `--clippy` are green.
+- **Stop, reported:** the queue never empties (jobs that wait on reach or tier stay), or the
+  wait passes 120 s in the lock for the hero. Report the queue's row at the stop; no cap is
+  raised and no predicate weakened to land it.
+
+### Phase 2c: The check's quantity, read (a reading; no tracked file but the log)
+- **Owner skill:** dev
+- **What:** seven renders of the hero entry at 1920 x 1080 in one hold of the lock (a rig
+  under `live/`), all with the settled start: four as the entry stands (the noise set, six
+  pairs) and three wrong pictures: `--time 17:40`; `--trees` at another of its values; one
+  render setting that removes a pass or a light term (the dev's choice from `--settings`,
+  named). Each frame is encoded as the entry encodes. For every noise pair and for each wrong
+  frame against noise frame 1 the log tabulates: the PNG pixel share at level 2; the decoded
+  WebP pixel share at 8 and 16; and the cell share for C in 8, 16, 32 and L in 2, 4, 8, with
+  the largest cell difference. The same table for the hall pair and the hall against its HUD
+  still (Phase 1's frames, on disk) and for one clip pair.
+- **Files touched:** `docs/plans/logs/0093.md`.
+- **Done when:** the table is in the log with each run's lock time, load and `settled:` line,
+  and one line names the pick by this rule: of the (C, L) whose largest noise share is at
+  most a third of the smallest wrong share, the smallest C, then the smallest L. The hero's
+  tolerance is its largest noise share at the pick, rounded up to one significant figure
+  (0 stays 0).
+- **Stop, reported:** no (C, L) passes the rule (the table goes to the architect, with the
+  pixel shares at 8 and 16 beside it); or the settled noise pairs read over 0.001 as PNG
+  (the settled start did not settle the picture: the logs' differing lines are reported).
+
+### Phase 2d: The check, the batches and the shoot (a fix; closes Phase 2)
+- **Owner skill:** dev
+- **What:** `scripts/shoot-images.mjs`: `--check` reads B2's cell share at 2c's C and L
+  (`diffFraction` stays exported for the PNG reading; the check no longer calls it); the
+  lock per batch as B4, the encode after the hold; `validate` refuses a `flythrough` entry
+  without the settled start, as it refuses one without `--headless`. `docs/images/shots.json`:
+  the hero's flags gain it; each `tolerance` is 2c's, its `note` naming the quantity (C, L),
+  the pairs, the date and the adapter; the clips' is read from a pair under the same metric.
+  The three WebP files are committed with the phase. Phase 2's "Tolerances are set from
+  Phase 1's readings" is replaced by this.
+- **Files touched:** `scripts/shoot-images.mjs`, `scripts/shoot-images.test.mjs` (the cell
+  share on built buffers: equal buffers read 0, one cell moved by L + 1 reads 1 over the
+  cell count, the same cell moved by L reads 0, an edge cell counts once; the batch split on
+  a faked clock), `docs/images/shots.json`, `docs/images/hero.webp`, `spider-walk.webp`,
+  `walker-walk.webp`, `docs/flythrough.md` (the shooting section), `docs/plans/logs/0093.md`.
+- **Done when:** Phase 2's Done when, restated: `node scripts/shoot-images.mjs` shoots every
+  entry and writes only the files the manifest names; `--check` run right after exits 0 and
+  prints, per entry, a cell share at or under its tolerance; a second `--check`, later the
+  same day behind other lanes' load, exits 0 too; `--print hero`'s commands run by hand give
+  a file within the entry's tolerance of the shoot's; the log shows one `flock` per batch
+  and no hold over 900 s, with the shoot's wall time split into lock wait and render; the
+  script's tests pass in under a second. The resume notes leave the log.
+- **Stop, reported:** a `--check` over its tolerance. The tolerance is not edited; the two
+  frames, their logs and the cell table go to the architect.
+
+### B5. Phase 3, changed in two places
+
+1. **The gate renders and decodes nothing**; `--check` is not in `ci.yml` (B2).
+2. **An entry may carry `"draft": true`.** The three WebP files are in the tree from Phase
+   2d and no markdown references them until Phase 6, and Phase 4 writes entries whose files
+   do not exist yet; as written, the gate would fail CI from Phase 3 to Phase 6. A draft
+   entry's file need not exist nor be referenced; if it exists, its cap holds and it counts
+   in no README total. The gate prints the drafts' count. Phase 2d's three entries and Phase
+   4's new ones are born drafts (Phase 3 marks the three). The fixture gains one draft entry
+   that yields no finding; the five seeded findings stand. Phase 6's Done when gains: no
+   entry is a draft, and `git grep -n '"draft"' docs/images/shots.json` prints nothing.
+
+The Implementation log gains rows for Phases 2b, 2c and 2d; Phase 2's row stays as it reads.
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
