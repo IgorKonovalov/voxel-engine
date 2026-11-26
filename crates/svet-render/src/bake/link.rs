@@ -138,9 +138,10 @@ pub(crate) struct Stepped {
     pub(crate) times: StepTimes,
 }
 
-/// The books after a step, with when their snapshot ended and its ms (a reading).
+/// The books after a step, with when their snapshot started and ended and its ms (a reading).
 pub(crate) struct Snapshot {
     pub(crate) books: Arc<Books>,
+    pub(crate) at: std::time::Instant,
     pub(crate) end: std::time::Instant,
     pub(crate) ms: f64,
 }
@@ -199,6 +200,45 @@ impl DigWaitParts {
     #[cfg(test)]
     pub(crate) fn sum(&self) -> f64 {
         self.ms.iter().sum()
+    }
+}
+
+/// One cycle of the bake thread from the instants its clock took in order (a reading): free
+/// for a message, the message taken, the step's return, the books' snapshot's start and end,
+/// and free for the next message once both entries are in the outbox.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Cycle {
+    pub(crate) free: std::time::Instant,
+    pub(crate) took: std::time::Instant,
+    pub(crate) step_end: std::time::Instant,
+    pub(crate) at: std::time::Instant,
+    pub(crate) end: std::time::Instant,
+    pub(crate) next_free: std::time::Instant,
+}
+
+impl Cycle {
+    /// The parts in ms, in order: the wait for a message, the step, the books' snapshot, and
+    /// the hand-over (the step's results put in the outbox before the snapshot, the books
+    /// after it). They are spans between the instants, so they sum to [`Cycle::span`].
+    pub(crate) fn parts(&self) -> [f64; 4] {
+        let ms = |a: std::time::Instant, b: std::time::Instant| {
+            b.saturating_duration_since(a).as_secs_f64() * 1e3
+        };
+        [
+            ms(self.free, self.took),
+            ms(self.took, self.step_end),
+            ms(self.at, self.end),
+            ms(self.step_end, self.at) + ms(self.end, self.next_free),
+        ]
+    }
+
+    /// From one step's pick-up's `free` to the next step's, in ms.
+    #[cfg(test)]
+    pub(crate) fn span(&self) -> f64 {
+        self.next_free
+            .saturating_duration_since(self.free)
+            .as_secs_f64()
+            * 1e3
     }
 }
 
@@ -291,6 +331,7 @@ pub(crate) fn bake_step(
     let end = stopwatch();
     vec![Made::Books(Snapshot {
         books,
+        at,
         end,
         ms: end.duration_since(at).as_secs_f64() * 1e3,
     })]
@@ -350,6 +391,11 @@ pub(crate) struct ThreadLink {
     pub(crate) waited: bool,
     /// The last edit's frame's wait by its parts ([`DigWaitParts`]); `None` before any.
     pub(crate) parts: Option<DigWaitParts>,
+    /// The newest step taken, its times and its books' snapshot's start and end once taken:
+    /// its cycle ends at the next step's `free` ([`Cycle`]).
+    open_cycle: Option<(StepTimes, Option<(std::time::Instant, std::time::Instant)>)>,
+    /// The cycles the last take completed, in order (a reading).
+    pub(crate) cycles: Vec<Cycle>,
 }
 
 /// The render side's laps in [`render_frame`]: the take (the previous books dropped with it),
@@ -399,6 +445,8 @@ impl ThreadLink {
             issued_now: 0,
             waited: false,
             parts: None,
+            open_cycle: None,
+            cycles: Vec::new(),
         })
     }
 
@@ -462,10 +510,14 @@ impl ThreadLink {
     /// The steps `made` holds as a frame's take, the newest books and stats kept.
     fn absorb(&mut self, made: Vec<Made>) -> Taken {
         let mut out = Taken::default();
+        self.cycles.clear();
         for m in made {
             let m = match m {
                 Made::Step(m) => *m,
                 Made::Books(b) => {
+                    if let Some((_, books)) = self.open_cycle.as_mut() {
+                        *books = Some((b.at, b.end));
+                    }
                     self.books = b.books;
                     if self.snapshot_ms.len() < SNAPSHOT_STEPS {
                         self.snapshot_ms.push(b.ms as f32);
@@ -473,6 +525,17 @@ impl ThreadLink {
                     continue;
                 }
             };
+            if let Some((t, Some((at, end)))) = self.open_cycle.take() {
+                self.cycles.push(Cycle {
+                    free: t.picked.free,
+                    took: t.picked.took,
+                    step_end: t.step_end,
+                    at,
+                    end,
+                    next_free: m.times.picked.free,
+                });
+            }
+            self.open_cycle = Some((m.times, None));
             out.frames.push(m.frame);
             self.lists_frame = m.frame;
             out.stats = Some(match (out.stats.take(), m.stats) {

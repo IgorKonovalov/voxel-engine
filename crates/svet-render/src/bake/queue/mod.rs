@@ -30,10 +30,10 @@ pub use self::reads::QueueRead;
 pub(crate) use self::reads::Source as ReadSource;
 pub(crate) use self::shadow::{LightNote, Shadow, notes};
 pub use self::stats::{
-    BakeRoundTrip, Band, Bands, DigTrace, DigTraceJob, InViewWaiting, LANDED_BARE, LANDED_FALLBACK,
-    LANDED_REFADED, LANDED_UNFADED, LANDING_DIRECTIONS, LANDING_KEY, LANDING_KEY_FLAG,
-    LANDING_RECORDS, LANDING_TAIL, LANDING_VIS, LANDING_VIS_FLAG, ListingCensus, QueueStats,
-    RuleMissed, chunk_nearest,
+    BakeRoundTrip, Band, Bands, CycleLine, DigTrace, DigTraceJob, InViewWaiting, LANDED_BARE,
+    LANDED_FALLBACK, LANDED_REFADED, LANDED_UNFADED, LANDING_DIRECTIONS, LANDING_KEY,
+    LANDING_KEY_FLAG, LANDING_RECORDS, LANDING_TAIL, LANDING_VIS, LANDING_VIS_FLAG, ListingCensus,
+    QueueFed, QueueStats, RuleMissed, chunk_nearest,
 };
 pub use self::tiers::DEFAULT_TIERS;
 

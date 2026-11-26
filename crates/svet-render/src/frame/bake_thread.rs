@@ -112,6 +112,17 @@ impl Frame {
             .map_or(&[], |l| l.snapshot_ms.as_slice())
     }
 
+    /// The bake thread's cycles the last live-queue frame's take completed, each by its parts in
+    /// ms: the wait for a message, the step, the books' snapshot and the hand-over to the outbox,
+    /// which sum to the time from one step's pick-up to the next's (a reading; empty in
+    /// lockstep).
+    pub fn bake_thread_cycles(&self) -> Vec<[f64; 4]> {
+        self.baked
+            .thread
+            .as_ref()
+            .map_or_else(Vec::new, |l| l.cycles.iter().map(|c| c.parts()).collect())
+    }
+
     /// The last live-queue frame's apply in ms (with the bake thread on, the render thread's
     /// apply lap; in lockstep the step's apply stage) and the bytes it applied over the frame's
     /// cap (a reading).

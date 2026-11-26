@@ -486,6 +486,16 @@ lines read the dig frames by the same two states, the bake call's p50, p99 and m
 `frames: bake thread snapshot:` line ends with the books' snapshots the bake thread made
 after its steps: their count and ms p50, p99 and max (each step's, on the bake thread, outside
 its stage table).
+The teardown's `frames: queue fed:` line reads the frames while chunks in view wait for their
+tier (the steps' `drain` state, as the `queue split` line files them): `fed F`, the samples the
+frames' steps planned into submits over the caps granted, summed over those frames (a frame that
+took no step counts the newest cap), with its two factors, `submits a frame` (the submits the
+steps planned over the frames) and `drawn a submit` (the samples a submit planned over the mean
+cap); either mode. With the bake thread on, the `frames: bake thread cycle:` line reads the bake
+thread's steps whose cycles ended in those frames, p50 and mean in ms: `wait`, from the thread
+free to the message taken; `step`, the step; `snapshot`, the books' snapshot after it;
+`hand-over`, the step's results and the books put in the outbox; and `sum`, their total, the
+time from one step's pick-up to the next's, beside the frames' wall over the same frames.
 
 ### Audio
 

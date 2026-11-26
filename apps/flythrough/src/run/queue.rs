@@ -163,6 +163,11 @@ pub(crate) struct QueueRun {
     /// The edit's frames of the live queue, in either mode (the teardown's `bake dig call` and
     /// `bake thread dig wait` lines).
     pub(crate) dig_frames: Vec<DigFrame>,
+    /// While chunks in view wait for their tier: the samples the frames' steps planned over
+    /// the caps granted (the `frames: queue fed` line), and the bake thread's cycles by their
+    /// parts beside the frames' wall (the `frames: bake thread cycle` line).
+    pub(crate) fed: svet_render::QueueFed,
+    pub(crate) cycles: svet_render::CycleLine,
 }
 
 /// One edit's frame of the live queue (a reading).
@@ -654,6 +659,12 @@ impl Run {
         match stepped {
             Some(Ok(st)) => {
                 self.queue.note_step(&st);
+                if st.draining {
+                    self.queue.fed.push(&st);
+                    let c = &mut self.queue.cycles;
+                    c.parts.extend(gfx.frame.bake_thread_cycles());
+                    c.walls.extend(dt);
+                }
                 // With the bake thread on, the mailbox holds the box until the books of the
                 // edit's step are taken, a frame or more after the edit's: the edit's frame is
                 // the one that waited.

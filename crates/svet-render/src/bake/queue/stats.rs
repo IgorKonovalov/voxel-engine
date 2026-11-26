@@ -90,6 +90,9 @@ pub struct QueueStats {
     /// passes the cap by less than one entry's round.
     pub cap: u64,
     pub submitted: u64,
+    /// The submits the last step planned, 0 or 1 (summed over the steps a frame of the bake
+    /// thread took, as `submitted` is).
+    pub submits: u64,
     /// Whether the last step's cap was stretched to its ring-1 dig jobs' samples left
     /// ([`BakeQueue::ring1_stretch`](crate::bake::BakeQueue::ring1_stretch)).
     pub stretched: bool,
@@ -646,5 +649,126 @@ impl BakeRoundTrip {
             }
         }
         Self::FRAMES as u64
+    }
+}
+
+/// How well the frames fed the slice (a reading, the teardown's `queue fed:` line): over the
+/// frames pushed, the samples the steps planned into submits over the caps granted, a frame
+/// with no step counting the newest cap ([`QueueStats::idle`] keeps it). Its two factors are
+/// the submits a frame and the drawn share a submit (the samples a submit planned over the
+/// mean cap), whose product it is.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct QueueFed {
+    pub frames: u64,
+    pub caps: u64,
+    pub planned: u64,
+    pub submits: u64,
+}
+
+impl QueueFed {
+    /// Counts a frame whose stats (the steps it took, summed) are `st`.
+    pub fn push(&mut self, st: &QueueStats) {
+        self.frames += 1;
+        self.caps += st.cap;
+        self.planned += st.submitted;
+        self.submits += st.submits;
+    }
+
+    /// The samples planned over the caps granted.
+    pub fn fed(&self) -> f64 {
+        self.planned as f64 / self.caps.max(1) as f64
+    }
+
+    /// The submits planned a frame.
+    pub fn submits_a_frame(&self) -> f64 {
+        self.submits as f64 / self.frames.max(1) as f64
+    }
+
+    /// The samples a submit planned over the mean cap granted a frame.
+    pub fn drawn_a_submit(&self) -> f64 {
+        let cap = self.caps as f64 / self.frames.max(1) as f64;
+        self.planned as f64 / (self.submits.max(1) as f64 * cap.max(1.0))
+    }
+
+    /// The line's text after `queue fed: `; `None` with no frame pushed.
+    pub fn line(&self) -> Option<String> {
+        (self.frames > 0).then(|| {
+            format!(
+                "{} frames, fed {:.3} ({:.4e} samples planned into submits over {:.4e} granted), submits a frame {:.3}, drawn a submit {:.3}",
+                self.frames,
+                self.fed(),
+                self.planned as f64,
+                self.caps as f64,
+                self.submits_a_frame(),
+                self.drawn_a_submit(),
+            )
+        })
+    }
+}
+
+/// The bake thread's cycle by its parts, in ms, over the steps pushed (a reading, the
+/// teardown's `bake thread cycle:` line): the wait for a message, the step, the books'
+/// snapshot, the hand-over (the step's results and the books put in the outbox), and their sum,
+/// the time from one step's pick-up to the next's; beside them the wall of the frames pushed.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CycleLine {
+    pub parts: Vec<[f64; 4]>,
+    pub walls: Vec<f64>,
+}
+
+impl CycleLine {
+    /// The line's text after `bake thread cycle: `; `None` with no step pushed.
+    pub fn line(&self) -> Option<String> {
+        if self.parts.is_empty() {
+            return None;
+        }
+        let p50_mean = |mut v: Vec<f64>| {
+            v.sort_by(f64::total_cmp);
+            let mean = v.iter().sum::<f64>() / v.len().max(1) as f64;
+            let p50 = v.get(v.len() / 2).copied().unwrap_or(f64::NAN);
+            format!("{p50:.3}/{mean:.3}")
+        };
+        let part = |k: usize| p50_mean(self.parts.iter().map(|p| p[k]).collect());
+        let sum = p50_mean(self.parts.iter().map(|p| p.iter().sum()).collect());
+        Some(format!(
+            "{} steps over {} frames ({:.3} a frame), p50/mean ms: wait {}, step {}, snapshot {}, hand-over {}, sum {} against the frame's wall {}",
+            self.parts.len(),
+            self.walls.len(),
+            self.parts.len() as f64 / self.walls.len().max(1) as f64,
+            part(0),
+            part(1),
+            part(2),
+            part(3),
+            sum,
+            p50_mean(self.walls.clone()),
+        ))
+    }
+}
+
+#[cfg(test)]
+mod fed_tests {
+    use super::*;
+
+    /// Done when (1) of Plan 0099 Phase 4d. Ten frames at a cap of 1 000, six of them with a
+    /// submit of 900 samples and four with none: fed 0.54, submits a frame 0.60, drawn a
+    /// submit 0.90.
+    #[test]
+    fn the_fed_line_is_the_samples_planned_over_the_caps_granted() {
+        let mut fed = QueueFed::default();
+        for k in 0..10 {
+            let sent = k % 5 < 3;
+            fed.push(&QueueStats {
+                cap: 1_000,
+                submitted: if sent { 900 } else { 0 },
+                submits: u64::from(sent),
+                ..QueueStats::default()
+            });
+        }
+        let line = fed.line().expect("ten frames");
+        println!("queue fed: {line}");
+        assert_eq!((fed.frames, fed.submits), (10, 6), "{line}");
+        for want in ["fed 0.540", "submits a frame 0.600", "drawn a submit 0.900"] {
+            assert!(line.contains(want), "{want} in {line}");
+        }
     }
 }

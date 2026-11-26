@@ -11,6 +11,7 @@ use std::sync::Mutex;
 use std::sync::mpsc;
 
 mod books;
+mod cycle;
 
 /// The rig with its bake half on the thread: the mirror, the settings, the mailbox and the
 /// recording half stay here.

@@ -474,6 +474,12 @@ impl Drop for Run {
         if let Some(line) = self.queue.split_line() {
             println!("frames: {line}");
         }
+        if let Some(line) = self.queue.fed.line() {
+            println!("frames: queue fed: while in view waits {line}");
+        }
+        if let Some(line) = self.queue.cycles.line() {
+            println!("frames: bake thread cycle: while in view waits {line}");
+        }
         if let Some(g) = self.gfx.as_ref()
             && let [n, past, lost, run] = g.frame.bake_snapshot_reach()
             && n > 0

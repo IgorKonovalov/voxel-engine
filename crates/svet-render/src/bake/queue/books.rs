@@ -179,6 +179,7 @@ impl QueueStats {
             ms: self.ms + earlier.ms,
             read_submits: self.read_submits + earlier.read_submits,
             submitted: self.submitted + earlier.submitted,
+            submits: self.submits + earlier.submits,
             projected: if self.projected > 0.0 {
                 self.projected
             } else {
@@ -200,6 +201,7 @@ impl QueueStats {
             ms: 0.0,
             read_submits: 0,
             submitted: 0,
+            submits: 0,
             projected: 0.0,
             open_at_draw: 0,
             ..self
