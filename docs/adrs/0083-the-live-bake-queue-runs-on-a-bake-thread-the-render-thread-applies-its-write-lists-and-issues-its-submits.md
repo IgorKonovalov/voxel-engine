@@ -1,11 +1,11 @@
 # ADR-0083: The live bake queue runs on a bake thread; the render thread applies its write lists and issues its submits
 
-> **Status:** proposed (2026-11-22, with Plan 0099; amended while proposed, 2026-11-25: the
+> **Status:** accepted (2026-11-26, at Plan 0099's close, v0.76.0, with an Outcome; proposed 2026-11-22 with Plan 0099; amended while proposed, 2026-11-25: the
 > edit's frame waits, the owner's answer to that plan's question 6; lists apply in the order
 > made, an edit's with those before it; 2026-11-26: the wait ends on the step's lists, the
 > books' snapshot follows)
 > **Date:** 2026-11-22
-> **Related plan(s):** [Plan 0099](../plans/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md).
+> **Related plan(s):** [Plan 0099](../plans/done/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md).
 > Extends [ADR-0017](0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md)
 > (the mirror's rule stands; the bake queue, which that ADR predates, gets its own owner
 > thread). Rests on [ADR-0046](0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
@@ -217,5 +217,67 @@ queue for as long as the dig's rings take, where the wait is one frame's few mil
 
 ## Outcome
 
-_(Added only at acceptance if implementation falsified something above. Dated. Never rewrite the
-body.)_
+**Accepted 2026-11-26, at Plan 0099's close (v0.76.0).** The decision stands as amended while
+proposed: one bake thread owns the queue's books, the render thread applies write lists in the
+order made and issues the submits, the same code runs in lockstep, and an edit's frame waits
+for its step's lists. The owner at the plan's window (2026-11-26, RTX 3080 Laptop at Floor and
+RADV RENOIR at Portable, release `cde2e966`): "with thread it got so much better, this is the
+way!"; the image "all good", the dig "good as well", the RENOIR "nope, fps better". Every
+figure below is a quiet reading at `cde2e966` unless marked, pinned in `docs/nfr.md` sections 2
+and 4 with its rows in `docs/plans/logs/0099.md`.
+
+What the implementation confirmed:
+
+- **The render thread's share is copies and one submit.** With the thread on it reads p50 0.76
+  to 0.80 ms and p99 1.2 to 1.3 on the RTX forest and hills, 0.30 to 0.32 and 0.53 to 0.59 on
+  the RENOIR, against the step's 28.0 / 51.1 ms at Plan 0096's window. The frame while the
+  view waits is 8.3 ms on the RTX forest (21.9 in lockstep) and 24 ms on the RENOIR (33.7).
+  The copies fit the line; the staging belt named under "Negative" was not needed.
+- **The store's bytes do not depend on the mode**: the drained store is bit-identical across
+  lockstep, the thread and a one-shot bake (`gpu_queue`), and no golden moved.
+
+What it falsified or changed:
+
+- **"The drain gets shorter if the bake thread keeps the submits fed" holds only in part.**
+  One thread does not feed the RTX's slice: the submits carry 0.58 to 0.61 of the granted
+  drain slice against the plan's bar of 0.85 (the RENOIR 1.00). Two factors, both read: a bake
+  step takes 10.5 to 11.1 ms from one pick-up to the next against a frame of 8.3, with no wait
+  in it, and with every table row held a submit carries 0.66 to 0.87 of its cap. The forest's
+  view is final at 17.9 and 19.0 s against a line of 10 (31 s in lockstep; every chunk in view
+  has some light at about 8 s), the hills' at 6.5 s. Three fixes missed their derivations
+  inside the plan (the opening's level, the depth in flight, more table rows) and the plan
+  stopped there, disclosed; the levers left are in `docs/backlog.md` ("The bake thread's feed
+  on the RTX").
+- **"One bake step emits one ordered list and at most one prepared submit" became several
+  lists a step, each under the frame's cap** (1 MiB), an edit's list between the landings made
+  before and after it, and a unit larger than the cap sent whole as a list that is never
+  carried. A frame issues one submit and carries the rest to the next; the thread plans to a
+  depth of 3 submits unread.
+- **The edit's wait is not "a guess of 3 to 6 ms".** A dig's frame while the queue is deep
+  reads about 44 ms with the thread on against 45 in lockstep on the RTX (the frames around it
+  8.4 against 21.9), about 20 against 32 once drained; the RENOIR 48 against 43, and 28 against
+  34. The light at the dig lands sooner with the thread (about 170 ms against 230 on the RTX).
+  The owner chose to keep the wait as built (the plan's question 8, (a)). Not resolved: whether
+  the RENOIR's wait while the view waits is equal to lockstep's call or over it (10.6 and 12.6
+  ms against 10.9 and 9.3, two runs a side).
+- **A dig can find every table row with rounds in flight**, and ring 1 then lands one round
+  trip later (3 of 12 digs on one RTX timeline). Disclosed, not fixed; the lever is the
+  owner's (a point to leave a step at).
+- **A window defaults to the thread; a profile does not set it.** `bake_thread` is off in
+  every profile's row and under `--headless`, so every test, golden and headless reading stays
+  in lockstep unless it names the thread.
+- **The public reads became a snapshot** as "Negative" said: `Frame::bake_queue_mut` is `None`
+  while the thread runs, a caller's write goes through `Frame::set_bake_queue`, and reads
+  answer from the books' snapshot the thread makes after each step (1.2 to 1.3 ms a step on
+  the RTX, part of why the step is longer than the frame).
+- **Memory was not read.** The outbox is bounded by construction at 8 MiB; its peak and the
+  bytes of the books' snapshot have no line (`docs/backlog.md`, "Plan 0099's readings not
+  taken"). The floor's CPU has a pinned stand-in only: on 8 logical CPUs of the dev box the
+  feed reads 0.52 against 0.62 unpinned, the share and the frame unchanged.
+- **The inbox's bound is the bake thread's pace.** The change list is bounded by the
+  residency as stated; the boxes, prepared masks and read-backs a coalesced message appends
+  are not, and grow for as long as a step stalls (not read; the backlog's "The bake thread's
+  leftovers").
+
+The flash the owner sees when digging deeper than 2 to 3 m is the same with the thread off, by
+his word; it is not this decision's and goes to Plan 0105.

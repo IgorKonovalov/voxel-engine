@@ -11,7 +11,7 @@ and `vxe-<x>` reads as `svet-<x>`.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0088** (0085 is Plan 0101's; 0086 accepted at Plan 0102's close, 2026-11-25; 0087 is Plan 0103's; 0079 accepted at Plan 0095's close, 2026-11-21; 0080 accepted at Plan 0096's close, 2026-11-23; 0081 is Plan 0097's; 0082 accepted at Plan 0098's close, 2026-11-24; 0083 is Plan 0099's; 0084 accepted at Plan 0100's close, 2026-11-25).
+**Next free number: 0088** (0085 is Plan 0101's; 0086 accepted at Plan 0102's close, 2026-11-25; 0087 is Plan 0103's; 0079 accepted at Plan 0095's close, 2026-11-21; 0080 accepted at Plan 0096's close, 2026-11-23; 0081 is Plan 0097's; 0082 accepted at Plan 0098's close, 2026-11-24; 0083 accepted at Plan 0099's close, 2026-11-26; 0084 accepted at Plan 0100's close, 2026-11-25).
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -101,7 +101,7 @@ the status.
 | [0080](0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md) | The live queue bakes what the image reads: a record by rule, a sample tier by size on screen, a slice that drains what is in view | accepted (Plan 0096), Outcome |
 | [0081](0081-the-sky-anchor-holds-by-the-sky-over-the-cameras-floor-or-in-view-and-releases-where-both-are-absent.md) | The sky anchor holds by the sky over the camera's floor or by the sky in view, and releases only where both are absent, by at most a lift over the daylight anchor | accepted (Plan 0097), Outcome |
 | [0082](0082-the-light-pass-keeps-no-screen-history-by-default-and-reads-smooth-sources-to-the-mid-range.md) | The light pass keeps no screen history by default and reads smooth sources to the mid range | accepted 2026-11-24 (Plan 0098), with an Outcome |
-| [0083](0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md) | The live bake queue runs on a bake thread; the render thread applies its write lists and issues its submits | proposed (Plan 0099); extends ADR-0017 |
+| [0083](0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md) | The live bake queue runs on a bake thread; the render thread applies its write lists and issues its submits | accepted 2026-11-26 (Plan 0099), Outcome; extends ADR-0017 |
 | [0084](0084-the-key-lights-visibility-on-a-world-face-is-fixed-per-face-the-columns-horizon-where-lit-a-cover-source-where-shadowed.md) | A baked key ray ending under a column's top is not lit; a cover source only adds light and is a setting, off | accepted 2026-11-25 (Plan 0100), Outcome; supersedes part of 0079 |
 | [0085](0085-the-zero-record-is-ruled-on-the-mirror-as-it-stands-exact-by-the-re-list-not-by-the-columns-finality.md) | The zero record is ruled on the mirror as it stands: exact by the re-list, not by the columns' finality | proposed (Plan 0101) |
 | [0086](0086-fsr-2-is-the-only-upscaler-the-upscaler-of-our-own-is-removed.md) | FSR 2 is the engine's only upscaler; the upscaler of our own is removed | accepted 2026-11-25, Outcome (Plan 0102); supersedes ADR-0024 and ADR-0034's opt-in clause |

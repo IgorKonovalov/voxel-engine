@@ -1,6 +1,6 @@
 # 0099: The bake step off the main thread: a bake thread, write lists the render thread applies, and the in-view drain
 
-> **Status:** in-progress, every phase done, awaiting the fresh-session close review (Phase 5, the owner's window, and Phase 6d landed 2026-11-26: no fix pass, the dig's pins in `docs/nfr.md` section 4; Phases 3d, 4c2, 3f, 3g, 4d, 6a, 6b and 6c landed 2026-11-26 (6c: main v0.75.0 merged at `fed59ead`, its gate passed in parts), Phase 4d's stop (the RTX forest's fed 0.599 on one run) reported; Phases 1, 2, 2b, 2c, 3a, 2d, 2e, 4b, 4c and 3c landed 2026-11-25; Phase 3b built, its stops ruled 2026-11-25: Phase 3d comes before 4c2; question 8 answered (a), owner 2026-11-25: the wait stays as built, Phase 3d's figures go beside the Phase 5 window); approved (owner, 2026-11-22; his answers are under "Risks & open questions":
+> **Status:** done, closed 2026-11-26, v0.76.0: **the bake step is off the render thread and the owner took it at the window ("with thread it got so much better, this is the way!")**; the frame while the view bakes is 8.3 ms on the RTX forest against 21.9. Closed on two disclosed misses (the RTX feeds 0.58 to 0.61 of its slice against 0.85; the RTX forest's view is final at 17.9 and 19.0 s against 10), one reading not resolved (the RENOIR's edit's wait while the view waits) and two not taken (the outbox's and the snapshot's peak bytes; the ten steps after the view drains). The fresh close review found no blocker and no major (section "The close (2026-11-26, architect)"); ADR-0083 accepted with an Outcome. The dig's flash at depth is the same with the thread off and is Plan 0105's. Before the close it read: in-progress, every phase done, awaiting the fresh-session close review (Phase 5, the owner's window, and Phase 6d landed 2026-11-26: no fix pass, the dig's pins in `docs/nfr.md` section 4; Phases 3d, 4c2, 3f, 3g, 4d, 6a, 6b and 6c landed 2026-11-26 (6c: main v0.75.0 merged at `fed59ead`, its gate passed in parts), Phase 4d's stop (the RTX forest's fed 0.599 on one run) reported; Phases 1, 2, 2b, 2c, 3a, 2d, 2e, 4b, 4c and 3c landed 2026-11-25; Phase 3b built, its stops ruled 2026-11-25: Phase 3d comes before 4c2; question 8 answered (a), owner 2026-11-25: the wait stays as built, Phase 3d's figures go beside the Phase 5 window); approved (owner, 2026-11-22; his answers are under "Risks & open questions":
 > the recommended option in each, question 2 by his own words). **After: 0096, 0098, 0087** (owner, 2026-11-22:
 > drafted now, the lane after the rename; then 0089 and 0093, 0091, ...).
 > **Re-read 2026-11-24** after Plan 0098 (v0.72.0) and the rename (v0.73.0): Phases 1 to 3 are
@@ -9,16 +9,16 @@
 > waits for the dig; 7 (f), the stretch at 1.5); Phase 3b builds both, before Phase 4d.
 > **Created:** 2026-11-22
 > **Milestone:** M10 (the outdoor scenes are where the queue is deep) and cross-cutting, like
-> [Plan 0096](done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md):
+> [Plan 0096](0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md):
 > it serves `docs/nfr.md` section 2's streaming line, the bake queue's step inside it and the
 > Floor frame, and takes the lines Plan 0096 closes with as disclosed misses.
-> **Related ADRs:** [ADR-0083](../adrs/0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md)
+> **Related ADRs:** [ADR-0083](../../adrs/0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md)
 > (proposed with this plan), which extends
-> [ADR-0017](../adrs/0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md);
-> [ADR-0080](../adrs/0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md)
+> [ADR-0017](../../adrs/0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md);
+> [ADR-0080](../../adrs/0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md)
 > (the tiers and the drain slice),
-> [ADR-0076](../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
-> rules 3 and 6, [ADR-0046](../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
+> [ADR-0076](../../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
+> rules 3 and 6, [ADR-0046](../../adrs/0046-static-emissive-light-is-baked-per-chunk-when-a-chunk-loads-or-changes.md)
 > (the store's bit-identity).
 > **Source:** Plan 0096's Phase 8 window (2026-11-22) and its section "The window's verdict and
 > what is left"; the readings are in `docs/plans/logs/0096.md` on branch `plan-0096` until that
@@ -526,7 +526,7 @@ later unless question 6 is answered (a).
 ## Amended 2026-11-25 (architect, code reading of the RENOIR's ring-1 landing)
 
 Read against `1f2960bf` and Phase 1's 64 timelines (`live/p1d/`); the long form, with the lines
-and the arithmetic, is in [`logs/0099.md`](logs/0099.md), "Architect's code reading". Where this
+and the arithmetic, is in [`logs/0099.md`](../logs/0099.md), "Architect's code reading". Where this
 section differs from a phase's text it wins. **Phase 2 builds what it was going to build.**
 
 **What ring 1 waits on: the submit's sample cap, and nothing else.** On the drained RENOIR at the
@@ -621,7 +621,7 @@ already read over Portable's 33.3 ms line while a dig is held. (d) **Leave it:**
 
 Read against `30f6b7ea`: `SampleCost` (`bake/budget.rs`), the cap (`open_step`), `open_digs`,
 `JobLoop::plan_rounds`, and Phase 2b's timelines (`live/p2bd/`). The long form is in
-[`logs/0099.md`](logs/0099.md), "Architect's ruling on Phase 2b". Where this section differs
+[`logs/0099.md`](../logs/0099.md), "Architect's ruling on Phase 2b". Where this section differs
 from the text above it wins. Most of Phase 2b's adapter readings were taken loaded (1.4 to 42).
 
 **1. The estimate's split: accepted as built, with its limits.** The slope kept and the level
@@ -759,7 +759,7 @@ Read against `b13311a2`: `SampleCost` (`bake/budget.rs`), `JobLoop::collect` and
 (`bake/job_loop.rs`), the cap and `read_stats` (`bake/queue/step.rs`), `take_boxes`,
 `open_digs`, `open_pushed`, `open_now` (`bake/queue/digs.rs`), and Phase 2c's quiet timelines
 (`live/p2cd/`). The long form, with the lines, the per-dig table and the fits, is in
-[`logs/0099.md`](logs/0099.md), "Architect's ruling on Phase 2c's stop". Where this section
+[`logs/0099.md`](../logs/0099.md), "Architect's ruling on Phase 2c's stop". Where this section
 differs from the text above it wins. Nothing was built or run; the fits are the architect's,
 over the rows the rig already prints.
 
@@ -914,7 +914,7 @@ Read against `243c1f2b`: `bake.wgsl` (`bake_round`), `emissive.wgsl` (`candidate
 `read_stats` (`bake/queue/step.rs`), `open_digs` (`bake/queue/digs.rs`), `bake/held.rs`, the
 Portable profile (`settings.rs`), and Phase 2d's timelines and summaries (`live/p2dd/`,
 `live/p2d-{B,A}.txt`). The long form, with the per-dig ratios, is in
-[`logs/0099.md`](logs/0099.md), "Architect's ruling on Phase 2d's stop". Where this section
+[`logs/0099.md`](../logs/0099.md), "Architect's ruling on Phase 2d's stop". Where this section
 differs from the text above it wins. Nothing was built or run. **This is the third pricing fix
 to miss its bar, so this ruling builds no fourth price: it reads why a price cannot hold this
 bar, and puts a bound where the prediction was.**
@@ -3014,7 +3014,7 @@ keeping fade length"; the other four: "agreed on other recommended".
 > resume notes go to the plan's readings log, `docs/plans/logs/0099.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
-Readings, gate counts and attempts: [`logs/0099.md`](logs/0099.md).
+Readings, gate counts and attempts: [`logs/0099.md`](../logs/0099.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
@@ -3026,7 +3026,7 @@ Readings, gate counts and attempts: [`logs/0099.md`](logs/0099.md).
 | 2e: ring 1 goes whole within a stretch of the cap | dev | done (exploration); (1) to (3) pass, the store bit-identical at 1.0 and at 1.5 (gpu binaries 49 of 49 each, both loaded); (4) quiet: at 1.5 RENOIR drained B D+1 48 of 48 (1.0: 26, D+2 22), drained A 1, 2, 1 in eight (1.0: 1, 3, 2), RTX and waiting A 1, 2, 1, sequence C 1, 1 (1.0: 1, 2); no ring over 1.5 caps; largest whole ring-1 submit 4.64 ms; (5) empty candidate loops about 23 % of a D+0 submit's ns, 21 % of ring 2's (log) | `74f1d2cd` |
 | 3: the bake half on its own thread | dev | 3g done: `DigWaitParts` keeps the wait's span; (1) to (3) pass (CPU); (2) holds its step on a gate the box's send releases, no sleep: 40 of 40 by name beside a quick tier, twice; the `bake thread dig wait:` line reads `less rest` per frame; quick tier 612 of 612, clippy, fmt, checks clean; `the_edits_frame_waits_for_its_list_and_no_other_frame_does` fails beside a quick tier 3 in 40 here, 2 in 40 at the base (not chased); the dig lines moved to `run/queue/dig_lines.rs` (size cap) (log); 3f done: `THREAD_SLOTS` 16; a step's results go to the outbox when it returns, its books' snapshot follows as its own entry; the edit's frame waits for the lists (and the books where the queue traces digs); the mailbox answers by the older of lists applied and books held; (1) to (4) pass (gpu binaries 34 of 34, the store bit-identical at 16); (5) quiet, RTX in view waits wait p50 30.2/30.6 ms, rest 5.5/5.5, less rest 24.7/25.1 against lockstep's 24.8 (**missed on run 2 by 0.38 ms**), after 5.8/7.8 against 14.0, RENOIR 10.5/4.5 against 12.8/4.7, snapshot part 0 everywhere, snapshot a step p50 1.33 to 1.34 ms RTX, 0.53 RENOIR; (6) held D+0 in 30 of 30 digs, ring 1 at 16 over Phase 3d's by **20.3 and 20.8 ms on waiting B digs 5 and 6** (median of two; A dig 3 +3.8, B dig 4 -3.1): two stops fire, reported; the fly-through's dig-frame record fixed (`1b744e32`); a new test file and the rig's drain changed (log); 3d done (a reading): the wait by its parts (rest, pickup, boxes, step_rest, snapshot, handback), held and ring 1 in ms; (1) passes; (2) quiet, 32 timelines: wait p50 against lockstep's dig step RTX A 27.7/25.4 **missed**, RTX B 12.4/15.6 held, RTX drained B 11.8/9.4 **missed**, RENOIR drained B 5.6/3.2 **missed**; pickup and handback p50 at most 0.024 ms; snapshot p50 4.5, 1.9, 2.2, 1.4 ms **missed** on every rig (the rig's dig trace in it); ring 1 within lockstep's ms plus two frames in 84 of 84 digs; at most 3 submits; held D+0 in every dig; (3) the fly-through, RTX in view waits: wait p50 28.4/27.6 ms (a step in progress 4.8/6.9 of it), lockstep's call 25.2/24.8; after: 7.7/6.4 against 8.0/6.3; snapshot without the trace 1.2 to 1.4 ms; RENOIR 11.8 and 5.1 against 11.8 and 5.9 (log); 3c done: lists apply in the order made, an edit's takes every list made before it; (1) to (3) pass (CPU, (3) fails on the old order); (4) the store bit-identical, gpu binaries 83 of 83, 25 golden tests unmoved; (5) quiet, four runs each: held D+0 in 48 of 48 digs on RTX waiting B and RENOIR drained B (dig 5 and dig 3 among them); (6) apply lap on the dig frames RTX p50 0.287 max 0.566 ms, RENOIR 0.049 / 1.013, one frame of 48 over the cap (398 536 bytes); `a_dig_is_served_whole_in_the_edits_step` restated to the order (log); 3b built, its stops reported (questions 6 (a) and 7 (f) answered): done-whens 1 to 3, 6 and 7 pass; (4) and (5) pass on lavapipe (held bit-identical to lockstep's at D+0 over three digs; ring 1 D+2 threaded, D+1 lockstep, frames paced to lockstep's; 6.5 s, in the gate); (9) the five gpu binaries 83 of 83, the sole walk, the store test and the soak flicker test pass, 25 golden tests pass unmoved, the no-edit RTX forest share p50/p99 0.812/1.379 ms, wall p50 7.51 ms; (8) quiet, 80 runs: held D+0 in every lockstep dig, threaded held D+0 but one dig a run never told on RTX waiting B and RENOIR drained B (stop owed), four stops fire (RTX wait p50 16.3 and 12.2 ms; the dig step wall over lockstep's on RENOIR and RTX B; RTX ring 1 up to D+6 against D+1; RENOIR two submits 48 of 48) (log); 3a done: done-whens (1) to (4), (5a), (6) restated, (9) to (12) pass; (7) quiet, eight runs a side: RTX forest share p50/p99 0.601/1.118 ms (max p99 1.153), wall p50 7.83 ms while in view waits; RENOIR 0.449/0.800, wall p50 24.29 (Phase 1 33.68); (8) fade share 0.61 RTX at 134 fps, 0.82 at the window's size, 1.00 RENOIR; in-view drain 32.9 to 24.2 s RTX, 17.3 to 12.9 s RENOIR; setting off by default (log) | `dc2394ef`, `53a29dbf`, `647fcb6f`, `68cacf9f`, `aba47e60`, `0a8e71c8`, `99c08238`, `e2c269df`, `69fcabf8`, `0758027b`, `21a2eb14`, `574b9b30`, `05f5cec7` (wip), `db08dfbb`, `2e29e1f9`, `c7853595`, `1c2bebe2`, `e019bb48`, `0779f503`, `4686656e`, `9b21917f`, `1d94e563`, `8158f508`, `519a2255`, `0c88a0c3`, `1b744e32`, `56117e85`, committed with this row |
 | 4: the bake thread keeps the slice fed | dev | done; 4d: two teardown lines, no mechanism: `frames: queue fed:` (the samples planned into submits over the caps granted while in view waits, `QueueFed`, `QueueStats::submits`) and `frames: bake thread cycle:` (wait, step, snapshot, hand-over, their sum against the frame's wall, `Cycle`); (1) and (2) pass (CPU, (2) by the clock's order, no sleep); gpu binaries 34 of 34, the store test passes; quick tier 614 of 614, clippy, fmt, checks clean; quiet batch at 16 rows, depth 3: RTX forest fed 0.611/**0.599** (submits a frame 0.714/0.686, drawn 0.856/0.874), cycle sum p50 10.45/11.06 ms against the frame's 8.27/8.34 (step 8.99/9.58, snapshot 1.15/1.23, wait 0 p50), in view 17.9/19.0 s (no block in view at 7.5/8.1 s, 31 coarse then): 0.85 and 10 s missed as disclosed, **the stop (fed under 0.60) fires on run 2 by 0.001**, reported; RTX hills fed 0.589/0.582, in view 6.5/6.6 s; `--queue-weights 4,2` (a reading) fed 0.648/0.685, in view 11.8/11.7 s; RENOIR fed 1.000/0.996, in view 12.7/11.5 s; Phase 3's bars hold (RTX share p50 at most 0.797, p99 1.313, wall p50 at most 9.94 ms); `books.rs`, `step.rs` and a new test file outside the list (log); earlier: lever (b) the listing pool (gpu binaries 33 of 33, the threaded store bit-identical); 4b done: the pooled opening admits to 3 caps at the measured fill, quiet fix, (1) to (5) pass (gpu binaries 33 of 33 and the store bit-identical at 5c518cf0); RTX forest two quiet runs: drawn 0.973/0.950 a submit at 3.05 to 3.10 caps projected (the stop did not fire), submits 0.52 a frame, fed 0.49, in view 0 at 22.0/22.3 s; 4c: one submit a frame and the thread's depth, (1) to (3) pass (gpu binaries 33 of 33, the store bit-identical at depth 3); RTX forest quiet, depth 3 picked (blocked 0.06 %/0 %), submits 0.59 to 0.60 a frame at every depth, fed 0.57; Phase 3's bars hold; RENOIR wall p50 24.08 ms; **stop: the 16 table slots are the next bound** (log); 4c2: the queue's reserve of 64 rows, lockstep 16, the thread `THREAD_SLOTS` 32 (`--bake-slots`), returned to 16 at the join; (1) to (5) pass (gpu binaries 49 of 49, `gpu_golden` unmoved, the store bit-identical at 32); RTX forest quiet, two runs a count: out of rounds with no slot free 0.54/0.40 % of the steps at 32 (16: 39/42 %), fed 0.552/0.554 (16: 0.550/0.605), steps a frame 0.653/0.652 (16: 0.708/0.787), movable p50 9.3 against 7.2 to 7.7 ms, in view 0 at 17.6/17.3 s; Phase 3's bars hold; RENOIR fed 0.994, wall p50 23.97 ms, in view 12.6 s; **stops (a), (b) and (d) fire** (ring 1 later than Phase 3d on waiting A dig 3 and B digs 4 to 6); books.rs outside the list; the tip gate owed (projected past 20 minutes) (log) | `514c9a71`, `5c518cf0`, `d95e99bb`, `11840dc5`, `45d5521d`, `fd62b667`, `cde2e966`, committed with this row |
-| 5: the owner's window | human | done 2026-11-26, 07:13 to 07:19 on `cde2e966` (runs 1 to 7; run 8 skipped on his word); verdicts in his words in the log: overall "with thread it got so much better, this is the way!"; (a) "all good"; (c) "dig is good as well", and after the session a flash at depth ("when I dig deeper, more than 2-3 meters it is already bothers ... as a separate plan"; with the thread off not stated), routed to the backlog; (e) "all good, start roughly same" (question 9: the order stays, no follow-on); (b) "2-3 sec"; (d) "nope, fps better". No fix pass; question 8 stays (a) (log) | |
+| 5: the owner's window | human | done 2026-11-26, 07:13 to 07:19 on `cde2e966` (runs 1 to 7; run 8 skipped on his word); verdicts in his words in the log: overall "with thread it got so much better, this is the way!"; (a) "all good"; (c) "dig is good as well", and after the session a flash at depth ("when I dig deeper, more than 2-3 meters it is already bothers ... as a separate plan"; with the thread off, asked later: "yes same", "bright than darker", "one blink"), routed to the backlog and Plan 0105; (e) "all good, start roughly same" (question 9: the order stays, no follow-on); (b) "2-3 sec"; (d) "nope, fps better". No fix pass; question 8 stays (a) (log) | |
 | 6: the lines, the defaults and the documents | dev | 6a done: the fading-chunk case of `the_edits_frame_waits_for_its_list_and_no_other_frame_does` moves to `split_tests/thread/fade.rs`, its frames each wait for their own step and its held step waits on the box signal, no sleep; the main case times its wait from before its release thread; no product path changed: 40 of 40 by name beside a quick tier, twice (load to 7.6 and 13.0); 6b done (no code; quiet, the frozen `cde2e966`): pinned to `docs/nfr.md` section 2 and `docs/nfr/02-frame-budget.md`: share and wall met on both adapters, fed **missed** on the RTX (0.611/0.599 forest, 0.589/0.582 hills; RENOIR 1.000/0.999/0.996), in view **missed** on the RTX forest (17.9/19.0 s) and met elsewhere, the residency met (RTX 23.2 to 29.1 s, RENOIR 124.9 and 92.6), outbox and shadow bytes not read; readings: `second:150,0.25` drawn over granted p50 1.03, the `taskset` arm fed 0.523 against 0.616 unpinned, RENOIR drained B read into nothing 0.078 (under a half), the ten steps after the drain not read (no line; a rebuild) (log); 6c done: main (`c87bf7a6`, v0.75.0) merged, one conflict (`gpu_bake_rule.rs`: main's file kept, its zero-rule writes through `set_bake_queue`); on the merged tree build, workspace clippy, fmt, deny, doctests 10 and every check clean; the gate in parts: CPU 1081 of 1081 (no lock), gpu holds of 108, 100 and 128 of 336 all passed (303, 338, 444 s, loaded 2.1 to 15.9), nextest walls 1 000 s against the 19 min line (1 232 s with the CPU part's build and the extractions), the two soak marks and the sole test pass; no golden moved; holds dealt by count, the log holding no times for most binaries (log); 6d done (no code; quiet, `cde2e966`, two fly-through runs a side on each adapter): pinned to `docs/nfr.md` section 4 "An edit's light" and `docs/nfr/04-edits.md`: the edit's wait less its rest RTX in view 14.5/21.8 ms against lockstep's 24.3/23.6 (held), after 5.8/6.3 against 7.7/12.7, RENOIR after 4.5/4.2 against 5.6/5.3, RENOIR in view 10.6/12.6 against 10.9/9.3 **not resolved** (the line prints run p50s, which bracket the pooled one); ring 1 from Phase 3f with its disclosed mode; the dig's frame and the light at the dig as ruling 3 told them, re-read within them (RTX 42.0 on against 45.8 off, 163 against 243 ms); `docs/flythrough.md` already named the mode; backlog: the bake step done, six entries updated, two new (the dig's flash at depth, the readings not taken); resume notes deleted; doc gates exit 0 (log) | `9b39dc40`, `fed59ead`, committed with this row |
 
 ### Notes
@@ -3096,6 +3096,8 @@ Readings, gate counts and attempts: [`logs/0099.md`](logs/0099.md).
   (the render thread's start underflowed the thread-local byte counts; found by done-when 4).
 - (dev, Phase 3a) A profile switched in the fly-through's menu sets `bake_thread` to the
   profile's value (off), as it does the tiers and the drain.
+  (architect, at the close: no longer so. A profile switch keeps the session's mode,
+  `apps/flythrough/src/run/profile.rs`, tested by `the_flag_and_the_row_name_the_mode`.)
 - (dev, Phase 3a) The readings of (7) and (8) added teardown lines (`bake thread render laps`, `fade steps`, the snapshot's longest run) and fixed the fly-through's census request, which went through `bake_queue_mut()` (`None` with the thread on) and froze the in-view count; it goes through `Frame::set_bake_queue` now. The RTX runs are 7200 frames, not Phase 1's 3600, so the thread's faster frames reach the residency's end; both sides take 7200.
 - (dev, Phase 3a) (8)'s fade share at 60 fps is derived, not read: no headless run is paced, and the share falls with the frame time (log).
 - (architect, at the draft) The backlog entry "The bake step off the main thread" exists on
@@ -3133,6 +3135,17 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   the doc gates; no golden moved. Main is `c87bf7a6` (v0.75.0) as merged.
 - **Outstanding `human` phases:** none. Phase 5 ran 2026-11-26; the owner's flash at depth is
   the backlog's, by his word a separate plan.
+
+### The close (2026-11-26, architect)
+
+A fresh-session review of `git diff main...plan-0099` at `19261bd3`. **No blocker, no major;
+closed as v0.76.0, ADR-0083 accepted with an Outcome.** The gate was not run again (only
+documents changed after Phase 6c's tree `fed59ead`). The two misses stay pinned as missed; the
+RENOIR's edit's wait "not resolved" is ruled an acceptable close state; the minors went to the
+backlog ("The bake thread's leftovers"); the owner's answer on the flash at depth (the same
+with the thread off) was corrected in row 5, the log and the backlog, and points at Plan 0105.
+What was read, the rulings and the bookkeeping: the log's section "The close review
+(2026-11-26, architect)".
 
 ## Followups
 
