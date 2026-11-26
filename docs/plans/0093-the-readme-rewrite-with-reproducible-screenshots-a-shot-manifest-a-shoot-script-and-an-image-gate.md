@@ -1008,6 +1008,90 @@ single pixels over the whole image that starts between the 257th and the 272nd s
 
 The Implementation log gains rows for Phases 2e and 2f.
 
+## Amended 2026-11-26 (architect, a loop's wrong pictures)
+
+Phase 2e stopped for both loops: `--filter off` read 0, so the smallest wrong share was 0.
+Three rulings: a render whose frames are the noise set's frames is not a wrong picture, and
+the loops' wrong set is the loop started one frame late and `--facing` 15 degrees off; a
+loop's tolerance is twice its largest pair; the hero's patch is most likely one far crown's
+light, inside the tolerance, read once more for free in Phase 2f and parked in
+[the backlog](../backlog.md). No reading is owed first; Phase 2f runs as amended in D4.
+
+### D1. Ruling 1: what a loop's wrong pictures are
+
+- **`--filter off` leaves both loops' wrong sets.** A wrong picture is a render that
+  differs from the entry's; this one does not. The spider's 40 PNG frames are byte for byte
+  those of noise renders s1, s3, s5 and s6; the walker's differ from k1 in 42 pixels of one
+  frame, less than k1 from k3 (59). `Lighting::filter`'s own comment in
+  `crates/svet-render/src/frame/settings.rs` says why: the filter runs over the direct part,
+  and the clip's scene has the lamp off and no list light, its cube faces reading the store.
+  The flag was picked in C2 from the hero, where it is visible (0.022832). Dropping it is
+  not a swap for a grosser picture: no picture is taken out, and the set gains a milder
+  member than the one it kept.
+- **The wrong set, both read in 2e:** the loop started one frame late (spider 0.079202,
+  walker 0.038882: every frame shows its neighbour's pose, and only the model's pixels
+  move) and `--facing` 15 degrees off (0.760395, 0.822569). 2e's stop excluded the late
+  loop because nobody knew whether the check would see it; it does, and it is the mildest
+  wrong loop named, so it is the smallest wrong share.
+- **No further render.** A tolerance is fixed by the noise; a wrong render only says what
+  the check sees, and none could move a number here. Not claimed for the loops: that the
+  check sees a change of the light smaller than the tolerance. Rejected: **a render at
+  `--exposure 9`** (the example's own flag, visible in every lit pixel; it costs a hold and
+  changes no tolerance).
+
+### D2. Ruling 2: a loop's tolerance is twice its largest pair
+
+The loops' noise is not a spread: a render either keeps the common frames or leaves them
+at some frame and stays apart (C1). Two renders that left at different frames differ by
+the sum: s2 s4 reads 0.002925, which is s1 s2 (0.001627) plus s1 s4 (0.001298). Six
+renders hold three such states for the spider and two for the walker, whose set therefore
+holds no pair of two departed states; the committed file may be one. So a loop's tolerance
+is twice the largest pair, rounded up to one significant figure, and still at most a third
+of the smallest wrong share. The hero's noise is a spread over 28 pairs and keeps C2's rule.
+
+| entry | renders, pairs | largest pair | tolerance | smallest wrong share | wrong over tolerance |
+|---|---|---|---|---|---|
+| `hero` | 8, 28 | 0.003363 | 0.004 | 0.022832 (`--filter off`, 2c) | 5.7 |
+| `spider-walk` | 6, 15 | 0.002925 | 0.006 | 0.079202 (one frame late) | 13 |
+| `walker-walk` | 6, 15 | 0.000667 | 0.002 | 0.038882 (one frame late) | 19 |
+
+Rejected: **0.003 and 0.0007 by C2's rounding** (2.5 % and 5 % over one set's largest
+pair, one cell of headroom for the walker, with a fourth state unread); **more renders
+until the states are counted** (holds spent on the [backlog's](../backlog.md) clip finding,
+which this plan carries and does not chase).
+
+### D3. Ruling 3: the hero's patch does not block; one free reading, and B3's note applies
+
+Read from the eight PNGs and logs: the patch (x 211 to 239, y 336 to 364 of the 1920 x 1080
+still) is a far tree crown seen between two trunks at the left edge. Its outline is the same
+in the four looked at (n1, n3, h7, h8); its shading is yellow in n1 and n3 and pale in h7
+and h8, and 2e's table puts the other four with n1. So the chunks are the same and the
+light on them is not. The `settled:` line counts chunks and
+jobs, not the light store: every run's first `bake queue:` line after it prints a depth of
+7552 to 7719 and `in view 134 waiting`, and the pre-roll's coarse pass, ended by its 5 s
+wall box, left 1675 to 1807 coarse chunks in the six earlier runs against 1489 and 1311 in
+the two loaded ones. Most likely the crown's chunk holds a light record in the fast runs and
+another, or none, in the loaded ones. **Not attributed past that:** no reading names the
+chunk or its record.
+
+- It does not block: the hero's 0.004 stands on pairs that include it (largest 0.003363).
+- B3's note names this case (the box ending at different chunk counts). It applies: when
+  the lane merges main before Phase 6's final shoot and Plan 0106's stepped pre-roll is in
+  the tree, the `flythrough` entries take it and the hero's set is read again.
+- A backlog entry of this date records it under "Tooling and process": a settled start
+  whose picture depends on the machine's load in one patch is a stable-image finding.
+
+### D4. Phase 2f, amended (the rest of its text stands)
+- **Owner skill:** dev
+- **What:** the tolerances are D2's table. Each `note` names the renders, the pairs, the
+  largest pair, the rule (C2's for the hero, twice the largest pair for a loop) and the
+  smallest wrong share. For every hero render the phase makes, the log gains one line: the
+  coarse count its pre-roll's box ended at, and which state the patch is in
+  (`live/p2e-where.mjs` against n1 at 20 levels: no cell, or the six).
+- **Done when:** as written, with the tolerances above and the hero's lines in the log.
+- **Stop, reported:** as written (a `--check` over its tolerance; nothing edited, no render
+  added). A hero render in the patch's pale state inside the tolerance is a line, not a stop.
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases

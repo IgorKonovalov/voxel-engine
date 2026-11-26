@@ -1411,6 +1411,14 @@ From [Plan 0093](plans/0093-the-readme-rewrite-with-reproducible-screenshots-a-s
 - **What it would take:** a reading on that adapter: pairs of runs with one pass or setting off at a time (the upscaler at scale 1, the filter, the temporal pass, the entity pool) until the frames are bit-identical, and the same pairs on lavapipe, where the golden images are blessed.
 - **Pick it up when:** a golden image or a loop's check turns flaky and this is the suspect, or a plan asks for bit-identical frames from a fixed-step tool. Plan 0093 carries it as noise inside its loops' tolerances.
 
+### A settled start's still differs in one patch with the machine's load (2026-11-26)
+
+From [Plan 0093](plans/0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) Phase 2e (its section "Amended 2026-11-26 (architect, a loop's wrong pictures)", D3; readings in `docs/plans/logs/0093.md`). Eight `--settled-start` renders of the outdoor forest shot on the RTX 3080 Laptop print the same `settled:` counts, and the two taken under load differ from the other six by up to 60 levels in one patch of 24 x 24 pixels of the 1600 x 900 file: a far tree crown, the same outline, another shading.
+
+- **What the logs say:** the settle ends on chunks and jobs, not on the light store. Each run's first `bake queue:` line after it prints a depth near 7600 and `in view 134 waiting`; the pre-roll's coarse pass, ended by its 5 s wall box, left 1675 to 1807 coarse chunks in the six and 1489 and 1311 in the two. Not attributed to a chunk or a record.
+- **What it would take:** the same shot with the pre-roll ended by its coarse pass (Plan 0106's stepped pre-roll) under load and idle, the patch read in each; if it still splits, the queue's record for the crown's chunk in both states.
+- **Pick it up when:** Plan 0093 reads the hero's set again before its final shoot (its B3 note), or a still or golden taken after a settled start turns out to depend on load.
+
 ## Ideas from Bonsai
 
 Parked 2026-11-19: the owner pointed at [Bonsai](https://github.com/scallyw4g/bonsai), a C++
