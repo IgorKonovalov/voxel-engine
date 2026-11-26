@@ -141,3 +141,227 @@ fn a_box_into_a_chunk_with_no_block_holds_records_under_depth() {
     assert_eq!(fade.frames, DIG_FADE);
     assert_eq!(fade.from, held, "it fades from the held block");
 }
+
+/// The ground rig's one chunk.
+const GROUND: [i32; 3] = [0, 0, 0];
+
+/// The ground rig: one chunk, rock in voxels z 0..=7 across it (the ground, its top faces at
+/// z 7) and a kerb of rock floating over its `x < 16` strip in voxels z 10..=13 (its `+x`
+/// faces at x 15), under `Depth`. With `hold` the render half holds every read-back, so no job
+/// lands and `GROUND` lists faces and holds no block (ground the queue never reached);
+/// without, it is stepped until `GROUND` holds its job's block and the queue is quiet.
+fn ground_rig(hold: bool) -> Rig {
+    let mut rig = Rig::sized(None, 1, 1);
+    let mut t = MaterialTable::new();
+    let rock = t.push(Material::named("rock"));
+    let w = World::generate(
+        ChunkExtent::new([0, 0, 0], [1, 1, 1]),
+        &UniformSource(AIR),
+        &t,
+    );
+    for (lo, hi) in [([0, 0, 0], [64, 64, 8]), ([0, 0, 10], [16, 64, 14])] {
+        w.apply(&box_op(lo, hi, Mode::Fill(rock)))
+            .expect("resident");
+    }
+    rig.world = w;
+    rig.half.hold = hold;
+    rig.settings.dig_estimate = DigEstimate::Depth;
+    if hold {
+        for _ in 0..8 {
+            rig.step();
+        }
+        assert!(
+            rig.store.block(ChunkCoord(GROUND)).is_none(),
+            "GROUND holds no block"
+        );
+    } else {
+        rig.until("GROUND holds its block, the queue quiet", |r| {
+            r.store.block(ChunkCoord(GROUND)).is_some()
+                && r.queue.lp.open.is_empty()
+                && r.queue.lp.pending.is_empty()
+                && r.half.flights.is_empty()
+                && r.queue.fades.is_empty()
+        });
+    }
+    assert!(rig.queue.dig_store_hold, "the hold on (the default)");
+    rig
+}
+
+/// Carves the box `min..max` (voxel bounds, max exclusive) as [`Rig::carve`] does and returns
+/// the changed voxels' inclusive bounds (the box the queue reads).
+fn carve_box(rig: &mut Rig, min: [i32; 3], max: [i32; 3]) -> [[i32; 3]; 2] {
+    let r = rig
+        .world
+        .apply(&box_op(min.map(i64::from), max.map(i64::from), Mode::Carve))
+        .expect("resident");
+    let (lo, hi) = r.aabb.expect("voxels changed");
+    rig.mirror.changed.push(ChunkCoord(GROUND));
+    rig.inbox.push_box(lo.0, hi.0);
+    [lo.0, hi.0]
+}
+
+/// `block`'s record of brick `slot` (one cell of 8 voxels), `None` where it lists no record.
+fn brick_record(block: &[u32], slot: usize) -> Option<&[u32]> {
+    let d = block[slot];
+    (d != 0).then(|| {
+        let run = (d >> 11) as usize;
+        &block[run - BRICK_WORDS..run]
+    })
+}
+
+/// Plan 0105 Phase 7a2, step 1: under `Depth` a held record moves only the dig's faces.
+/// (1) A box cut at one place into ground the queue never baked (faces, no block, a whole
+/// dig): in each brick the box dilated by one voxel touches, a direction with a face outside
+/// that dilated box (a face the dig did not make) reads no visibility in the held record
+/// ([`record_visibility`] `None`: the light pass reads it as it read no block); (2) a direction
+/// all of whose faces lie inside it holds a value with [`VIS_BAKED`] and no [`SKY_STALE`].
+/// (3) In a chunk with a block whose summary holds no up visibility (the summary's up and the
+/// kerb cell's up cleared by hand, so the kerb's cell has no base: no record's up at or within
+/// [`super::super::super::held::HELD_CELLS`] cells above it, no summary's), a box beside the
+/// kerb: the kerb cell's `+x` direction, every face of it kept, keeps its old byte.
+///
+/// Red first: the `should_panic` mark pins the clauses the tree misses before the fix, so the
+/// quick tier stays green on that tree and turns red once the fix meets any of them; the fix
+/// removes the mark.
+#[test]
+#[should_panic(expected = "failed clauses [1, 3]")]
+fn a_whole_dig_moves_no_face_it_did_not_make() {
+    // (1) and (2): a whole dig into ground that was never baked.
+    let mut rig = ground_rig(true);
+    let whole = rig.queue.stats.digs_whole;
+    let [lo, hi] = carve_box(&mut rig, [24, 24, 4], [40, 40, 8]);
+    rig.step();
+    assert_eq!(rig.queue.stats.digs_whole, whole + 1, "the dig is whole");
+    let classes = rig.queue.classes(rig.world.materials());
+    let faces = rig.queue.list(&rig.world, ChunkCoord(GROUND), &classes).0;
+    let held = rig
+        .store
+        .block_words(ChunkCoord(GROUND))
+        .expect("depth: GROUND holds a block at the edit")
+        .to_vec();
+    let inside = |g: [i32; 3]| (0..3).all(|k| (lo[k] - 1..=hi[k] + 1).contains(&g[k]));
+    // Per touched brick and direction: (slot, direction, kept faces, dig faces, the record's
+    // visibility, VIS_BAKED, SKY_STALE).
+    let mut rows = Vec::new();
+    for (slot, keys) in &faces.bricks {
+        let b = brick_of_slot(usize::from(*slot));
+        let touched = (0..3).all(|k| b[k] * 8 + 7 >= lo[k] - 1 && b[k] * 8 <= hi[k] + 1);
+        if !touched {
+            continue;
+        }
+        let r = brick_record(&held, usize::from(*slot)).expect("a touched brick's record");
+        for f in 0..6 {
+            let (mut kept, mut dug) = (0, 0);
+            for &key in keys.iter().filter(|&&k| usize::from(k & 7) == f) {
+                let v = i32::from(key >> 3);
+                let g = [b[0] * 8 + v % 8, b[1] * 8 + (v / 8) % 8, b[2] * 8 + v / 64];
+                if inside(g) {
+                    dug += 1;
+                } else {
+                    kept += 1;
+                }
+            }
+            if kept + dug > 0 {
+                let w = r[VIS_WORD + 1];
+                rows.push((
+                    *slot,
+                    f,
+                    kept,
+                    dug,
+                    record_visibility(r, f),
+                    w & VIS_BAKED != 0,
+                    w & SKY_STALE != 0,
+                ));
+            }
+        }
+    }
+    let mixed: Vec<_> = rows.iter().filter(|r| r.2 > 0).collect();
+    let all_dug: Vec<_> = rows.iter().filter(|r| r.2 == 0).collect();
+    assert!(
+        !mixed.is_empty() && !all_dug.is_empty(),
+        "both kinds: {rows:?}"
+    );
+    let moved: Vec<_> = mixed.iter().filter(|r| r.4.is_some()).collect();
+    let unheld: Vec<_> = all_dug
+        .iter()
+        .filter(|r| r.4.is_none() || !r.5 || r.6)
+        .collect();
+
+    // (3): a chunk with a block, its summary and the kerb cell's up cleared.
+    let mut rig = ground_rig(false);
+    let kerb = brick_slot([1, 2, 1]);
+    let old = 0.5f32;
+    {
+        let block = rig.store.words.get_mut(&GROUND).expect("GROUND's block");
+        let at = SUMMARY_AT as usize;
+        block[at + 6] &= !(1 << (16 + 5));
+        let d = block[kerb];
+        assert_ne!(d, 0, "the kerb's brick holds a record");
+        let run = (d >> 11) as usize;
+        let r = &mut block[run - BRICK_WORDS..run];
+        r[6] = (r[6] & 0xFFFF) | 0b00_0011 << 16;
+        r[VIS_WORD..VIS_WORD + 2]
+            .copy_from_slice(&visibility_words([0.0, old, 0.0, 0.0, 0.0, 0.0]));
+    }
+    let [lo, hi] = carve_box(&mut rig, [16, 20, 4], [20, 24, 8]);
+    let classes = rig.queue.classes(rig.world.materials());
+    let faces = rig.queue.list(&rig.world, ChunkCoord(GROUND), &classes).0;
+    let keys = &faces
+        .bricks
+        .iter()
+        .find(|(s, _)| usize::from(*s) == kerb)
+        .expect("the kerb's brick lists faces")
+        .1;
+    let kerb_x: Vec<[i32; 3]> = keys
+        .iter()
+        .filter(|&&k| k & 7 == 1)
+        .map(|&k| {
+            let v = i32::from(k >> 3);
+            [8 + v % 8, 16 + (v / 8) % 8, 8 + v / 64]
+        })
+        .collect();
+    assert!(!kerb_x.is_empty(), "the kerb's +x faces");
+    assert!(
+        kerb_x
+            .iter()
+            .all(|g| !(0..3).all(|k| (lo[k] - 1..=hi[k] + 1).contains(&g[k]))),
+        "every +x face of the kerb's cell is kept"
+    );
+    assert!(
+        8 <= hi[2] + 1 && 15 >= lo[0] - 1,
+        "the box dilated by one voxel touches the kerb's brick: {lo:?} {hi:?}"
+    );
+    rig.step();
+    let block = rig
+        .store
+        .block_words(ChunkCoord(GROUND))
+        .expect("GROUND's block");
+    let r = brick_record(block, kerb).expect("the kerb's record");
+    let kept_x = record_visibility(r, 1);
+    let old_byte = (old * 255.0).round() / 255.0;
+
+    eprintln!(
+        "whole dig: {} touched directions, {} with a kept face, {} all the dig's",
+        rows.len(),
+        mixed.len(),
+        all_dug.len()
+    );
+    eprintln!("(1) kept-face directions with a held value: {moved:?}");
+    eprintln!("(2) all-dig directions not held (None, not VIS_BAKED, or SKY_STALE): {unheld:?}");
+    eprintln!("(3) the kerb cell's +x: {kept_x:?}, its old byte {old_byte}");
+    // (1) a face the dig did not make reads no held value; (2) the dig's own directions hold a
+    // VIS_BAKED value, not SKY_STALE; (3) a kept face keeps its old byte.
+    let failed: Vec<u8> = [
+        (1, moved.is_empty()),
+        (2, unheld.is_empty()),
+        (3, kept_x == Some(old_byte)),
+    ]
+    .into_iter()
+    .filter(|&(_, ok)| !ok)
+    .map(|(n, _)| n)
+    .collect();
+    assert!(
+        failed.is_empty(),
+        "failed clauses {failed:?} (printed above)"
+    );
+}
