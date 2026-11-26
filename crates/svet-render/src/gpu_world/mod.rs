@@ -116,8 +116,8 @@ mod window;
 
 pub use self::alloc::*;
 use self::columns::ColumnMap;
-pub(crate) use self::columns::column_is_final;
 pub use self::columns::{COLUMN_CELL, COLUMN_CELLS, COLUMN_NONE};
+pub(crate) use self::columns::{column_is_final, column_unfinal_at};
 pub use self::format::*;
 pub use self::lights::*;
 use self::slot::*;

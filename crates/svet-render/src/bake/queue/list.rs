@@ -89,7 +89,7 @@ impl BakeQueue {
 
     /// After a sliced opening that pushed a full job on a chunk with no block: counts it in
     /// [`QueueStats::starved_openings`] if, among up to `checks` candidates of the order from
-    /// `next` not found blocked in the last [`QUEUE_RECHECK`] steps, one with no block outside
+    /// `next` not skipped as blocked ([`BlockedMarks::recent`]), one with no block outside
     /// [`BakeQueue::full_first`] is ready and was left unpushed. Nothing with no coarse pass,
     /// or with every blank chunk's first pass coarse.
     pub(in crate::bake) fn note_starved(
@@ -117,16 +117,13 @@ impl BakeQueue {
             if class != 0
                 || self.pool.get(&c) != Some(&(class, coarse))
                 || self.full_first_at(c, eye)
-                || self
-                    .blocked
-                    .get(&c)
-                    .is_some_and(|&at| steps - at < QUEUE_RECHECK)
+                || self.blocked.recent(&c, steps)
             {
                 continue;
             }
             looked += 1;
             let coord = ChunkCoord(c);
-            if self.bakeable(run, coord, lr, view, eye).is_some()
+            if self.bakeable(run, coord, lr, view, eye).is_ok()
                 && run.mirror.lights_ready_near(coord, lr)
             {
                 self.stats.starved_openings += 1;

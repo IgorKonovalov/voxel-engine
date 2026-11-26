@@ -1,5 +1,6 @@
 //! The reach's verdicts (ADR-0046's reach rule, ADR-0080 rule 4 by tier): the walk over a
-//! chunk's light reach, its cache, and the re-queue of partial records when their reach fills.
+//! chunk's light reach, its cache, the re-queue of partial records when their reach fills, and
+//! the blocked marks a refused candidate carries until what refused it changes.
 
 use super::*;
 
@@ -15,11 +16,24 @@ pub(super) fn reach_of(
     resident: Option<&dyn Fn(ChunkCoord) -> bool>,
     first: bool,
 ) -> Reach {
+    reach_walk_of(run, coord, lr, resident, first).0
+}
+
+/// [`reach_of`] with the chunk its verdict stops at: the chunk waiting to upload under
+/// [`Reach::Waiting`], the first chunk not resident full under [`Reach::Partial`]; `None` when
+/// the reach is ready.
+fn reach_walk_of(
+    run: &BakeRun<'_>,
+    coord: ChunkCoord,
+    lr: i32,
+    resident: Option<&dyn Fn(ChunkCoord) -> bool>,
+    first: bool,
+) -> (Reach, Option<ChunkCoord>) {
     let gpu = run.mirror;
     if resident.is_none() && gpu.pending_chunks() == 0 {
-        return Reach::Ready;
+        return (Reach::Ready, None);
     }
-    reach_by(
+    reach_walk(
         coord,
         lr,
         |n| gpu.is_pending(n),
@@ -30,16 +44,16 @@ pub(super) fn reach_of(
 
 /// [`reach_of`]'s walk over `coord`'s reach: [`Reach::Waiting`] at the first chunk `pending`,
 /// else [`Reach::Partial`] if a chunk is not `full` (with `first`, at the first such chunk),
-/// else [`Reach::Ready`].
-pub(super) fn reach_by(
+/// else [`Reach::Ready`]; with the chunk the verdict stops at ([`reach_walk_of`]).
+pub(super) fn reach_walk(
     coord: ChunkCoord,
     lr: i32,
     pending: impl Fn(ChunkCoord) -> bool,
     full: impl Fn(ChunkCoord) -> bool,
     first: bool,
-) -> Reach {
+) -> (Reach, Option<ChunkCoord>) {
     let r = lr + 1;
-    let mut partial = false;
+    let mut partial = None;
     for z in -r..=r {
         for y in -r..=r {
             for x in -r..=r {
@@ -48,21 +62,20 @@ pub(super) fn reach_by(
                 }
                 let n = ChunkCoord([coord.0[0] + x, coord.0[1] + y, coord.0[2] + z]);
                 if pending(n) {
-                    return Reach::Waiting;
+                    return (Reach::Waiting, Some(n));
                 }
                 if !full(n) {
                     if first {
-                        return Reach::Partial;
+                        return (Reach::Partial, Some(n));
                     }
-                    partial = true;
+                    partial = partial.or(Some(n));
                 }
             }
         }
     }
-    if partial {
-        Reach::Partial
-    } else {
-        Reach::Ready
+    match partial {
+        Some(n) => (Reach::Partial, Some(n)),
+        None => (Reach::Ready, None),
     }
 }
 
@@ -90,11 +103,11 @@ impl BakeQueue {
         lr: i32,
         resident: Option<&dyn Fn(ChunkCoord) -> bool>,
         first: bool,
-    ) -> Reach {
+    ) -> (Reach, Option<ChunkCoord>) {
         if resident.is_none() && run.mirror.pending_chunks() == 0 {
-            return Reach::Ready;
+            return (Reach::Ready, None);
         }
-        if let Some(&(v, walked_first)) = self.reach_cache.get(&coord.0)
+        if let Some(&(v, walked_first, at)) = self.reach_cache.get(&coord.0)
             && (first || !walked_first || v != Reach::Partial)
         {
             // A streamer's residency can move a frame ahead of the mirror; a bounded world's
@@ -103,12 +116,12 @@ impl BakeQueue {
                 resident.is_some() || v == reach_of(run, coord, lr, resident, walked_first),
                 "the cached reach of {coord:?}"
             );
-            return v;
+            return (v, at);
         }
         self.stats.reach_checks += 1;
-        let v = reach_of(run, coord, lr, resident, first);
-        self.reach_cache.insert(coord.0, (v, first));
-        v
+        let (v, at) = reach_walk_of(run, coord, lr, resident, first);
+        self.reach_cache.insert(coord.0, (v, first, at));
+        (v, at)
     }
 
     /// Whether a chunk whose reach is not resident full bakes from the chunks that are.
@@ -126,7 +139,8 @@ impl BakeQueue {
         }
     }
 
-    /// [`BakeQueue::bakeable`]'s reach verdict, before the columns.
+    /// [`BakeQueue::bakeable`]'s reach verdict, before the columns; refused, the chunk of the
+    /// reach the walk stopped at.
     pub(super) fn bakeable_reach(
         &mut self,
         run: &BakeRun<'_>,
@@ -134,17 +148,20 @@ impl BakeQueue {
         lr: i32,
         view: &QueueView,
         eye: [i32; 3],
-    ) -> Option<bool> {
+    ) -> Result<bool, Blocker> {
         // ADR-0080 rule 4: a mid or far chunk bakes from the chunks resident; a near one keeps
         // the queue's mode.
         let mode = self
             .reach_mode
             .for_band(self.band_of(coord.0) == Band::Near);
-        let reach = self.reach_cached(run, coord, lr, view.resident_fn(), mode == ReachMode::Full);
+        let (reach, at) =
+            self.reach_cached(run, coord, lr, view.resident_fn(), mode == ReachMode::Full);
         let crosses = view
             .full_radius
             .is_some_and(|r| reach_crosses(coord, eye, lr, r));
-        reach_verdict(reach, mode, crosses)
+        // A walk that is not ready always names its chunk; the candidate's own is the fallback
+        // (its change drops the mark as well).
+        reach_verdict(reach, mode, crosses).ok_or(Blocker::Chunk(at.unwrap_or(coord).0))
     }
 
     /// Re-queues as a refinement each chunk flagged partial (its block, or its job's) within
@@ -255,5 +272,146 @@ impl BakeQueue {
                 .iter()
                 .any(|n| (0..3).all(|k| (n.0[k] - c[k]).abs() <= r))
         });
+    }
+}
+
+/// What refused a candidate at its last check ([`BakeQueue::bakeable`],
+/// [`Shadow::lights_ready_near`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::bake) enum Blocker {
+    /// A chunk of its reach waiting to upload or not resident full, or the lowest chunk that
+    /// holds a column over its reach footprint from final.
+    Chunk([i32; 3]),
+    /// A light range near it not current.
+    #[default]
+    Lights,
+}
+
+/// A candidate's blocked mark: the step that refused it and what refused it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::bake) struct Blocked {
+    pub(in crate::bake) at: u64,
+    pub(in crate::bake) by: Blocker,
+}
+
+/// The candidates refused at a check ([`BakeQueue::blocked`]), each skipped by the openings until
+/// its blocker changes ([`BlockedMarks::changed`], [`BlockedMarks::lights_changed`]) or
+/// [`QUEUE_RECHECK`] steps pass, with the index from each blocker to the candidates it holds:
+/// a step's changed chunk costs one lookup, and no walk of the marks.
+#[derive(Debug, Default)]
+pub(in crate::bake) struct BlockedMarks {
+    marks: ChunkMap<Blocked>,
+    by_chunk: ChunkMap<ChunkSet>,
+    by_lights: ChunkSet,
+}
+
+impl BlockedMarks {
+    /// Marks `c` as `b`, in place of any mark it held.
+    pub(super) fn insert(&mut self, c: [i32; 3], b: Blocked) {
+        if let Some(old) = self.marks.insert(c, b) {
+            self.unindex(c, old.by);
+        }
+        match b.by {
+            Blocker::Chunk(n) => {
+                self.by_chunk.entry(n).or_default().insert(c);
+            }
+            Blocker::Lights => {
+                self.by_lights.insert(c);
+            }
+        }
+    }
+
+    fn unindex(&mut self, c: [i32; 3], by: Blocker) {
+        match by {
+            Blocker::Chunk(n) => {
+                if let Some(set) = self.by_chunk.get_mut(&n) {
+                    set.remove(&c);
+                    if set.is_empty() {
+                        self.by_chunk.remove(&n);
+                    }
+                }
+            }
+            Blocker::Lights => {
+                self.by_lights.remove(&c);
+            }
+        }
+    }
+
+    pub(super) fn remove(&mut self, c: &[i32; 3]) -> Option<Blocked> {
+        let b = self.marks.remove(c)?;
+        self.unindex(*c, b.by);
+        Some(b)
+    }
+
+    #[cfg(test)]
+    pub(super) fn get(&self, c: &[i32; 3]) -> Option<&Blocked> {
+        self.marks.get(c)
+    }
+
+    pub(super) fn contains_key(&self, c: &[i32; 3]) -> bool {
+        self.marks.contains_key(c)
+    }
+
+    pub(super) fn keys(&self) -> impl Iterator<Item = &[i32; 3]> + '_ {
+        self.marks.keys()
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.marks.len()
+    }
+
+    /// Keeps the marks of the candidates `keep` names.
+    pub(super) fn retain(&mut self, mut keep: impl FnMut(&[i32; 3]) -> bool) {
+        let gone: Vec<[i32; 3]> = self.marks.keys().filter(|c| !keep(c)).copied().collect();
+        for c in gone {
+            self.remove(&c);
+        }
+    }
+
+    /// Whether `c` was refused fewer than [`QUEUE_RECHECK`] steps before `steps` and its blocker
+    /// has not changed since: the openings skip it.
+    pub(super) fn recent(&self, c: &[i32; 3], steps: u64) -> bool {
+        self.marks
+            .get(c)
+            .is_some_and(|b| steps - b.at < QUEUE_RECHECK)
+    }
+
+    /// Drops the marks whose blocker is a chunk of `changed` (the mirror's changes of a step):
+    /// those candidates are checked at the next opening. The count dropped.
+    pub(super) fn changed(&mut self, changed: &[ChunkCoord]) -> usize {
+        if self.by_chunk.is_empty() {
+            return 0;
+        }
+        let mut n = 0;
+        for c in changed {
+            if let Some(held) = self.by_chunk.remove(&c.0) {
+                for h in held {
+                    self.marks.remove(&h);
+                    n += 1;
+                }
+            }
+        }
+        n
+    }
+
+    /// Drops the marks whose blocker is the lights: the light key changed. The count dropped.
+    pub(super) fn lights_changed(&mut self) -> usize {
+        let held = std::mem::take(&mut self.by_lights);
+        for h in &held {
+            self.marks.remove(h);
+        }
+        held.len()
+    }
+
+    /// Drops every mark whose blocker is a chunk: the mirror's changes went untracked. The
+    /// count dropped.
+    pub(super) fn untracked(&mut self) -> usize {
+        let held = std::mem::take(&mut self.by_chunk);
+        let mut n = 0;
+        for h in held.into_values().flatten() {
+            self.marks.remove(&h);
+            n += 1;
+        }
+        n
     }
 }

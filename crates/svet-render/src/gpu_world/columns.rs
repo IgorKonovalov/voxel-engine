@@ -321,10 +321,22 @@ pub(crate) fn column_is_final(
     mirrored: impl Fn(ChunkCoord) -> bool,
     wanted: Option<&dyn Fn(ChunkCoord) -> bool>,
 ) -> bool {
-    z.into_iter().all(|z| {
-        let c = ChunkCoord([cx, cy, z]);
-        !pending(c) && wanted.is_none_or(|w| !w(c) || mirrored(c))
-    })
+    column_unfinal_at(cx, cy, z, pending, mirrored, wanted).is_none()
+}
+
+/// [`column_is_final`]'s reading form: the lowest chunk of the column that holds it from final
+/// (pending upload, or wanted and not mirrored), `None` when the column is final.
+pub(crate) fn column_unfinal_at(
+    cx: i32,
+    cy: i32,
+    z: std::ops::Range<i32>,
+    pending: impl Fn(ChunkCoord) -> bool,
+    mirrored: impl Fn(ChunkCoord) -> bool,
+    wanted: Option<&dyn Fn(ChunkCoord) -> bool>,
+) -> Option<ChunkCoord> {
+    z.into_iter()
+        .map(|z| ChunkCoord([cx, cy, z]))
+        .find(|&c| pending(c) || wanted.is_some_and(|w| w(c) && !mirrored(c)))
 }
 
 /// A chunk's sheet from `e`^3 bricks of `cell`-voxel cells (`e` 8 and `cell` 1 for a full

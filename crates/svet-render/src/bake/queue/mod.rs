@@ -25,7 +25,7 @@ pub(crate) use self::box_signal::{BoxSender, BoxSignal};
 pub use self::message::Residency;
 pub(crate) use self::message::{Arrival, FrameMessage, Inbox, StepSettings};
 pub use self::open::in_view_census;
-use self::reach::reach_of;
+use self::reach::{Blocked, BlockedMarks, Blocker, reach_of};
 pub use self::reads::QueueRead;
 pub(crate) use self::reads::Source as ReadSource;
 pub(crate) use self::shadow::{LightNote, Shadow, notes};
@@ -36,6 +36,7 @@ pub use self::stats::{
     QueueFed, QueueStats, RuleMissed, chunk_nearest,
 };
 pub use self::tiers::DEFAULT_TIERS;
+use crate::gpu_world::column_unfinal_at;
 
 /// Frames a re-baked block's values move over, from what it showed to its new values.
 pub const FADE: u32 = 16;
@@ -60,7 +61,8 @@ pub const DEFAULT_COARSE_SAMPLES: u32 = 256;
 /// (`--near`).
 pub const DEFAULT_NEAR: i32 = 2;
 
-/// Frames before a candidate whose reach or lights were not ready is checked again.
+/// Frames at most before a candidate whose reach or lights were not ready is checked again; it
+/// is checked at the first opening after what refused it changes ([`BlockedMarks`]).
 pub(super) const QUEUE_RECHECK: u64 = 30;
 
 /// Steps an opening that found nothing ready waits before sorting the candidates again.
@@ -327,8 +329,8 @@ pub struct BakeQueue {
     /// Chunks an edit touched while their job ran, each with the frame message that carried
     /// the edit: a job stamped before it ([`JobLoop::stamps`]) throws its block away.
     pub(super) stale: std::collections::HashMap<[i32; 3], u64>,
-    /// Candidates not ready at a check, and the step that checked them.
-    pub(super) blocked: std::collections::HashMap<[i32; 3], u64>,
+    /// Candidates not ready at a check, the step that checked them and what refused them.
+    pub(super) blocked: BlockedMarks,
     pub(super) fades: BTreeMap<[i32; 3], Fade>,
     pub(super) steps: u64,
     /// The step before which no candidate is sorted: set when none was ready.
@@ -416,8 +418,8 @@ pub struct BakeQueue {
     /// the light radius and one of it changes in the mirror.
     /// Each verdict with whether its walk stopped at the first chunk not resident full
     /// ([`reach_of`]'s `first`), whose [`Reach::Partial`] does not say that nothing in the reach
-    /// waits to upload.
-    pub(super) reach_cache: ChunkMap<(Reach, bool)>,
+    /// waits to upload, and the chunk the walk stopped at (none when ready).
+    pub(super) reach_cache: ChunkMap<(Reach, bool, Option<ChunkCoord>)>,
     /// Chunks whose block was baked from a partial reach ([`ReachMode::Partial`]).
     pub(super) partial: ChunkSet,
     /// The jobs pending or open that bake from a partial reach.
@@ -427,8 +429,9 @@ pub struct BakeQueue {
     /// Flagged chunks (block or job) a chunk within whose reach arrived full: candidates again,
     /// as a refinement.
     pub(super) partial_due: ChunkSet,
-    /// The step's verdicts of [`GpuWorld::column_final`] by chunk column, emptied each step.
-    pub(super) columns_final: std::collections::HashMap<[i32; 2], bool>,
+    /// The step's verdicts of [`GpuWorld::column_final`] by chunk column, emptied each step: the
+    /// lowest chunk that holds the column from final, `None` when final.
+    pub(super) columns_final: std::collections::HashMap<[i32; 2], Option<ChunkCoord>>,
     /// [`crate::Lighting::column_wait`], set by the frame each step.
     pub column_wait: bool,
     /// [`crate::Lighting::key_step`] in degrees, set by the frame each step: a block re-bakes
@@ -507,17 +510,47 @@ pub(super) fn reach_columns_final(
     lr: i32,
     mut final_column: impl FnMut(i32, i32) -> bool,
 ) -> bool {
+    reach_columns_first(coord, lr, |x, y| (!final_column(x, y)).then_some(())).is_none()
+}
+
+/// The first answer `unfinal(cx, cy)` gives over the chunk columns of `coord`'s reach footprint,
+/// in [`reach_columns_final`]'s order: the walk stops there.
+pub(super) fn reach_columns_first<T>(
+    coord: ChunkCoord,
+    lr: i32,
+    mut unfinal: impl FnMut(i32, i32) -> Option<T>,
+) -> Option<T> {
     let r = lr + 1;
     for y in -r..=r {
         for x in -r..=r {
             if (-r..=r).any(|z| in_reach([x, y, z], lr))
-                && !final_column(coord.0[0] + x, coord.0[1] + y)
+                && let Some(t) = unfinal(coord.0[0] + x, coord.0[1] + y)
             {
-                return false;
+                return Some(t);
             }
         }
     }
-    true
+    None
+}
+
+/// [`Shadow::column_final`]'s reading form: the lowest chunk of column `(cx, cy)` over the
+/// shadow's window that holds it from final ([`column_unfinal_at`]), `None` when final.
+fn column_unfinal(
+    gpu: &Shadow,
+    cx: i32,
+    cy: i32,
+    wanted: Option<&dyn Fn(ChunkCoord) -> bool>,
+) -> Option<ChunkCoord> {
+    let w = gpu.window();
+    let (min, size) = (w.min.0[2], w.size()[2].max(1));
+    column_unfinal_at(
+        cx,
+        cy,
+        min..min + size,
+        |c| gpu.is_pending(c),
+        |c| gpu.is_mirrored(c),
+        wanted,
+    )
 }
 
 /// A reading hook: the chunks that hold a column over `coord`'s reach footprint from final
@@ -795,7 +828,9 @@ impl BakeQueue {
     /// `Some(false)` when its reach is ready, `Some(true)` under [`ReachMode::Partial`] when
     /// nothing in its reach waits to upload and the reach crosses the streamer's full radius
     /// about `eye`: a chunk within it lies past the full sphere (`d2 > r^2` in chunks, the
-    /// streamer's rule), so a still camera never makes it whole. Else `None`.
+    /// streamer's rule), so a still camera never makes it whole. Refused, what refused it: the
+    /// chunk of the reach its walk stopped at, or the lowest chunk of the first column over its
+    /// reach footprint not final (under the wait, or pending upload with the wait off).
     pub(super) fn bakeable(
         &mut self,
         run: &BakeRun<'_>,
@@ -803,20 +838,21 @@ impl BakeQueue {
         lr: i32,
         view: &QueueView,
         eye: [i32; 3],
-    ) -> Option<(bool, bool)> {
+    ) -> Result<(bool, bool), Blocker> {
         let partial = self.bakeable_reach(run, coord, lr, view, eye)?;
-        let fin = self.columns_final_at(run, coord, lr, view);
-        if fin {
-            return Some((partial, false));
-        }
+        let Some(held) = self.columns_unfinal_at(run, coord, lr, view) else {
+            return Ok((partial, false));
+        };
         if self.column_wait {
-            return None;
+            return Err(Blocker::Chunk(held.0));
         }
         // The wait off: no chunk of the columns may be pending upload. The block is
         // provisional where the bake reads the sky (the column map's tops may still rise).
         let gpu = run.mirror;
-        reach_columns_final(coord, lr, |x, y| gpu.column_final(x, y, None))
-            .then_some((partial, run.sky != 0))
+        match reach_columns_first(coord, lr, |x, y| column_unfinal(gpu, x, y, None)) {
+            None => Ok((partial, run.sky != 0)),
+            Some(c) => Err(Blocker::Chunk(c.0)),
+        }
     }
 
     /// Whether every column over `coord`'s reach footprint is final under `view`, the step's
@@ -828,13 +864,25 @@ impl BakeQueue {
         lr: i32,
         view: &QueueView,
     ) -> bool {
+        self.columns_unfinal_at(run, coord, lr, view).is_none()
+    }
+
+    /// [`BakeQueue::columns_final_at`]'s reading form: the lowest chunk of the first column not
+    /// final, `None` when every one is.
+    fn columns_unfinal_at(
+        &mut self,
+        run: &BakeRun<'_>,
+        coord: ChunkCoord,
+        lr: i32,
+        view: &QueueView,
+    ) -> Option<ChunkCoord> {
         let held = held_by_streamer(view.eye, view.lod_radius, view.resident_fn());
         let held = held.as_ref().map(|h| h as &dyn Fn(ChunkCoord) -> bool);
         let memo = &mut self.columns_final;
-        reach_columns_final(coord, lr, |x, y| {
+        reach_columns_first(coord, lr, |x, y| {
             *memo
                 .entry([x, y])
-                .or_insert_with(|| run.mirror.column_final(x, y, held))
+                .or_insert_with(|| column_unfinal(run.mirror, x, y, held))
         })
     }
 
@@ -966,6 +1014,8 @@ impl BakeQueue {
     }
 }
 
+#[cfg(test)]
+mod blocked_tests;
 #[cfg(test)]
 mod split_tests;
 #[cfg(test)]

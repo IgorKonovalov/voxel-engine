@@ -1,6 +1,6 @@
 # 0109: A blocked chunk is checked again when its blocker clears: the start on a streamed world
 
-> **Status:** draft (2026-11-26, architect; awaits the owner's go). Phases 1 to 3 do not depend on the open owner question; Phase 5 exists only under one of its answers.
+> **Status:** in-progress (2026-11-26, owner's go): Phase 1 built and read (eight switched runs 5 to 10 steps); stopped on its third stop, a pinned order in `gpu_queue_reach` moved (readings log, Phase 1). Phases 1 to 3 do not depend on the open owner question; Phase 5 exists only under one of its answers.
 > **Created:** 2026-11-26
 > **Milestone:** none (a fix in the start-up path; follows Plan 0099, `docs/roadmap.md` M9's bake thread)
 > **Related ADRs:** [ADR-0059](../adrs/0059-loading-runs-as-time-sliced-steps-on-the-apps-frame-loop-behind-an-engine-loading-frame.md) (the pre-roll and its start-up budgets; not changed unless the owner picks the bound, and then by a new ADR, see Phase 5), ADR-0070's amendment (the column rule; not changed), ADR-0046 (the reach rule; not changed)
@@ -138,6 +138,7 @@ struct Blocked { at: u64, by: Blocker }
 
 | phase | owner | state | commit |
 |---|---|---|---|
+| 1 | dev | stopped: `an_opening_without_a_mirror_event_rebuilds_nothing` (`gpu_queue_reach`) pins `[2, 3, 1, 4, 0, 7, 5, 6]`, reads `[2, 3, 1, 4, 0, 5, 6, 7]`; tests in a new `queue/blocked_tests.rs`; `gpu_world/mod.rs` one line ([log](logs/0109.md)) | committed with this row |
 
 ### Notes
 

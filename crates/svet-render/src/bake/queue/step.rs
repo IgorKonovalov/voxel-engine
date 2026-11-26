@@ -39,6 +39,11 @@ impl BakeQueue {
             store.landed(c, w);
         }
         self.take_message(frame, settings, arrivals, world.materials());
+        // A light key changed: the candidates the lights refused are checked at the next
+        // opening.
+        if notes.lights.is_some() && self.blocked.lights_changed() > 0 {
+            self.quiet_until = self.steps;
+        }
         shadow.take(&notes);
         self.changes_in = notes.changed;
         let run = &BakeRun {
@@ -241,7 +246,7 @@ impl BakeQueue {
         if !by_keys {
             self.fades.retain(|c, _| held(c));
             self.faceless.retain(held);
-            self.blocked.retain(|c, _| held(c));
+            self.blocked.retain(held);
             self.digs.retain(|c, _| held(c));
             self.reach.retain(held);
             self.listed.retain(|c, _| held(c));
@@ -273,6 +278,11 @@ impl BakeQueue {
                         self.keys.retain(|k| *k != c);
                     }
                 }
+                // A candidate whose blocker changed is checked at the next opening, not
+                // QUEUE_RECHECK steps after its refusal.
+                if self.blocked.changed(&ch) > 0 {
+                    self.quiet_until = self.steps;
+                }
                 self.laps.lap(S_FORGET);
                 self.drop_reach(&ch, gpu.light_radius());
                 self.laps.lap(S_DROP_REACH);
@@ -280,6 +290,9 @@ impl BakeQueue {
                 self.requeue_partial(gpu, Some(ch.as_slice()));
             }
             None => {
+                if self.blocked.untracked() > 0 {
+                    self.quiet_until = self.steps;
+                }
                 self.laps.lap(S_FORGET);
                 self.reach_cache.clear();
                 self.laps.lap(S_DROP_REACH);
