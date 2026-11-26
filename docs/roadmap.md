@@ -763,7 +763,7 @@ a cheap query.
   positional voice as an audio source through M4's occlusion.
 - **ADRs expected:** transport; voice codec.
 
-### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0; Plan 0094 closed 2026-11-20, v0.68.0; Plan 0095 closed 2026-11-21, v0.69.0; Plan 0097 closed 2026-11-23, v0.70.0; Plan 0096 closed 2026-11-23, v0.71.0; Plan 0098 closed 2026-11-24, v0.72.0; Plan 0100 closed 2026-11-25, v0.75.0; Plan 0099 closed 2026-11-26, v0.76.0)
+### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0; Plan 0094 closed 2026-11-20, v0.68.0; Plan 0095 closed 2026-11-21, v0.69.0; Plan 0097 closed 2026-11-23, v0.70.0; Plan 0096 closed 2026-11-23, v0.71.0; Plan 0098 closed 2026-11-24, v0.72.0; Plan 0100 closed 2026-11-25, v0.75.0; Plan 0099 closed 2026-11-26, v0.76.0; Plan 0104 closed 2026-11-26, v0.77.0; Plan 0101 closed 2026-11-26, v0.78.0)
 
 The open-sky half of the "Floor, profiles and scene scale" decision, as general engine
 mechanisms: the first consumer is underground, so nothing here is on its P0 list, and terrain
@@ -869,14 +869,27 @@ against the baked store: no probe or store term takes sun or sky light.
   default changed on any profile. The one change every build takes: a baked key ray that
   ends under its column's top is not lit (a closed cave no longer bakes sunlit). Kept as
   settings, off: `key cover ray|record` (sun under cover, a source that only adds light),
-  `key at face|face-smooth`, `key horizon walk` (every cell of the column map). Under `key
+  `key at face|face-smooth`, `key horizon walk` (every cell of the column map); of these only
+  `key cover ray` stands since Plan 0104's close (the next entry). Under `key
   far column` no key ray is cast at a cube face for the penumbra. Closed with no change:
   the near trunks under coarse light (no fault read or seen). Left open, to the follow-on
   plan (the backlog's "The sun's term at small faces"): the wobble, the tunnel slot's
   shimmer, the near shadow's hole, sun under cover as a default; it starts from clips the
-  owner judges, then a measure that ranks what he ranked. **Drafted 2026-11-25 as
-  [Plan 0104](plans/0104-the-wobble-anchored-to-the-owners-eye-clips-he-ranks-a-measure-that-ranks-them-then-the-remedy.md)**,
-  which awaits the owner's go: no remedy is built or picked before a clip is anchored.
+  owner judges, then a measure that ranks what he ranked (Plan 0104, the next entry).
+- **The wobble anchored to the owner's eye** ([Plan 0104](plans/done/0104-the-wobble-anchored-to-the-owners-eye-clips-he-ranks-a-measure-that-ranks-them-then-the-remedy.md),
+  closed 2026-11-26, v0.77.0; no ADR, an addition to ADR-0084's Outcome). **Closed with no
+  remedy, by the owner's call:** his move was rendered to five lossless clips at his window's
+  size, he watched them and ranked two pairs blind, and found the defaults "almost good".
+  No default, golden or image bar moved. Removed, as ADR-0084 rules for a setting the
+  follow-on plan does not pick: `key cover record`, `key at`, `key horizon` (its walk shader
+  and the column map's coarse rows with it); **`key cover ray` stays a setting, off on every
+  profile**, as the one control for sun under cover. The wobble rigs read a baked store (one
+  shared settle with a census), and the forest soak test asserts on one such store. Left
+  open, in the backlog with his clips as anchors: sunlit tree crowns sparkle in motion (cause
+  not shown; not shown to be the sun's shadow); the picture settles for about a second after
+  a turn (read as FSR 2's history: outlines change 22.05 levels with it, 0.007 without); the
+  near shadow's hole and sun under cover as a default, not taken up. No measure of the wobble
+  exists: the one reading that followed his eye is provisional, on one pair.
 - **The bake step off the render thread** ([Plan 0099](plans/done/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md),
   closed 2026-11-26, v0.76.0; ADR-0083 accepted with an Outcome, extending ADR-0017): the live
   bake queue's books and per-job CPU work run on one bake thread; the render thread applies

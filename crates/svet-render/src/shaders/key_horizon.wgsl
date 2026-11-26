@@ -1,8 +1,6 @@
-// The key light's column horizon (ADR-0079, ADR-0084): the march over the column map, the
-// switch to the walk (`key_walk.wgsl`) and the point on a cube face it is read at
-// (`Lighting::key_at`). Composed into the temporal pass and the light pass, which reads it for
-// the near cover source (`key_cover_near`, sky_light.wgsl), after `common.wgsl` and
-// `hitrec.wgsl`.
+// The key light's column horizon (ADR-0079, ADR-0084): the march over the column map, read at
+// the hit. Composed into the temporal pass and the light pass, which reads it for the near
+// cover source (`key_cover_near`, sky_light.wgsl), after `common.wgsl` and `hitrec.wgsl`.
 
 // How far a seed's column test (`column_estimate`, pair.wgsl) and the key light's horizon lift
 // the hit along the face normal, in voxels: past the column map's cell, so the point is not
@@ -122,45 +120,8 @@ fn column_key_visibility(p: vec3<f32>, n: vec3<f32>) -> f32 {
     return clamp((tan_e - tan_h) / (2.0 * r) + 0.5, 0.0, 1.0);
 }
 
-// The column horizon at hit `p` with face normal `n`: under LIGHTING2_KEY_WALK the walk over
-// every cell (`column_key_walk`, `key_walk.wgsl`), else the march (`column_key_visibility`).
-fn column_key_horizon(p: vec3<f32>, n: vec3<f32>) -> f32 {
-    if ((params.lighting2 & LIGHTING2_KEY_WALK) != 0u) {
-        return column_key_walk(p, n);
-    }
-    return column_key_visibility(p, n);
-}
-
-// The column horizon (`column_key_horizon`) of a cube face's hit `p` with face normal `nf`
-// on `axis` (`Lighting::key_at`): at the hit; under LIGHTING2_KEY_AT_FACE at the centre of the
-// hit's voxel face (the voxel's centre half a voxel along `nf`), one value a face whatever the
-// jitter; under LIGHTING2_KEY_AT_SMOOTH the bilinear blend of the horizons at the four face
-// centres of the face's plane nearest the hit (the lattice at half-integer coordinates across
-// the plane), a ramp one voxel wide fixed in the world. A hit with no face axis reads the hit.
-fn key_horizon_at(p: vec3<f32>, nf: vec3<f32>, axis: i32) -> f32 {
-    let bits = params.lighting2 & (LIGHTING2_KEY_AT_FACE | LIGHTING2_KEY_AT_SMOOTH);
-    if (bits == 0u || axis < 0) {
-        return column_key_horizon(p, nf);
-    }
-    let along = axis_mask(axis);
-    let centre = vec3<f32>(store_voxel(p, nf)) + 0.5 + 0.5 * nf;
-    if ((bits & LIGHTING2_KEY_AT_FACE) != 0u) {
-        return column_key_horizon(centre, nf);
-    }
-    // Across the plane: the lattice point at or below the hit on each tangent axis, and the
-    // hit's place between it and the next; on the face's axis the plane itself.
-    let g = p - 0.5;
-    let lo = select(floor(g) + 0.5, centre, along);
-    let f = select(fract(g), vec3<f32>(0.0), along);
-    let a = (axis + 1) % 3;
-    let b = (axis + 2) % 3;
-    let ea = select(vec3<f32>(0.0), vec3<f32>(1.0), axis_mask(a));
-    let eb = select(vec3<f32>(0.0), vec3<f32>(1.0), axis_mask(b));
-    let fa = dot(f, ea);
-    let fb = dot(f, eb);
-    let k00 = column_key_horizon(lo, nf);
-    let k10 = column_key_horizon(lo + ea, nf);
-    let k01 = column_key_horizon(lo + eb, nf);
-    let k11 = column_key_horizon(lo + ea + eb, nf);
-    return mix(mix(k00, k10, fa), mix(k01, k11, fa), fb);
+// The column horizon of a cube face's hit `p` with face normal `nf`, read at the hit
+// (`column_key_visibility`).
+fn key_horizon_at(p: vec3<f32>, nf: vec3<f32>) -> f32 {
+    return column_key_visibility(p, nf);
 }

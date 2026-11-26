@@ -182,8 +182,7 @@ struct Lights {
 
 // The column map (`GpuWorld::column_map`): per COLUMN_CELL-voxel column of the window's
 // footprint the highest opaque voxel's z among the resident chunks, COLUMN_NONE for none; a
-// chunk column's COLUMN_CELLS^2 tile at its coordinate wrapped by the window size; under the
-// map's rows its coarse levels (`gpu_world::column_coarse_texel`, `column_coarse_height`).
+// chunk column's COLUMN_CELLS^2 tile at its coordinate wrapped by the window size.
 @group(0) @binding(19) var column_map: texture_2d<i32>;
 
 // `ExposureState` in exposure.rs: the exposure this frame uses in auto (`current`) and the one

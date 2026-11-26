@@ -153,3 +153,20 @@ change to attribute, not a tier fault. The two still-camera upscaler failures do
 on this tree; whether main since `123964e7` or CI's older LLVM 21 lavapipe explains them, the
 next weekly run shows. The shutdown bound is CI's load (the `ci-soak` profile runs the GPU tests
 in parallel, and this test's fly-through process competes with them).
+
+### The `gpu_wobble` soak tests on one baked store (Plan 0104 Phase 0b, `127e7672`)
+
+Quoted from [`plans/logs/0104.md`](../plans/logs/0104.md) ("Phase 0b"), not read again. The
+RTX 3080 Laptop (driver 615.78.08) and lavapipe (llvmpipe Mesa 26.2.5, LLVM 23.1.3) on the RTX
+laptop machine, each test alone under the exclusive perf lock, nice 19, from a frozen release
+copy of the binary at `127e7672`; the 1-minute load at the lock.
+
+| Test | Adapter, frame | Load | Wall | Settle | Reads (fly 180 / fly 20) |
+|---|---|---|---|---|---|
+| `the_defaults_hold_still_at_rest_and_the_far_holds` | RTX, 1920x1080 | 1.42 (22:06:26) | 145 s | 30.1 s | 60.8 / 45.0 s |
+| `the_defaults_hold_still_at_rest_and_the_far_holds` | lavapipe, 960x540 | 0.87 (22:09:30) | 253 s | 141.4 s | 60.6 / 46.9 s |
+| `the_far_moves_no_worse_than_the_before` | RTX | 1.29 (22:08:51) | 5 s | 0.2 to 0.3 s each | |
+
+The forest test before the shared settle (Plan 0104 Phase 0, six arms at 1920x1080) read 771 s
+on the RTX and 12 538 s on lavapipe. Its bar on lavapipe is 600 s. The other test was not read
+on lavapipe in Phase 0b.

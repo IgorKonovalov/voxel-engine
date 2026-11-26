@@ -95,7 +95,6 @@ const LIGHT_MODULES: &[&str] = &[
     SKY_WGSL,
     SKY_LIGHT_WGSL,
     KEY_HORIZON_WGSL,
-    KEY_WALK_WGSL,
     SHADE_WGSL,
 ];
 
@@ -115,7 +114,6 @@ pub(crate) const PASSES: [PassSpec; 15] = [
             SKY_WGSL,
             PAIR_WGSL,
             KEY_HORIZON_WGSL,
-            KEY_WALK_WGSL,
             TEMPORAL_WGSL,
         ],
         entry: "temporal",
@@ -164,7 +162,6 @@ pub(crate) const PASSES: [PassSpec; 15] = [
             SKY_WGSL,
             PAIR_WGSL,
             KEY_HORIZON_WGSL,
-            KEY_WALK_WGSL,
             TEMPORAL_WGSL,
         ],
         entry: "temporal",
@@ -535,7 +532,7 @@ impl Frame {
 /// pools, records, table and materials, the light samples and the emission scales, the blue
 /// noise (12), the exposure state (13), the list of lights (14), the entity mirror (15), and the
 /// sky's uniform (16) and LUTs (17, 18) as `sky.wgsl` declares them, and the mirror's column map
-/// (19, its coarse levels in its last rows).
+/// (19).
 fn world_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     let storage = |binding| wgpu::BindGroupLayoutEntry {
         binding,

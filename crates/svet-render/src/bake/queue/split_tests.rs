@@ -43,37 +43,60 @@ struct Mirror {
     size: i32,
     /// The chunks held, `0 .. held` along x; the rest not yet streamed in.
     held: i32,
+    /// Every column's lowest top: the slab's, or one over the chunks' reach (buried).
+    lowest: i32,
+    /// The light radius: 2, or 0 where the rule's footprint (the columns within it) must lie in
+    /// the one-chunk-wide window.
+    lr: i32,
+    /// The window's chunks along y and z (1 and 1 but where a rule rig widens it).
+    dims: [i32; 2],
+    /// Chunks of the window not mirrored (not yet streamed in, or evicted).
+    absent: ChunkSet,
+    /// Chunks mirrored as their LOD version.
+    lod: ChunkSet,
+    /// Columns whose lowest top is not `lowest`.
+    tops: std::collections::HashMap<[i32; 2], i32>,
+    /// The chunks with lights and their state; `light_gen` moves with every change of them.
+    lights: Vec<([i32; 3], LightNote)>,
+    light_gen: u64,
 }
 
 impl MirrorRead for Mirror {
     fn window(&self) -> ChunkExtent {
-        ChunkExtent::new([0, 0, 0], [self.size, 1, 1])
+        ChunkExtent::new([0, 0, 0], [self.size, self.dims[0], self.dims[1]])
     }
     fn light_radius(&self) -> i32 {
-        2
+        self.lr
     }
     fn chunk_note(&self, c: ChunkCoord) -> ChunkNote {
+        let mirrored = c.0[0] < self.held && !self.absent.contains(&c.0);
         ChunkNote {
-            mirrored: c.0[0] < self.held,
-            lod: false,
+            mirrored,
+            lod: mirrored && self.lod.contains(&c.0),
             pending: false,
         }
     }
     fn chunks(&self) -> Vec<ChunkCoord> {
         let mut out = Vec::new();
-        for x in 0..self.held {
-            out.push(ChunkCoord([x, 0, 0]));
+        for z in 0..self.dims[1] {
+            for y in 0..self.dims[0] {
+                for x in 0..self.held {
+                    if !self.absent.contains(&[x, y, z]) {
+                        out.push(ChunkCoord([x, y, z]));
+                    }
+                }
+            }
         }
         out
     }
-    fn column_lowest(&self, _: i32, _: i32) -> i32 {
-        SLAB_TOP
+    fn column_lowest(&self, x: i32, y: i32) -> i32 {
+        self.tops.get(&[x, y]).copied().unwrap_or(self.lowest)
     }
     fn light_key(&self) -> (u64, u64) {
-        (0, 0)
+        (self.light_gen, 0)
     }
     fn light_notes(&self) -> Vec<([i32; 3], LightNote)> {
-        Vec::new()
+        self.lights.clone()
     }
 }
 
@@ -180,6 +203,31 @@ struct Rig {
     inbox: Inbox,
     /// The sample cap each message's view sets (`QueueView::samples`); `None` prices it.
     samples: Option<u64>,
+    /// What else each message's view and run carry: the camera, a streamed world's residency
+    /// (the mirror's full chunks) with the streamer's LOD and full radii, and the sky's word.
+    view: RigView,
+}
+
+/// [`Rig::view`]: a bounded world under no sky, the camera at `[32, 32, 32]`, by default.
+struct RigView {
+    eye: [f32; 3],
+    /// The residency read from the mirror's full chunks at each message (a streamed world).
+    streamed: bool,
+    lod_radius: Option<i32>,
+    full_radius: Option<i32>,
+    sky: u32,
+}
+
+impl Default for RigView {
+    fn default() -> Self {
+        Self {
+            eye: [32.0, 32.0, 32.0],
+            streamed: false,
+            lod_radius: None,
+            full_radius: None,
+            sky: 0,
+        }
+    }
 }
 
 impl Rig {
@@ -199,6 +247,14 @@ impl Rig {
             changed: Vec::new(),
             size,
             held,
+            lowest: SLAB_TOP,
+            lr: 2,
+            dims: [1, 1],
+            absent: ChunkSet::default(),
+            lod: ChunkSet::default(),
+            tops: Default::default(),
+            lights: Vec::new(),
+            light_gen: 0,
         };
         store.start_queue(mirror.window(), settings.cell);
         let _ = store.take_direct();
@@ -225,6 +281,7 @@ impl Rig {
             settings: step_settings,
             inbox: Inbox::default(),
             samples: None,
+            view: RigView::default(),
         }
     }
 
@@ -243,17 +300,26 @@ impl Rig {
         let n = notes(&self.mirror, (!first).then_some(changed), *window, key);
         *window = n.window;
         self.half.frame += 1;
+        let resident = self.view.streamed.then(|| {
+            let full: std::collections::HashSet<ChunkCoord> = self
+                .mirror
+                .chunks()
+                .into_iter()
+                .filter(|&c| !self.mirror.chunk_note(c).lod)
+                .collect();
+            Residency::of_chunks(Arc::new(full))
+        });
         let view = QueueView {
-            eye: [32.0, 32.0, 32.0],
+            eye: self.view.eye,
             forward: [1.0, 0.0, 0.0],
-            resident: None,
+            resident,
             samples: self.samples,
             interval_s: 1.0 / 60.0,
             hold: None,
             half_angle: 1.0,
             frustum: None,
-            full_radius: None,
-            lod_radius: None,
+            full_radius: self.view.full_radius,
+            lod_radius: self.view.lod_radius,
             focal_px: None,
         };
         let frame = self.half.frame;
@@ -262,7 +328,7 @@ impl Rig {
             start: StepStart::now(),
             view,
             notes: n,
-            sky: 0,
+            sky: self.view.sky,
             key: None,
             settings: self.settings,
             arrivals: self.inbox.take(frame),
@@ -794,7 +860,121 @@ fn a_withdrawn_round_counts_in_what_the_estimate_reads() {
     }
 }
 
+/// The column top the audit's rig sets, at light radius 0 (each chunk's footprint its own
+/// column, inside the rig's window): over every chunk's reach box (z 0's tops at 63), so the
+/// rule holds for every chunk.
+const BURIED: i32 = 4096;
+
+/// Plan 0101 Phase 1, done-when (1). Under the audit the rule writes no record: each of the three
+/// buried chunks takes a job, and its block, read back with no light (the recording half echoes
+/// each entry's zero sums), equals the zero record for its faces: compared 3 under `full`, none
+/// differs. The same block with one sky word changed counts one that differs, kept with its
+/// chunk, its case and that word's index. A job whose result is placed stale (an edit's message
+/// after its stamp) counts in neither: across every step, the blocks compared are the listing
+/// jobs' blocks placed ([`QueueStats::baked`] less the digs').
+#[test]
+fn the_audit_counts_a_block_that_differs_from_the_zero_record() {
+    let audited = |rig: &Rig| {
+        let a = &rig.queue.stats.rule_audit;
+        (a.compared.iter().sum::<u64>(), a.differ.iter().sum::<u64>())
+    };
+    let mut rig = Rig::new(None);
+    rig.mirror.lowest = BURIED;
+    rig.mirror.lr = 0;
+    rig.queue.rule_audit = true;
+    rig.queue.rule_reading = true;
+    rig.until("every chunk holds a block", |r| {
+        (0..CHUNKS[0]).all(|x| r.store.block(ChunkCoord([x, 0, 0])).is_some())
+            && r.half.flights.is_empty()
+    });
+    let a = rig.queue.stats.rule_audit;
+    assert_eq!(a.compared, [3, 0, 0, 0], "{a:?}");
+    assert_eq!(a.differ, [0; 4], "{:?}", a.kept());
+    assert_eq!(rig.queue.stats.zeroed, 0, "the rule wrote no record");
+    assert!(rig.queue.zeroed.is_empty());
+
+    // The same block with one sky word changed: chunk A's zero record (equal to its job's block
+    // above), its first cell record's first visibility word set.
+    let classes = rig.queue.classes(rig.world.materials());
+    let faces = rig.queue.list(&rig.world, ChunkCoord(A), &classes).0;
+    let s = &rig.queue.settings;
+    let rule = super::rule::zero_block(ChunkCoord(A), &faces, s.cell, s.clamp, false, None, 0);
+    let run = (rule[..CHUNK_BRICKS]
+        .iter()
+        .find(|&&d| d != 0)
+        .expect("a surface brick")
+        >> 11) as usize;
+    let record = record_words(s.cell);
+    let word = run - record + VIS_WORD;
+    let mut job = rule.clone();
+    job[word] ^= 0x00FF;
+    let mut audit = RuleAudit::default();
+    audit.compare(A, AUDIT_PARTIAL, &rule, &rule, record, false);
+    audit.compare(A, AUDIT_PARTIAL, &job, &rule, record, false);
+    assert_eq!(audit.compared, [0, 0, 2, 0]);
+    assert_eq!(audit.differ, [0, 0, 1, 0]);
+    assert_eq!(
+        audit.kept(),
+        [AuditDiffer {
+            chunk: A,
+            case: AUDIT_PARTIAL as u8,
+            word: word as u32,
+            job: job[word],
+            rule: rule[word],
+        }]
+    );
+
+    // Stale: chunk A's job in flight, held, when an edit's message arrives.
+    let mut rig = Rig::new(None);
+    rig.mirror.lowest = BURIED;
+    rig.mirror.lr = 0;
+    rig.queue.rule_audit = true;
+    rig.until("chunk 0's job issued", |r| {
+        r.queue.lp.stamps.contains_key(&A) && !r.half.flights.is_empty()
+    });
+    assert!(rig.queue.audit_jobs.contains_key(&A), "an audited job");
+    rig.half.hold = true;
+    let stamp = rig.queue.lp.stamps[&A];
+    let (lo, hi) = NEAR_A;
+    rig.carve(lo, hi);
+    rig.step();
+    assert!(
+        rig.queue.stale.contains_key(&A),
+        "chunk 0 marked by the box"
+    );
+    rig.half.hold = false;
+    let placed = |r: &Rig| r.queue.stats.baked - r.queue.stats.digs_baked;
+    let mut released = false;
+    for _ in 0..400 {
+        if !rig.queue.lp.stamps.get(&A).is_some_and(|&s| s == stamp) {
+            break;
+        }
+        let (before, blocks) = (audited(&rig), placed(&rig));
+        rig.step();
+        let (after, now) = (audited(&rig), placed(&rig));
+        assert_eq!(
+            after.0 - before.0,
+            now - blocks,
+            "compared: the blocks placed, no other"
+        );
+        released |= rig.store.block(ChunkCoord(A)).is_none()
+            && !rig.queue.lp.stamps.get(&A).is_some_and(|&s| s == stamp);
+    }
+    assert!(released, "the stale block is released");
+    assert!(
+        !rig.queue.audit_jobs.contains_key(&A),
+        "its audit entry with it"
+    );
+    assert_eq!(
+        audited(&rig).0,
+        placed(&rig),
+        "a stale block counts in neither"
+    );
+    assert_eq!(audited(&rig).1, 0);
+}
+
 mod lister;
 mod routing;
+mod rule;
 mod stretch;
 mod thread;

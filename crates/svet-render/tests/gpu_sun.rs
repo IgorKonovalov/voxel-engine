@@ -528,19 +528,10 @@ fn an_absent_chunk_below_the_column_top_is_rock_to_the_sky_ray() {
 }
 
 /// The column map texture's texels for a window `tiles` chunks wide in x and y: the map's
-/// `COLUMN_CELLS` per tile on each axis, then the rows under it that hold the coarse levels, as
-/// many as the last coarse texel `column_coarse_texel` places needs (the tiles' own texels
-/// come after every block's), at the map's width.
+/// `COLUMN_CELLS` per tile on each axis.
 fn column_map_texels(tiles: [i32; 2]) -> usize {
     let cells = svet_render::COLUMN_CELLS;
-    let per = svet_render::COLUMN_BLOCKS * svet_render::COLUMN_BLOCKS;
-    let slots = tiles[0] * tiles[1];
-    let last = (0..slots)
-        .flat_map(|slot| (0..=per).map(move |j| (slot, j)))
-        .map(|(slot, j)| svet_render::column_coarse_texel(tiles, slot, j)[1])
-        .max()
-        .expect("a tile");
-    (tiles[0] * cells) as usize * (last as usize + 1)
+    (tiles[0] * cells) as usize * (tiles[1] * cells) as usize
 }
 
 /// Plan 0086 Phase 9 bar 1: the column map is the top of opaque voxels. A 3 x 3 x 3-chunk
@@ -581,7 +572,7 @@ fn the_column_map_is_the_top_of_solid() {
         assert_eq!(
             map.len(),
             column_map_texels(gpu.column_tiles()),
-            "the map's rows, then its coarse levels'"
+            "the map's rows"
         );
         map
     };
@@ -652,13 +643,11 @@ fn the_column_map_is_the_top_of_solid() {
     assert_eq!(stamped, top + 5, "the stamp raises the texel at its sync");
 }
 
-/// Plan 0100 Phase 5b: the column map's coarse levels are its maximum. Read back after each
-/// sync, every block-map texel equals the largest of its 8 x 8 map texels, every chunk-map
-/// texel the largest of its tile, and `column_top_max` the largest chunk texel: after the first
-/// sync, after a dig and a stamp, and at every sync of a following window's move across a
-/// 6 x 6 x 3-chunk terrain (a stale coarse texel is a wrong shadow under `key horizon walk`).
+/// `column_top_max` is the column map's maximum. Read back after each sync, it equals the
+/// largest texel of the map's tiles: after the first sync, after a dig and a stamp, and at
+/// every sync of a following window's move across a 6 x 6 x 3-chunk terrain.
 #[test]
-fn the_column_coarse_levels_are_the_maps_maximum() {
+fn the_column_top_max_is_the_maps_maximum() {
     let Some((device, queue)) = device() else {
         return;
     };
@@ -684,32 +673,11 @@ fn the_column_coarse_levels_are_the_maps_maximum() {
             column_map_texels(tiles),
             "{when}: the texture's texels"
         );
-        let (b, e, cells) = (
-            svet_render::COLUMN_BLOCKS,
-            svet_render::COLUMN_BLOCK,
-            svet_render::COLUMN_CELLS,
-        );
-        let w = tiles[0] * cells;
-        let at = |t: [u32; 2]| map[(t[1] as i32 * w + t[0] as i32) as usize];
-        let mut top = svet_render::COLUMN_NONE;
-        for ty in 0..tiles[1] {
-            for tx in 0..tiles[0] {
-                let slot = tx + tiles[0] * ty;
-                let coarse = |j| at(svet_render::column_coarse_texel(tiles, slot, j));
-                let mut tile_max = svet_render::COLUMN_NONE;
-                for j in 0..b * b {
-                    let (bx, by) = (tx * b + j % b, ty * b + j / b);
-                    let want = (0..e * e)
-                        .map(|i| map[((by * e + i / e) * w + bx * e + i % e) as usize])
-                        .max()
-                        .expect("cells");
-                    assert_eq!(coarse(j), want, "{when}: tile {tx} {ty} block {j}");
-                    tile_max = tile_max.max(want);
-                }
-                assert_eq!(coarse(b * b), tile_max, "{when}: tile {tx} {ty}");
-                top = top.max(tile_max);
-            }
-        }
+        let top = map
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(svet_render::COLUMN_NONE);
         assert_eq!(
             gpu.column_top_max(),
             top,
@@ -750,11 +718,7 @@ fn the_column_coarse_levels_are_the_maps_maximum() {
         sync(&mut gpu);
         check(&gpu, &format!("the move, sync {i}"));
     }
-    println!(
-        "coarse levels: {} bytes beside the map's {}",
-        gpu.column_coarse_bytes(),
-        gpu.column_map_bytes()
-    );
+    println!("column map: {} bytes", gpu.column_map_bytes());
 }
 
 /// Bar 6's flags: turning the sun by 10 degrees in one frame raises the sky-change bit on that

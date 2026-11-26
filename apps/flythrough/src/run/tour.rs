@@ -34,11 +34,13 @@ impl Run {
 
     /// Writes `--report`'s `run.json`: what ran, on which adapter, and the recorder's frame
     /// times; `failed` when the session ended on an error.
+    /// With no path (`--report` under `--queue-rule-reading`) the scene, path and mode read
+    /// `none` and the frame times are not recorded: the report carries the queue's object.
     pub(crate) fn write_report(&self) {
-        let (Some(dir), Some(p), Some(rec)) = (&self.args.report, &self.player, &self.recorder)
-        else {
+        let Some(dir) = &self.args.report else {
             return;
         };
+        let p = self.player.as_ref();
         let (_, scale) = self.args.upscaler_settings(self.modes.upscaler.mode);
         let sizes = self
             .gfx
@@ -47,9 +49,9 @@ impl Run {
         let mut r = RunReport {
             version: env!("CARGO_PKG_VERSION"),
             commit: crate::report::COMMIT,
-            scene: p.path.scene.name(),
-            path: p.path.name,
-            mode: p.mode.name(),
+            scene: p.map_or("none", |p| p.path.scene.name()),
+            path: p.map_or("none", |p| p.path.name),
+            mode: p.map_or("none", |p| p.mode.name()),
             output: sizes.map_or([0, 0], |s| s.0),
             internal: sizes.map_or([0, 0], |s| s.1),
             internal_scale: scale.name(),
@@ -68,7 +70,7 @@ impl Run {
                 format: format!("{format:?}"),
                 color_space: space.map(|c| format!("{c:?}")),
             }),
-            path_s: p.path.duration_s(),
+            path_s: p.map_or(0.0, |p| p.path.duration_s()),
             frames: 0,
             warmup_frames: 0,
             warmup_s: 0.0,
@@ -85,10 +87,12 @@ impl Run {
             ended: if self.failure.is_some() {
                 "failed"
             } else {
-                p.ended_word()
+                p.map_or("completed", |p| p.ended_word())
             },
         };
-        rec.fill(&mut r);
+        if let Some(rec) = &self.recorder {
+            rec.fill(&mut r);
+        }
         let file = dir.join("run.json");
         match std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&file, r.to_json())) {
             Ok(()) => println!("report: wrote {}", file.display()),

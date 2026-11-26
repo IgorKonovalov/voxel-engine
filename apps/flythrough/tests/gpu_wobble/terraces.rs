@@ -345,6 +345,7 @@ mod reading {
             queue_step(rig, &mut s.frame, &cam0);
             s.run(rig, &cam0);
         }
+        support::baked::settle(rig, &mut s.frame, &cam0, 0, &format!("{prefix} settle"));
         let st = svet_render::debug::read_buffer(
             &rig.device,
             &rig.queue,

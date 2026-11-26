@@ -611,6 +611,11 @@ pub struct BakeArgs {
     /// rule would answer at that opening, by what kept the rule from them
     /// (`svet_render::RuleMissed`), on the `bake queue:` line and in `run.json`'s `queue`.
     pub(crate) queue_rule_reading: bool,
+    /// `--queue-rule-audit` (implies `--queue-rule-reading`): the live queue's rule writes no
+    /// record; every candidate it holds for at an opening takes a job, and each such job's
+    /// placed block is compared with the rule's zero record by case
+    /// (`svet_render::RuleAudit`), on the `bake queue:` line and in `run.json`'s `queue`.
+    pub(crate) queue_rule_audit: bool,
     /// `--edit-ms MS`: the live queue's slice grows by `MS` a frame while a dig's bricks wait
     /// (default `svet_render::DEFAULT_BAKE_EDIT_MS`).
     pub(crate) edit_ms: f64,
@@ -1062,8 +1067,6 @@ impl Args {
             sky_bounce: self.outdoor.sky_bounce,
             key_cap: self.outdoor.key_cap,
             sky_down_skip: self.outdoor.sky_down_skip,
-            key_at: self.outdoor.key_at,
-            key_horizon: self.outdoor.key_horizon,
             key_cover: self.outdoor.key_cover,
             ..crate::default_lighting()
         })

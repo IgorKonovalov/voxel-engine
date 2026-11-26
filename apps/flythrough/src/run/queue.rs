@@ -168,6 +168,10 @@ pub(crate) struct QueueRun {
     /// parts beside the frames' wall (the `frames: bake thread cycle` line).
     pub(crate) fed: svet_render::QueueFed,
     pub(crate) cycles: svet_render::CycleLine,
+    /// Under `--queue-rule-reading`: the newest request for the rule hashes (made when the
+    /// queue is first empty) and the newest hashes read (`QueueDrain::rule_hashes`).
+    pub(crate) hash_asked: u64,
+    pub(crate) rule_hashes: Option<std::sync::Arc<svet_render::RuleHashes>>,
 }
 
 /// One edit's frame of the live queue (a reading).
@@ -343,6 +347,9 @@ impl QueueRun {
             samples_per_s: self.line_rate,
             rule_missed: (st.rule_missed != svet_render::RuleMissed::default())
                 .then_some(st.rule_missed),
+            rule_audit: (st.rule_audit != svet_render::RuleAudit::default())
+                .then_some(st.rule_audit),
+            rule_hashes: self.rule_hashes.clone(),
         }
     }
 }
@@ -721,15 +728,7 @@ impl Run {
                     }
                 }
                 self.queue.stats = Some(st);
-                if !self.queue.emptied && gfx.frame.bake_queue().is_some_and(|q| q.empty()) {
-                    self.queue.emptied = true;
-                    println!(
-                        "bake queue: empty after {:.1} s since the start ({} chunks baked, {:.3e} samples)",
-                        ms_since(self.start) / 1e3,
-                        st.baked,
-                        st.total_samples as f64
-                    );
-                }
+                self.note_empty(&st);
             }
             Some(Err(e)) => {
                 if !self.queue.failed {
@@ -913,7 +912,7 @@ impl Run {
             );
             self.queue.line_class = (st.class_samples, st.class_ms);
             println!(
-                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample (price {:.2} ms a dispatch + {:.1} ns), fading {}, coarse {} chunks, {}, eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms, provisional {} (opened {}, catch-ups {}), key {} (landed {}), zero by rule {} (re-listed {}), sealed by the workers {} ({} shells, {} B), {}, {}",
+                "bake queue: at {:.1} s, frame {}, depth {}, jobs {}, waiting reach {} lights {}, baked {} (+{} in {:.1} s, {} from the workers), {:.3e} samples/s, slice p50 {:.2} max {:.2} ms over {} submits, {:.1} ns a sample (price {:.2} ms a dispatch + {:.1} ns), fading {}, coarse {} chunks, {}, eye {:.0} {:.0} {:.0}, step CPU p50 {:.3} max {:.3} ms, provisional {} (opened {}, catch-ups {}), key {} (landed {}), zero by rule {} (re-listed {}) border re-listed {}, sealed by the workers {} ({} shells, {} B), {}, {}",
                 t / 1e3,
                 self.frame,
                 st.depth,
@@ -946,6 +945,7 @@ impl Run {
                 st.keys_baked,
                 st.zeroed,
                 st.zero_relisted,
+                st.zero_border_relisted,
                 st.sealed,
                 shells,
                 shell_bytes,
@@ -1005,6 +1005,61 @@ impl Run {
             if self.args.outdoor.dump_black && store_stats.still_black > 0 {
                 self.dump_black(gpu, store_stats.still_black);
             }
+        }
+    }
+
+    /// The queue's first emptiness: its line, and under `--queue-rule-reading` the request for
+    /// the rule hashes; then the hashes answering the newest request, once.
+    fn note_empty(&mut self, st: &svet_render::QueueStats) {
+        let Some(gfx) = self.gfx.as_mut() else {
+            return;
+        };
+        if !self.queue.emptied && gfx.frame.bake_queue().is_some_and(|q| q.empty()) {
+            self.queue.emptied = true;
+            println!(
+                "bake queue: empty after {:.1} s since the start ({} chunks baked, {:.3e} samples)",
+                ms_since(self.start) / 1e3,
+                st.baked,
+                st.total_samples as f64
+            );
+            if self.args.bake.queue_rule_reading {
+                self.queue.hash_asked += 1;
+                let n = self.queue.hash_asked;
+                gfx.frame.set_bake_queue(move |q| q.ask_rule_hashes(n));
+            }
+        }
+        self.take_rule_hashes("the queue first empty", false);
+    }
+
+    /// Under `--queue-rule-reading`, takes the rule hashes answering the newest request and
+    /// prints them as `bake queue: rule hashes ... (when)`: in lockstep read now, with the bake
+    /// thread on the newest its books carry once they answer the request. `end` reads them at
+    /// the run's end: lockstep reads them again; the bake thread's are its newest answer.
+    pub(crate) fn take_rule_hashes(&mut self, when: &str, end: bool) {
+        let asked = self.queue.hash_asked;
+        let held = self.queue.rule_hashes.as_ref().map_or(0, |h| h.asked);
+        let Some(q) = self.gfx.as_ref().and_then(|g| g.frame.bake_queue()) else {
+            return;
+        };
+        if !self.args.bake.queue_rule_reading || (!end && (asked == 0 || held >= asked)) {
+            return;
+        }
+        let h = if q.threaded() && end {
+            self.queue.rule_hashes.clone()
+        } else {
+            q.rule_hashes().filter(|h| h.asked >= asked)
+        };
+        if let Some(h) = h {
+            println!(
+                "bake queue: {} ({when}, {})",
+                crate::report::rule_hash_text(&h),
+                if q.threaded() {
+                    "bake thread"
+                } else {
+                    "lockstep"
+                }
+            );
+            self.queue.rule_hashes = Some(h);
         }
     }
 

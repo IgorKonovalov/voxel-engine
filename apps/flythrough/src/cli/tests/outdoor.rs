@@ -594,3 +594,96 @@ fn dig_estimate_is_surface_or_depth_and_names_itself() {
     assert!(row.contains("dig estimate depth, "), "{row}");
     assert!(parse_args_from(argv(&["--dig-estimate", "maybe"])).is_err());
 }
+
+/// No `--key-at` or `--key-horizon` flag stands (unknown arguments), and
+/// `--key-cover record` is refused by `--key-cover`'s own error, which names what it takes.
+#[test]
+fn the_removed_key_settings_fail_to_parse() {
+    let err = |a: &[&str]| parse_args_from(argv(a)).err();
+    assert_eq!(
+        err(&["--key-at", "face"]).as_deref(),
+        Some("unknown argument --key-at")
+    );
+    assert_eq!(
+        err(&["--key-horizon", "walk"]).as_deref(),
+        Some("unknown argument --key-horizon")
+    );
+    assert_eq!(
+        err(&["--key-cover", "record"]).as_deref(),
+        Some("--key-cover takes off or ray, not record")
+    );
+}
+
+/// Plan 0100 Phase 6: `--key-cover` is `off` unless named, which the lighting row and the banner
+/// leave out; `ray` reaches the lighting, the row and the banner; the withdrawn `ray-record`
+/// and `record` are refused; the debug page's `key cover` cycles the two and its row reads the
+/// value.
+#[test]
+fn key_cover_is_off_unless_named() {
+    use crate::hud::HudRow;
+    use svet_render::KeyCover;
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(r.start_lighting().key_cover, KeyCover::Off);
+    let m = r.start_modes(0.0);
+    assert!(!m.row(HudRow::Lighting).contains("key cover"));
+    assert!(!m.banner(0.0).unwrap().contains("key cover"));
+    {
+        let k = KeyCover::Ray;
+        let r = parse_args_from(argv(&["--source", "outdoor", "--key-cover", k.name()])).unwrap();
+        assert_eq!(r.start_lighting().key_cover, k);
+        let m = r.start_modes(0.0);
+        let want = format!("key cover {}, ", k.name());
+        let row = m.row(HudRow::Lighting);
+        assert!(row.contains(&want), "{row}");
+        let banner = m.banner(0.0).unwrap().replace('\n', ", ");
+        assert!(banner.contains(&want), "{banner}");
+    }
+    assert!(parse_args_from(argv(&["--key-cover", "both"])).is_err());
+    assert!(parse_args_from(argv(&["--key-cover", "ray-record"])).is_err());
+    assert!(parse_args_from(argv(&["--key-cover", "record"])).is_err());
+    let tog = crate::toggles::TOGGLES
+        .iter()
+        .find(|t| t.name == "key cover")
+        .unwrap();
+    let mut m = r.start_modes(0.0);
+    for want in ["key cover ray", "key cover off"] {
+        (tog.flip)(&mut m, 0.0);
+        assert_eq!((tog.get)(&m), want);
+    }
+}
+
+/// Plan 0100 Phase 9: every profile keeps `key cover` at its default (`off`), and `--profile`
+/// gives it as the profile holds it.
+#[test]
+fn the_profiles_keep_the_key_defaults() {
+    use svet_render::{KeyCover, Profile, RenderSettings};
+    for p in Profile::ALL {
+        let want = RenderSettings::profile(p).lighting;
+        assert_eq!(want.key_cover, KeyCover::Off, "{}", p.name());
+        let r = parse_args_from(argv(&["--source", "outdoor", "--profile", p.name()])).unwrap();
+        let l = r.render_settings().lighting;
+        assert_eq!(l.key_cover, want.key_cover, "{}", p.name());
+    }
+}
+
+/// `--eye`: the outdoor camera starts at the named point and view in place of the spawn's;
+/// unset, the spawn's camera; a wrong count or a pitch past 89 degrees is refused.
+#[test]
+fn eye_places_the_outdoor_camera() {
+    let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(r.outdoor.eye, None);
+    let r = parse_args_from(argv(&[
+        "--source",
+        "outdoor",
+        "--eye",
+        "496.0,-648.7,456.7,34.5,-46.2",
+    ]))
+    .unwrap();
+    let cam = crate::setup::outdoor_camera(&r);
+    assert_eq!(<[f32; 3]>::from(cam.position), [496.0, -648.7, 456.7]);
+    assert_eq!(cam.yaw, 34.5f32.to_radians());
+    assert_eq!(cam.pitch, (-46.2f32).to_radians());
+    assert!(parse_args_from(argv(&["--eye", "1,2,3,4"])).is_err());
+    assert!(parse_args_from(argv(&["--eye", "1,2,3,4,90"])).is_err());
+    assert!(parse_args_from(argv(&["--eye", "1,2,x,4,5"])).is_err());
+}

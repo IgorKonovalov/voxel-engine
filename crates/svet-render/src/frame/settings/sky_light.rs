@@ -136,62 +136,6 @@ named_enum!(DigEstimate {
     Depth => "depth",
 });
 
-/// Where on a cube face the key light's column horizon (`column_key_visibility`) is read
-/// (Plan 0100 Phase 1's spike, ADR-0084).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum KeyAt {
-    /// At the hit: a point that moves with the frame's jitter across a face. The default.
-    #[default]
-    Hit,
-    /// At the centre of the hit's voxel face (the voxel's centre moved half a voxel along the
-    /// face normal): one value a face, fixed in the world.
-    Face,
-    /// At the four face centres of the face's plane nearest the hit, blended bilinearly by the
-    /// hit's place among them: a ramp one voxel wide, fixed in the world.
-    FaceSmooth,
-}
-
-named_enum!(KeyAt {
-    Hit => "hit",
-    Face => "face",
-    FaceSmooth => "face-smooth",
-});
-
-impl KeyAt {
-    /// The value after this one in [`KeyAt::ALL`], the first after the last.
-    pub fn next(self) -> Self {
-        let i = Self::ALL.iter().position(|&k| k == self).unwrap_or(0);
-        Self::ALL[(i + 1) % Self::ALL.len()]
-    }
-}
-
-/// How the key light's column horizon reads the map (Plan 0100 Phase 5b, ADR-0084).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum KeyHorizon {
-    /// ADR-0079's march: the map cell at each of 12 distances to 512 voxels, then every cell
-    /// (at most 8) of the one interval whose far cell stands highest. The default.
-    #[default]
-    March,
-    /// Every map cell along the sun's horizontal direction to the window's side, over the
-    /// coarse levels (the largest top of each 32 x 32 and 8 x 8 cells): a level's block is
-    /// passed whole where its top cannot raise the horizon into the disc, and the walk ends
-    /// where the visibility is 0 or no top of the window can reach the disc.
-    Walk,
-}
-
-named_enum!(KeyHorizon {
-    March => "march",
-    Walk => "walk",
-});
-
-impl KeyHorizon {
-    /// The value after this one in [`KeyHorizon::ALL`], the first after the last.
-    pub fn next(self) -> Self {
-        let i = Self::ALL.iter().position(|&k| k == self).unwrap_or(0);
-        Self::ALL[(i + 1) % Self::ALL.len()]
-    }
-}
-
 /// The source that adds the key light back on a cube face where the column horizon reads under
 /// 1 (Plan 0100 Phase 6, ADR-0084): the shown visibility is the larger of the horizon and the
 /// source, so a source only adds. Entities, field surfaces, `light history on` and `key far ray`
@@ -206,15 +150,11 @@ pub enum KeyCover {
     /// and shown with no mean; under [`crate::Penumbra::Approach`] its closest-approach score.
     /// Its length is `key_cap`'s. Past the half, the horizon alone.
     Ray,
-    /// At every distance, the store's baked key visibility where the face's own cell holds a
-    /// fresh one, else the horizon alone; a landing rides the key slot's fade.
-    Record,
 }
 
 named_enum!(KeyCover {
     Off => "off",
     Ray => "ray",
-    Record => "record",
 });
 
 impl KeyCover {

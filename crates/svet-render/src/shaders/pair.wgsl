@@ -36,24 +36,16 @@ fn column_estimate(p: vec3<f32>, n: vec3<f32>) -> f32 {
     return select(0.0, 1.0, above_column(p + n * SEED_LIFT));
 }
 
-// The far estimate where no record answers (Plan 0100 Phase 6, ADR-0084, `Lighting::key_cover`)
-// in x, its source (KEY_SRC_HORIZON or _RECORD) in y: the column horizon at `key_at`'s point
-// (`key_horizon_at` of hit `p`, face normal `nf`, `axis`), and with the cover arms
-// the larger of it and a source. `near` is the light pass's near cover answer (`key_cover_near`,
-// already the larger of the horizon and its ray), -1 where it read none; where it read one it is
-// the value. Under LIGHTING2_KEY_COVER_RECORD the answer is the larger of the horizon and `own`,
-// the face's own cell's fresh baked key visibility (`own.y` 1), tagged as the record so its
-// landing rides the slot's fade; else the horizon.
-fn key_cover_far(p: vec3<f32>, nf: vec3<f32>, axis: i32, near: f32, own: vec2<f32>) -> vec2<f32> {
+// The far estimate where no record answers (ADR-0084, `Lighting::key_cover`), its source
+// (KEY_SRC_HORIZON) in y: the column horizon at hit `p` with face normal `nf`
+// (`key_horizon_at`), or, where the light pass read a near cover answer (`near`, from
+// `key_cover_near`, already the larger of the horizon and its ray; -1 where it read none), that
+// answer.
+fn key_cover_far(p: vec3<f32>, nf: vec3<f32>, near: f32) -> vec2<f32> {
     if (near >= 0.0) {
         return vec2<f32>(near, f32(KEY_SRC_HORIZON));
     }
-    let h = key_horizon_at(p, nf, axis);
-    var far = vec2<f32>(h, f32(KEY_SRC_HORIZON));
-    if ((params.lighting2 & LIGHTING2_KEY_COVER_RECORD) != 0u && own.y > 0.0) {
-        far = vec2<f32>(max(h, own.x), f32(KEY_SRC_RECORD));
-    }
-    return far;
+    return vec2<f32>(key_horizon_at(p, nf), f32(KEY_SRC_HORIZON));
 }
 
 // The key slot (the pair's g) at a pixel where the light pass cast no key ray holds the far

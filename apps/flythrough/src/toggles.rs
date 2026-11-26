@@ -1050,16 +1050,6 @@ pub static TOGGLES: &[Toggle] = &[
         }
     ),
     diag!(
-        "key at",
-        |m| format!("key at {}", m.lighting.key_at.name()),
-        |m| m.lighting.key_at = m.lighting.key_at.next()
-    ),
-    diag!(
-        "key horizon",
-        |m| format!("key horizon {}", m.lighting.key_horizon.name()),
-        |m| m.lighting.key_horizon = m.lighting.key_horizon.next()
-    ),
-    diag!(
         "key cover",
         |m| format!("key cover {}", m.lighting.key_cover.name()),
         |m| m.lighting.key_cover = m.lighting.key_cover.next()

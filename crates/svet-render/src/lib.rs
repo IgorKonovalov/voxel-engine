@@ -90,17 +90,18 @@ pub mod internals {
 }
 
 pub use bake::{
-    AROUND_REACH, AroundSource, BakeError, BakeProgress, BakeQueue, BakeReport, BakeRoundTrip,
-    BakeSettings, Band, Bands, Budget, CycleLine, DEFAULT_BAKE_EDIT_MS, DEFAULT_BAKE_SLICE_MS,
-    DEFAULT_COARSE_SAMPLES, DEFAULT_DRAIN, DEFAULT_NEAR, DEFAULT_RING1_STRETCH, DEFAULT_TIERS,
-    DigReport, DigTrace, DigTraceJob, Drain, FaceOutcome, InViewWaiting, LANDED_BARE,
-    LANDED_FALLBACK, LANDED_REFADED, LANDED_UNFADED, LANDING_DIRECTIONS, LANDING_KEY,
-    LANDING_KEY_FLAG, LANDING_RECORDS, LANDING_TAIL, LANDING_VIS, LANDING_VIS_FLAG, ListingCensus,
-    MissingLight, PreRoll, PreRollConfig, PreRollError, PreRollState, PreRollSummary,
-    QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT, QueueFed, QueueOrder, QueueRead,
-    QueueStats, QueueView, RING1_STRETCH_RANGE, ReachMode, Refine, Residency, RuleMissed, Store,
-    StoreStats, THREAD_DEPTH, THREAD_SLOTS, chunk_nearest, finality_blockers, in_view_census,
-    queue_settings, reach_crosses, sky_over_floor,
+    AROUND_REACH, AroundSource, AuditDiffer, BakeError, BakeProgress, BakeQueue, BakeReport,
+    BakeRoundTrip, BakeSettings, Band, Bands, Budget, CycleLine, DEFAULT_BAKE_EDIT_MS,
+    DEFAULT_BAKE_SLICE_MS, DEFAULT_COARSE_SAMPLES, DEFAULT_DRAIN, DEFAULT_NEAR,
+    DEFAULT_RING1_STRETCH, DEFAULT_TIERS, DigReport, DigTrace, DigTraceJob, Drain, FaceOutcome,
+    InViewWaiting, LANDED_BARE, LANDED_FALLBACK, LANDED_REFADED, LANDED_UNFADED,
+    LANDING_DIRECTIONS, LANDING_KEY, LANDING_KEY_FLAG, LANDING_RECORDS, LANDING_TAIL, LANDING_VIS,
+    LANDING_VIS_FLAG, ListingCensus, MissingLight, PreRoll, PreRollConfig, PreRollError,
+    PreRollState, PreRollSummary, QUEUE_ANGLE_WEIGHT, QUEUE_BRICK_SAMPLES, QUEUE_REFINE_WEIGHT,
+    QueueFed, QueueOrder, QueueRead, QueueStats, QueueView, RING1_STRETCH_RANGE, ReachMode, Refine,
+    Residency, RuleAudit, RuleHashes, RuleMissed, Store, StoreStats, THREAD_DEPTH, THREAD_SLOTS,
+    chunk_nearest, finality_blockers, in_view_census, queue_settings, reach_crosses,
+    sky_over_floor,
 };
 pub use camera::{Camera, View};
 pub use entities::{
@@ -121,17 +122,16 @@ pub use frame::{
 };
 pub use frame::{
     CrackShares, DigEstimate, DigHold, EntityLight, FRAME_PASSES, Frame, GRADIENT_STRATUM,
-    HistoryKill, KeyAt, KeyCover, KeyFar, KeyFarMix, KeyHorizon, LightHooks, LightWeights,
-    Lighting, LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
+    HistoryKill, KeyCover, KeyFar, KeyFarMix, LightHooks, LightWeights, Lighting,
+    LightingResolution, LodParams, LookParams, MAX_EDITS, MAX_VIEWS, MarchTimer, Marcher,
     NormalMode, PassTimer, Penumbra, RenderScale, ShadowWalk, SkyNormal, StoreRead, SurfaceTuning,
     ToneMap, ViewMode, YoungFilter, jitter_at,
 };
 pub use fsr2::{Fsr2, Fsr2Settings, Fsr2Stage, UpscalerKind};
 pub use gpu_world::{
-    BELT_CHUNK_BYTES, BinStats, COLUMN_BLOCK, COLUMN_BLOCKS, COLUMN_CELL, COLUMN_CELLS,
-    COLUMN_NONE, DEFAULT_BUDGET_BYTES, DEFAULT_LIGHT_CHUNK_CAP, DEFAULT_LIGHT_RADIUS,
-    DEFAULT_LIGHT_SAMPLES, GpuWorld, MirrorConfig, MirrorError, ShardLayout, SyncClock, SyncPoint,
-    SyncStats, Window, column_coarse_texel,
+    BELT_CHUNK_BYTES, BinStats, COLUMN_CELL, COLUMN_CELLS, COLUMN_NONE, DEFAULT_BUDGET_BYTES,
+    DEFAULT_LIGHT_CHUNK_CAP, DEFAULT_LIGHT_RADIUS, DEFAULT_LIGHT_SAMPLES, GpuWorld, MirrorConfig,
+    MirrorError, ShardLayout, SyncClock, SyncPoint, SyncStats, Window,
 };
 pub use hud::{
     BACKDROP_ALPHA, GRID_COLS as HUD_GRID_COLS, HudBox, HudColour, HudOverlay, HudPaint, HudTile,
@@ -167,12 +167,9 @@ pub const LIGHT_WGSL: &str = include_str!("shaders/light.wgsl");
 pub const GRADIENT_WGSL: &str = include_str!("shaders/gradient.wgsl");
 /// The visibility pair's functions, compiled before `temporal.wgsl`.
 pub const PAIR_WGSL: &str = include_str!("shaders/pair.wgsl");
-/// The key light's column horizon (the march, the switch to the walk, where on a face it is
-/// read), composed into the temporal and the light passes.
+/// The key light's column horizon (the march over the column map, read at the hit), composed
+/// into the temporal and the light passes.
 pub const KEY_HORIZON_WGSL: &str = include_str!("shaders/key_horizon.wgsl");
-/// The key light's horizon walked over every column-map cell (`KeyHorizon::Walk`), composed after
-/// [`KEY_HORIZON_WGSL`].
-pub const KEY_WALK_WGSL: &str = include_str!("shaders/key_walk.wgsl");
 /// The temporal pass, compiled after the modules its pass names.
 pub const TEMPORAL_WGSL: &str = include_str!("shaders/temporal.wgsl");
 /// The variance estimate and the a-trous filter, compiled after the modules its pass names.
