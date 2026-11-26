@@ -107,6 +107,7 @@ mod defects {
                     wait,
                     reach,
                 }),
+                stepped: false,
             })
         }
 
@@ -150,6 +151,7 @@ mod defects {
                         wait,
                         reach,
                     }),
+                    stepped: false,
                 });
             }
         }
@@ -203,6 +205,7 @@ mod defects {
                         wait: false,
                         reach: svet_render::ReachMode::Full,
                     }),
+                    stepped: false,
                 },
                 |f, device, queue, frame| {
                     use svet_render::debug::{read_rgba8, read_rgba32f};

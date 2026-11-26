@@ -72,15 +72,17 @@ mod flicker {
     /// (`support::defects::dig_spec`) replaces the defaults' arm: `forest/hold=off` is the
     /// fault the bar was written for. Its claim is the ring's: the hole's is defended by
     /// [`a_fresh_hole_holds_its_value_until_its_light_lands`], whose pose shows the white hole
-    /// this rig's does not and which reads no arm as its baseline.
+    /// this rig's does not and which reads no arm as its baseline. Both runs step in the
+    /// stepper's device-wait mode (`support::defects::Stepper::wait`), so the queue reads its
+    /// read-backs at a count of frames, not at the device's pace.
     #[test]
     #[ignore = "soak"]
     fn a_dig_under_calm_neither_darkens_nor_flashes() {
         let (scene, arm, drain) = super::support::defects::dig_spec(("forest", "default", DIG_DRAIN));
-        let Some((_, base, n1)) = reading::dig_run(&scene, "before", drain) else {
+        let Some((_, base, n1)) = reading::dig_run(&scene, "before", drain, true) else {
             return;
         };
-        let (_, rows, _) = reading::dig_run(&scene, &arm, drain).expect("the adapter");
+        let (_, rows, _) = reading::dig_run(&scene, &arm, drain, true).expect("the adapter");
         let worst = |rs: &[super::support::defects::DigRow], k: fn(&super::support::defects::DigRow) -> f64| {
             rs[n1 + 1..].iter().map(k).fold(f64::MIN, f64::max)
         };
@@ -115,18 +117,20 @@ mod flicker {
     /// ring's at 4 levels in every frame; dots at most the settled frame's plus 1 point; the
     /// ring and the frame within 1 level of N - 1 until the first landing; and from each
     /// group's landing no step away from its settled mean over 1 level. `SVET_DIG`'s arm
-    /// (`support::defects::dig_spec`; `hold=rays` the bite check) replaces the defaults'.
+    /// (`support::defects::dig_spec`; `hold=rays` the bite check) replaces the defaults'. Every
+    /// run steps in the stepper's device-wait mode, so a landing is a count of frames, not the
+    /// device's pace.
     #[test]
     #[ignore = "soak"]
     fn a_fresh_hole_holds_its_value_until_its_light_lands() {
         use super::dig_line::hold::claims;
         let (_, arm, _) = super::support::defects::dig_spec(("above", "default", 0));
-        let Some(reference) = claims("A", false, &arm) else {
+        let Some(reference) = claims("A", false, &arm, true) else {
             return;
         };
         let reference = reference.land[0].expect("the reference dig lands");
         for seq in ["A", "B"] {
-            let c = claims(seq, true, &arm).expect("the adapter");
+            let c = claims(seq, true, &arm, true).expect("the adapter");
             println!(
                 "{}hole {seq} {arm}: ring 1 lands D+{:?} (reference D+{reference}); before the landing white {:.2} % black {:.2} % (32 levels), after white {:.2} % black {:.2} %, ring white {:.2} % black {:.2} %, dots {:.2} % (settled {:.2} %), shift {:.2}, away {:+.2}",
                 c.text, c.land, c.before[0], c.before[1], c.after[0], c.after[1], c.ring[0], c.ring[1], c.dots[0], c.dots[1], c.shift, c.away
@@ -733,7 +737,7 @@ mod flicker {
         #[ignore = "reading"]
         fn dig_terms() {
             let (scene, arm, drain) = support::defects::dig_spec(("hills", "default", 30_000));
-            let Some((frames, rows, n1)) = dig_run(&scene, &arm, drain) else {
+            let Some((frames, rows, n1)) = dig_run(&scene, &arm, drain, false) else {
                 return;
             };
             let mut out = String::new();
@@ -817,11 +821,13 @@ mod flicker {
 
         /// [`dig_terms`]' run, the queue stepped at most `drain` frames before the settle
         /// until it drains: the frames from N - 1 (index 0 is N - 2), their rows, and N - 1's
-        /// index; `None` without an adapter.
+        /// index; `None` without an adapter. `wait`: the stepper's device-wait mode
+        /// ([`Stepper::wait`]).
         pub(in super::super) fn dig_run(
             scene: &str,
             arm: &str,
             drain: u32,
+            wait: bool,
         ) -> Option<(Vec<support::defects::DigFrame>, Vec<support::defects::DigRow>, usize)> {
             let (mut rig, cam, sky) = match scene {
                 "forest" => {
@@ -842,6 +848,7 @@ mod flicker {
             let mut f = flicker_frame(&rig, sky, None, false);
             let pin = dig_arm(&mut f, arm);
             let mut s = Stepper::new(&rig, f);
+            s.wait = wait;
             let mut n = 0;
             while n < drain && !s.frame.bake_queue().is_some_and(|q| q.empty()) {
                 queue_step(&mut rig, &mut s.frame, &cam);
