@@ -890,6 +890,164 @@ The owner took option (a) of the question under "Phase 4's two misses": **the 1 
 
 Phase 4c read the 1 m dig at `down` 4.53 levels under `S` at its first frame, against B2's floor of 4 (reading 16), and the architect had said no other form over the same rays is left. The owner's answer: **"take it to the window"**. The form stays as Phase 4c built it; no further architect round runs before the window. B2's under clause at 1 m is judged by his eye in Phase 6, with the measured series (D+0 to D+5) printed in the run's text; the headless figure stays in the log as a miss by 0.53, not restated as a pass. Phase 4c's five remaining holds are taken as readings (reading 17). If the window refuses the shallow dig's dark start, the next step is the architect's (a mechanism near the mouth), not a tuned anchor.
 
+## Amended 2026-11-26 (owner, the window's verdict: `depth` is the default)
+
+**The pick: `--dig-estimate depth` becomes the default; `surface` stays a render setting**
+(an arm that costs nothing when off stays a setting, the owner's standing rule). Phase 6 is
+done. Phase 7 is re-cut below into 7a (the default flips), 7b (a second, short look) and 7c
+(the asserting tests and the readings).
+
+### What was shown
+
+Live window "session 6", 2026-11-26, RTX 3080 Laptop, Linux, the forest at 15:00, `--profile
+floor`, the bake thread on, no camera hold. The binary is `cargo build --release -p
+flythrough` at `7b1725c2`, which holds the render code of `a35a08d8` (Phase 4c): **it predates
+the merge of main and Phase 5.** The session's record is `live/session6.log` in the lane
+(untracked; the runner is `live/session6.sh`). Four runs:
+
+1. the narrow pit, one dig wide, past 5 m, under `surface`;
+2. the same under `depth`;
+3. digs to the side from inside the pit, and caves, under `surface`;
+4. the same under `depth`.
+
+### The owner's words
+
+His notes as the session recorded them (1a/1b are runs 1 and 2; 2a/2b are runs 3 and 4):
+
+- "1a/1b. In the narrow pit: does anything flash at depth, surface vs depth?: 1a flashes, 1b not"
+- "1a/1b. Under depth: does a new face's dark start bother (the first metre included)?: nope"
+- "1a/1b. Near the surface (the first metre): does depth look as surface did?: almost on 1b"
+- "2a/2b. Side digs (and the wide pit or tunnel): does anything flash at depth, surface vs depth?: 2a flashes, 2b not"
+- "2a/2b. Under depth: does a new face's dark start bother at the side digs?: not on 2b"
+- The pick's field was left blank in the session.
+
+To the orchestrator afterwards, by run: "1 dig blinks", "2 almost good", "3 flashes,
+underground in caves flashes badly (blue color)", "4 is fine". Asked what "almost" meant and
+whether `depth` becomes the default with `surface` kept as a setting: "yes, dark start is not
+visible at all and doesnt register. it really looks good".
+
+### What the verdict settles, and what it does not
+
+- **Settled:** nothing flashes at depth under `depth`, in the narrow pit and at the side
+  digs and caves; `surface` flashes at both, badly and blue in the caves. A new face's dark
+  start under `depth` does not bother, the first metre included.
+- **B2's under clause at 1 m is accepted by his eye, and stays a measured miss.** The
+  headless figure (`down` 1 m, 4.53 levels under the settled look at the dig's first frame
+  against a floor of 4, Reading 16; 4.55 on the bake thread, Reading 17) is a miss by 0.53
+  in the log and in every later text. No phase restates it as met, and no test asserts B2's
+  under clause at 4 at that site (Phase 7c says what it asserts instead). The step named
+  under "Phase 4c's miss goes to the window" (a mechanism near the mouth) is not taken.
+- **Not judged:** the casting frame at the 5 m dig into a chunk with no block. Phase 5
+  holds that dig on a record under `depth`, and Phase 5 was not in the binary. Phase 7b
+  shows it.
+- **Not judged either:** a tree that holds main (Plans 0101, 0104's close and 0106's first
+  phase are not in the binary). Phase 7b's binary holds it.
+
+### Phase 7a: `depth` is the default (the flip, and the tests the default moves)
+- **Owner skill:** dev
+- **What:** `Lighting::dig_estimate` defaults to `DigEstimate::Depth`, so every named
+  profile holds it (ADR-0055: a profile is a named value over the defaults; none overrides
+  the field). The live queue's own starting value follows the same default. `surface` stays
+  as the setting and the flag. The banner and the HUD's lighting row name the arm only off
+  the default, so they now read `dig estimate surface` under `surface` and nothing under
+  `depth`: the code that compares against the default does not change, its tests and the
+  docs do. Starts once Phase 5's owed runs (`surface` after, `gpu_outdoor`, `gpu_queue`) are
+  in its row. No new image test, no golden written: those are Phase 7c's, after the look.
+- **Files touched:** `crates/svet-render/src/frame/settings.rs` (the default and its doc
+  line), `crates/svet-render/src/frame/settings/sky_light.rs` (the enum's doc),
+  `crates/svet-render/src/bake/queue/mod.rs` (the queue's starting value),
+  `crates/svet-render/src/settings/tests.rs`, `apps/flythrough/src/cli/outdoor.rs` (the
+  flag's help), `apps/flythrough/src/cli/tests/outdoor.rs`,
+  `apps/flythrough/src/run/hud_live_tests.rs`, `docs/flythrough.md` (the `--dig-estimate`
+  row: `[depth]`, the row's text names `surface`, and one clause that `surface` flashes at
+  depth by the owner's window), `docs/plans/logs/0105.md`. A test under `crates/` or `apps/`
+  that this phase pins or re-reads is named in the log.
+- **Done when:**
+  1. `every_profile_holds_the_calm_picks` asserts `dig_estimate` is `Depth` and `dig_hold`
+     is `On` on `Lighting::default()` and on every profile of `Profile::ALL` (under 1 s).
+  2. `dig_estimate_is_surface_or_depth_and_names_itself`, flipped: with no flag the
+     lighting holds `Depth` and the banner holds no `dig estimate`; `--dig-estimate surface`
+     sets `Surface` and the banner and the lighting row hold `dig estimate surface, `;
+     `--dig-estimate depth` sets the default; `--dig-estimate maybe` is refused (under 1 s).
+     `lighting_flags_parse_and_refuse_unknown_values` passes with its default line unchanged.
+  3. `gpu_settings_rows` passes with `lighting.dig_estimate`'s row as it is (its test value
+     is now `surface`).
+  4. `flythrough --help` and `docs/flythrough.md` name `depth` as the default.
+  5. **Re-read under the new default, each named in the log with its result:** every test
+     that reads a frame between a dig and its landing with the lighting's defaults. By a
+     grep at this amendment: `gpu_sun`'s dig tests (the switch without a dip, the ring's
+     dots and the hole's light, ADR-0076's rule 3 over the hole's floor), `gpu_queue`'s dig
+     tests, and the soak-marked dig tests of `gpu_lights` and `gpu_outdoor`, which are run
+     once by name (time projected from the first; the soak tier itself is not run). `dev`
+     greps again and the log's list is the source.
+  6. The quick tier over the changed crates, clippy, fmt.
+- **Goldens:** **no stored golden is expected to move** (the architect's reading, not a
+  run): the held estimate lives only from an edit to its landing, and the stored stills are
+  of settled frames. If a stored image does move, `dev` names the image, the frames and the
+  difference in the log and stops; nothing is blessed before the architect reads it. A bless
+  the architect then rules is `dev`'s, on lavapipe, as every golden is.
+- **A test that fails under `depth` is one of two kinds, and `dev` says which in the log.**
+  A test whose claim is the `surface` estimate itself (the 0.02 floor, the surface's base)
+  sets `surface` by name and keeps its assertion. A test whose claim is a bar on the
+  default's picture (no dip, no dots, rule 3's band, a held frame's level) is read under
+  `depth` as it stands. **Stops:** such a bar missed under `depth` (the frames' series
+  printed; the assertion is not loosened and the test is not moved to `surface`); a stored
+  golden moved; a named soak test projected past 20 minutes under the lock. The risk the
+  architect names beforehand: `gpu_sun`'s rule 3 reads a 1 m dig against a band of 4
+  levels, the size of the forest's miss at 1 m, on another rig (an open floor under a
+  uniform sky); whether it holds is not known until it is read.
+- Binaries: `gpu_sun`, `gpu_queue`, `gpu_outdoor`, `gpu_lights`, `gpu_settings_rows`.
+
+### Phase 7b: The second look, short (the 5 m crossing)
+- **Owner skill:** human
+- **What:** One short session on Linux, on a binary built at Phase 7a's commit (it holds
+  main, Phase 5 and the new default). The forest as in Phase 6 (`--source outdoor --spawn
+  forest --trees forest --time 15:00 --profile floor`, the bake thread on, no camera hold,
+  no `--pre-roll-drain`, stdout visible). Two runs of the narrow pit, one dig wide, straight
+  down past 5 m, so the dig crosses into the chunk that holds no block: first with no flag
+  (the default, `depth`; the banner names no estimate), then `--dig-estimate surface` (the
+  banner and the HUD read `dig estimate surface`). Each run's text names its arm and prints
+  Reading 18's 5 m series. Nothing else is on the list: the side digs and the first metre
+  were judged in Phase 6.
+- **Done when:** the owner says whether anything flashes at the 5 m crossing under the
+  default, and whether the default's dig still looks as it did in Phase 6's runs 2 and 4;
+  he confirms the pick, or names what is wrong (then the architect amends, before 7c).
+
+### Phase 7c: The default's tests and readings
+- **Owner skill:** dev
+- **What:** Phase 7 as written under "Amended 2026-11-26 (architect)", less its item (3)
+  (done in 7a), against the default the owner confirmed in 7b: the synthetic shaft's GPU
+  test, the forest's soak-marked image test, the edit's readings, the gate at the tip.
+- **Files touched:** Phase 7's list, less `frame/settings.rs`.
+- **Done when:** Phase 7's items (1), (2), (4) and (5), with these three readings of them.
+  Item (2)'s forest test asserts B1 at 3 and 5 m at `down` and `side` (5 m now on every
+  frame from the dig to the landing, Phase 5's claim), and at 1 m B2's first clause (the
+  new faces no brighter than the settled look by more than 4 levels). **It does not assert
+  B2's under clause at `down` 1 m as met.** That site's first-frame level under the settled
+  look is read on lavapipe in this phase and held as a ratchet at that reading rounded up
+  to the next whole level, named in the test as the owner's accepted look of 2026-11-26 and
+  a miss of B2's floor of 4, not as B2; a lavapipe reading over 6 levels under stops for
+  the architect (the RTX read 4.53 and 4.55; lavapipe's figure is not known). Item (4)'s
+  readings carry the held estimate's time and state the 1 m miss by 0.53 beside the
+  owner's acceptance. Item (5) is the gate tier at the tip under the perf lock, clippy, fmt,
+  deny and the doc gates.
+- Binaries: `gpu_sun`, `gpu_outdoor`, `gpu_settings_rows`; the gpu tier at the tip.
+
+### What this changes elsewhere in the plan
+
+- **ADR-0082 is not edited now.** It is accepted with an Outcome whose dig rule names the
+  held record as "the sky visibility of the surface the dig cut through, times a near
+  openness". The default's change is a change inside that mechanism, so the ADR takes a
+  dated addition to its Outcome at this plan's close (the architect's, append-only): the
+  default estimate is `depth`, with no floor, a held value under one byte holding 0, the
+  share's form, and a chunk with no block held at the edit; `surface` stays a setting; the
+  1 m dig starts 4.53 levels dark against a bar of 4, accepted by the owner's eye. ADR-0055
+  is untouched: no profile overrides the field.
+- **The Implementation log:** row 6 is done by the owner. Row 7 is split by `dev` into 7a,
+  7b and 7c at 7a's commit, as rows 4b and 4c were.
+- **`surface`'s flash in the caves ("badly", "blue color") is not chased:** it is the arm
+  not picked. `docs/flythrough.md` says it flashes at depth (Phase 7a).
+
 ## Data shapes
 
 ```rust
@@ -975,7 +1133,7 @@ No record, block or buffer changes shape: the held record is the store's record 
 | 4b: a held value under one byte holds 0 | dev | done (`side`, lockstep, RTX, `depth`, against `S`: B1 at 2, 3, 5 and 7 m, +0.0 / +0 each; no part from 2 m over its landed byte, 3 at 2 m in Phase 4; 1 m printed, +0.8 / +8, one part 3 bytes over a landed 1). Run at load1 30.52 at the lock. Reading 15 in [the log](logs/0105.md) | a861fd0d |
 | 4c: the share slides to its root between one and two rays in twelve | dev | read; stopped for the architect (`down`, lockstep, RTX, `depth`, against `S`: B2's restated second clause missed at 1 m, -4.53 mean at D+0, its first clause -0.0; B1 at 2, 3 and 7 m, and 5 m on the frames all on a record; no part from 2 m over its landed byte, 4 at 1 m). The held estimate 0.34 to 0.45 ms a read dig at load1 3.71 at the start. The five other holds after the stop: `down` bake thread misses the same way (-4.55 at D+0 and D+1); `wide` lockstep meets the restated B2 at 1 m (-2.19 at D+0) and B1 from 2 m (5 m on the frames on a record); `side` both modes B1 at 2 to 7 m, first frames -5.5 to -8.7 at 1 to 3 m and the exposure at 1 m 12.9 % under D+60's (flags for the architect); `surface` lockstep the held estimate 0.34 to 0.47 ms. Largest held estimate 0.769 ms (`wide` 5 m). The bake thread prints no part trace or `forms over landed` row. Readings 16 and 17 in [the log](logs/0105.md) | a35a08d8, 42487613 |
 | 5: a chunk with no block holds the dig too | dev | read (lockstep, RTX, `depth`, against `S`: at `down` 5 m, both modes, every frame from the dig to the landing on a record, no `column`, `cast` or no value; -3.71 / +0 at D+0 where the merged tree read +12.84 / +157; `wide` 5 m lockstep -3.41 / +0 where it read +9.41 / +154; B1 at `down`, `side` and `wide` from 2 m, both modes where read; B2's first clause at 1 m everywhere, its under clause missed at `down` 1 m as before, -4.55, the window's case). The held block takes 535 pool words at the edit; no place refused. The `wide` 5 m held estimate 7.76 ms (D+0 step 25.0 ms) at a loaded start, not re-read; `surface` after and the gpu binaries not run (the owner's window took the lock). Reading 18 in [the log](logs/0105.md) | committed with this row |
-| 6: the owner's window | human | not started | |
+| 6: the owner's window | human | done by the owner 2026-11-26 (session 6, RTX 3080 Laptop, the binary at `7b1725c2`, before the merge of main and Phase 5): `surface` flashes in the pit and at the side digs, `depth` does not; the dark start "is not visible at all"; the pick is `depth` as the default, `surface` kept as a setting. The 5 m crossing not judged (Phase 7b). His words are under "Amended 2026-11-26 (owner, the window's verdict: `depth` is the default)" | |
 | 7: the pick as the default, with its tests | dev | not started | |
 
 ### Notes
