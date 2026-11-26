@@ -661,6 +661,52 @@ and 0091 have not started. Phases 1, 2, 4 and 6 render on the GPU under the perf
    other file, as the owner ruled. Alternative: leave the two ADRs and accept that the grep
    prints them.
 
+## Amended 2026-11-26 (owner)
+
+The owner answered A11's questions (2026-11-26): "all recommended except 3 - in this plan".
+
+1. **The identity figure:** the forest frame, 8.3 ms at 1080p on the RTX 3080 Laptop while
+   the view bakes (Plan 0099's pin in `docs/nfr.md` section 2), named with its machine.
+2. **Badges:** three on one line (CI, licence, release).
+3. **A second code example is in this plan**, not the backlog: Phase 6b below.
+4. **Nine feature groups**, Outdoors its own.
+5. **The scrub covers the two accepted ADRs** (his "scrub all"): they are reworded at the
+   close like every other file, a name only, no decision changed, each with a dated line
+   saying the wording was edited on the owner's word.
+
+### Phase 6b: A minimal window as the second example
+
+- **Owner skill:** dev
+- **What:** one example a reader can copy to open a window on their own world:
+  `crates/svet-app/examples/minimal_window.rs` (or the crate the tree shows owns the frame
+  loop; the tree's names win), at most 60 lines without comments: a small world from
+  `svet-world` with a floor and a few carved shapes, the renderer from `svet-render`, the
+  window and loop from `svet-app`, the defaults of a named profile, Escape to quit. No
+  fly-through code is copied into it and no new public API is added for it; if it cannot be
+  written in 60 lines against today's API, that is the finding (see the stop). The README's
+  `Use it as a library` section shows it after the `svet-world` example (A4 E3) as a second
+  `rust` fence quoted from the file between two marker comments, at most 30 lines, with the
+  command that runs it (`cargo run --release -p svet-app --example minimal_window`) and one
+  line of what the reader sees. A headless path (`--frames N` or the example's own test) lets
+  CI and the shoot script run it without a window; its still is a candidate for the
+  section's image at Phase 5 if the phase lands before the contact sheets, else for the
+  gallery.
+- **Order:** after Phase 1, before Phase 4 where it can be (so the owner sees its still on a
+  sheet); it does not block Phase 4.
+- **Done when:** the example builds in CI's ordinary build (`--all-targets`) and under
+  clippy with `-D warnings`; a headless run of it renders at least one frame that is not one
+  colour (asserted by a test in the `gpu_` tier or by the example's own headless exit code,
+  named in the log); a doc gate or test asserts the README's fence is byte-equal to the
+  marked span of the file, so the two cannot drift; the wording rules W1 to W9 hold for its
+  two lines of text.
+- **Stop, reported:** the example needs a public API the crates do not have, or more than
+  60 lines of set-up. The gap is reported with the lines that had to be copied, the
+  architect rules (a small API addition as its own phase, or the example trimmed to what
+  the API gives), and the README does not ship a fence that does not compile.
+
+Phase 6's Done when gains: the README holds the two `rust` fences in `Use it as a library`,
+in that order. The Implementation log gains a row for Phase 6b.
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
@@ -678,6 +724,7 @@ and 0091 have not started. Phases 1, 2, 4 and 6 render on the GPU under the perf
 | 4: candidates and contact sheets | dev | not started | |
 | 5: the owner picks | human | not started | |
 | 6: the picks, the final shoot, the rewrite | dev | not started | |
+| 6b: a minimal window as the second example | dev | not started | |
 | 7: the README on GitHub | human | not started | |
 
 ### Notes
