@@ -345,6 +345,9 @@ pub struct HeldPart {
     pub reach: f32,
     pub new_faces: u16,
     pub old_faces: u16,
+    /// Of `new_faces`, those outside every box dilated by one voxel: counted with the dig's
+    /// because the cell's record lacks the direction (a reading's count).
+    pub outside: u16,
     pub record: u32,
     pub radiance_from: RadianceFrom,
     pub old_radiance: Option<f32>,
@@ -462,6 +465,18 @@ pub(crate) fn held_visibilities(
                         })
                 });
                 let mut sum = old.len() as f32 * own_f.unwrap_or(0.0);
+                let outside = if own_f.is_none() && trace.is_some() {
+                    new.iter()
+                        .filter(|lv| {
+                            !boxes.iter().any(|[lo, hi]| {
+                                (0..3)
+                                    .all(|k| (lo[k] - 1..=hi[k] + 1).contains(&(gb[k] * 8 + lv[k])))
+                            })
+                        })
+                        .count()
+                } else {
+                    0
+                };
                 let mut parts = None;
                 if !new.is_empty() {
                     let picks = new.len().min(HELD_FACES);
@@ -510,6 +525,7 @@ pub(crate) fn held_visibilities(
                         reach,
                         new_faces: n_new as u16,
                         old_faces: n_old as u16,
+                        outside: outside as u16,
                         record: record as u32,
                         radiance_from,
                         old_radiance,
