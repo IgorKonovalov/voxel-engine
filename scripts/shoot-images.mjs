@@ -15,7 +15,9 @@
 // encodes into target/shots/check/ instead, decodes the new and the committed file to raw RGB
 // with ffmpeg, cuts every frame into CELL x CELL cells and prints the share of cells whose
 // largest channel mean differs by more than CELL_LEVEL, against the entry's `tolerance`; it
-// exits 1 when one is over. Encoder noise and a one-pixel move average out inside a cell; a
+// exits 1 when one is over. An entry marked `unjudged` (its noise set broke its ceiling, so its
+// `tolerance` is null) is rendered and its share printed, marked unjudged, and never counts
+// towards the exit code. Encoder noise and a one-pixel move average out inside a cell; a
 // changed scene, pass or hour moves whole cells. The `frozen` map names images that are kept
 // and never re-rendered.
 //
@@ -97,8 +99,14 @@ export function validate(manifest) {
       files.set(e.file, id);
       if (manifest.frozen?.[e.file] !== undefined) errors.push(`${id}: file ${e.file} is also frozen`);
     }
-    // A draft's tolerance may be null: no noise set read yet; `--check` fails it.
-    if (!(e.draft === true && e.tolerance === null) && !(typeof e.tolerance === "number" && e.tolerance >= 0 && e.tolerance <= 1)) {
+    // A null tolerance is a draft's (no noise set read yet; `--check` fails it) or an unjudged
+    // entry's (its set broke its ceiling; `--check` prints its share and does not count it).
+    const unjudged = e.unjudged !== undefined;
+    if (unjudged && !(typeof e.unjudged === "string" && e.unjudged.length > 0)) {
+      errors.push(`${id}: unjudged is not a line (the largest pair, the smallest wrong share, the date)`);
+    }
+    if (unjudged && e.tolerance !== null) errors.push(`${id}: an unjudged entry's tolerance is null`);
+    else if (!((e.draft === true || unjudged) && e.tolerance === null) && !(typeof e.tolerance === "number" && e.tolerance >= 0 && e.tolerance <= 1)) {
       errors.push(`${id}: tolerance is not a fraction in 0..1${e.draft === true ? " or null" : ""}`);
     }
     if (e.candidates !== undefined) errors.push(...validateCandidates(id, e));
@@ -323,6 +331,32 @@ export function cellShare(a, b, width, height, { cell = CELL, level = CELL_LEVEL
 }
 
 /**
+ * `--check`'s judgment of one entry from `d`, the cell share of its new file against the
+ * committed one (`cellShare`'s result; null when there is nothing to read). `fails` counts
+ * towards exit 1. A draft with no tolerance fails unread. An unjudged entry (its noise set broke
+ * its ceiling, so it has no tolerance) prints its share marked unjudged and never counts, however
+ * far apart its files read.
+ */
+export function verdict(entry, d) {
+  if (entry.unjudged === undefined && entry.tolerance === null) {
+    return { fails: true, unjudged: false, text: "; no tolerance (a draft whose noise set is not read)" };
+  }
+  let text = `; cell share ${d.share.toFixed(6)} (C ${CELL}, L ${CELL_LEVEL}, largest ${d.max.toFixed(2)}) `;
+  let fails = false;
+  if (entry.unjudged !== undefined) text += `UNJUDGED, not counted (${entry.unjudged})`;
+  else {
+    fails = d.share > entry.tolerance;
+    text += `tolerance ${entry.tolerance} ${fails ? "OVER" : "ok"}`;
+  }
+  if (d.note) text += ` (${d.note})`;
+  // A loop's worst frame is a reading beside the share, not judged itself.
+  if (entry.kind === "loop" && !d.note) {
+    text += d.worst ? `; worst frame ${d.worst.frame} at ${d.worst.share.toFixed(6)} (unjudged)` : "; worst frame none";
+  }
+  return { fails, unjudged: entry.unjudged !== undefined, text };
+}
+
+/**
  * One hold's renders: `render` each unit in order, starting none once `now()` (seconds) is
  * `limit` past the hold's start. Returns what the renders returned; the units after them wait
  * for the next hold.
@@ -357,7 +391,8 @@ const USAGE = `usage: node scripts/shoot-images.mjs [--only ID,..] [--print ID] 
   --print ID     print the entry's commands (copy-pasteable from the repository root) and exit
   --check        render and encode into ${SHOTS}/check/, print each entry's cell share (cells of
                  ${CELL} x ${CELL}, a channel mean more than ${CELL_LEVEL} apart) against the
-                 committed file and its tolerance; exit 1 when one is over
+                 committed file and its tolerance; exit 1 when one is over (an unjudged
+                 entry's share is printed and not counted)
   --candidates   render every candidate of the entries that have them into ${CANDIDATES}/ and
                  tile each entry's into <id>.png with a legend <id>.txt; writes index.html
   --candidate N  with --print: the commands that make candidate N's tile alone
@@ -629,6 +664,8 @@ function main() {
     console.log(`built in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
   }
   let failed = 0;
+  /** `--check`'s unjudged entries: rendered and read, never counted. */
+  const unjudgedIds = [];
   let waited = 0;
   let held = 0;
   const units = o.candidates ? candidateUnits(ids, manifest) : ids;
@@ -698,20 +735,16 @@ function main() {
         if (!fs.existsSync(committed)) {
           out += `; no committed ${IMAGES}/${entry.file}`;
           failed++;
-        } else if (entry.tolerance === null) {
-          out += "; no tolerance (a draft whose noise set is not read)";
-          failed++;
         } else {
-          const { width, height } = probeSize(committed);
-          const d = cellShare(decodeRgb(committed), decodeRgb(path.join(ROOT, e.out)), width, height);
-          const over = d.share > entry.tolerance;
-          if (over) failed++;
-          out += `; cell share ${d.share.toFixed(6)} (C ${CELL}, L ${CELL_LEVEL}, largest ${d.max.toFixed(2)}) ` +
-            `tolerance ${entry.tolerance} ${over ? "OVER" : "ok"}${d.note ? ` (${d.note})` : ""}`;
-          // A loop's worst frame is a reading beside the judged share, not judged itself.
-          if (entry.kind === "loop" && !d.note) {
-            out += d.worst ? `; worst frame ${d.worst.frame} at ${d.worst.share.toFixed(6)} (unjudged)` : "; worst frame none";
+          let d = null;
+          if (entry.tolerance !== null || entry.unjudged !== undefined) {
+            const { width, height } = probeSize(committed);
+            d = cellShare(decodeRgb(committed), decodeRgb(path.join(ROOT, e.out)), width, height);
           }
+          const v = verdict(entry, d);
+          if (v.fails) failed++;
+          if (v.unjudged) unjudgedIds.push(r.id);
+          out += v.text;
         }
       }
       console.log(out);
@@ -725,8 +758,10 @@ function main() {
     }
     console.log(`index ${writeIndex(manifest)}`);
   }
+  const judged = units.length - unjudgedIds.length;
   console.log(
-    `${units.length - failed} of ${units.length} ${o.check ? "within tolerance" : o.candidates ? "candidates rendered" : "shot"}, ` +
+    `${judged - failed} of ${judged} ${o.check ? "within tolerance" : o.candidates ? "candidates rendered" : "shot"}` +
+      `${unjudgedIds.length ? ` (${unjudgedIds.length} unjudged, not counted: ${unjudgedIds.join(", ")})` : ""}, ` +
       `${((Date.now() - t0) / 1000).toFixed(0)} s in all: ${waited.toFixed(0)} s waiting for the lock, ${held.toFixed(0)} s held`,
   );
   return failed ? 1 : 0;

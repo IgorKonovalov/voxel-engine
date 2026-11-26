@@ -22,6 +22,7 @@ import {
   REQUIRED,
   ROOT,
   validate,
+  verdict,
 } from "./shoot-images.mjs";
 
 const SCRIPT = path.join(ROOT, "scripts/shoot-images.mjs");
@@ -284,4 +285,34 @@ test("batchOf starts no render once the hold is the limit old, on a faked clock"
     return "x";
   };
   assert.deepEqual(batchOf(["x", "y"], slow, now, 600), ["x"]);
+});
+
+test("validate: a null tolerance needs the draft or the unjudged mark; an unjudged entry's tolerance is null", () => {
+  const m = (e) => ({ shots: { still: e } });
+  const still = FIXTURE.shots.still;
+  const line = "largest pair 0.01 over its ceiling 0.007 (smallest wrong share 0.021); 2026-11-26";
+  assert.deepEqual(validate(m({ ...still, tolerance: null })), ["still: tolerance is not a fraction in 0..1"]);
+  assert.deepEqual(validate(m({ ...still, tolerance: null, draft: true })), []);
+  assert.deepEqual(validate(m({ ...still, tolerance: null, unjudged: line })), []);
+  assert.deepEqual(validate(m({ ...still, tolerance: 0.004, unjudged: line })), ["still: an unjudged entry's tolerance is null"]);
+  assert.deepEqual(validate(m({ ...still, tolerance: null, unjudged: "" })),
+    ["still: unjudged is not a line (the largest pair, the smallest wrong share, the date)"]);
+});
+
+test("verdict: an unjudged entry prints its share and never counts; a judged one counts over its tolerance", () => {
+  const still = FIXTURE.shots.still;
+  const far = { share: 0.5, max: 80, worst: null };
+  const u = verdict({ ...still, tolerance: null, unjudged: "over its ceiling; 2026-11-26" }, far);
+  assert.equal(u.fails, false);
+  assert.equal(u.unjudged, true);
+  assert.match(u.text, /cell share 0\.500000 .*UNJUDGED, not counted \(over its ceiling; 2026-11-26\)/);
+  const loop = verdict({ ...FIXTURE.shots["loop-a"], tolerance: null, unjudged: "x" }, { share: 0.1, max: 9, worst: { frame: 2, share: 0.3 } });
+  assert.equal(loop.fails, false);
+  assert.match(loop.text, /UNJUDGED.*worst frame 2 at 0\.300000/);
+  assert.deepEqual([verdict(still, far).fails, verdict(still, far).unjudged], [true, false]);
+  assert.match(verdict(still, far).text, /tolerance 0\.001 OVER/);
+  assert.equal(verdict(still, { share: 0.001, max: 5, worst: null }).fails, false);
+  // A draft with no tolerance fails unread.
+  assert.deepEqual(verdict({ ...still, tolerance: null, draft: true }, null),
+    { fails: true, unjudged: false, text: "; no tolerance (a draft whose noise set is not read)" });
 });

@@ -234,13 +234,14 @@ files. The images are runs of zero bytes, not pictures: the gate reads names and
 | a still over the still cap | `docs/images/big.webp`, 301 000 bytes (zeros; a few hundred bytes as a git object) | `docs/images/big.webp -> 301000 bytes, over the still cap of 300000` |
 | an entry no markdown references | `orphan` -> `orphan.webp`, 100 bytes | `docs/images/orphan.webp -> entry orphan: no markdown references it` |
 | the README's images over the total cap | `README.md` shows `hero.webp` (markdown) and `loop.webp` (`<img>`), 1200 bytes each | `README.md -> its 2 image(s) total 2400 bytes, over the cap of 2000` |
+| an unjudged entry | `loop` carries `"unjudged"` | not reported; printed on the `unjudged:` line before the findings |
 | a draft entry | `soon` -> `soon.webp`, `"draft": true`, no file and no reference | not reported; counted as the one draft |
 | a frozen file no markdown references | `old.png` under `frozen` | not reported |
 | a reference inside a fence or a code span | `docs/page.md`: `![](images/orphan.webp)` twice | not reported, and `orphan` stays unreferenced |
 | an `<img>` with alt text | `README.md` line 7 | not reported, and counted in the README total |
 
-`node scripts/check-images.mjs --self-test` asserts these five lines in this order and the one
-draft, and that the repository itself reports nothing; CI runs it beside the plain gate.
+`node scripts/check-images.mjs --self-test` asserts these five lines in this order, the one
+draft and the one unjudged entry (`loop`), and that the repository itself reports nothing; CI runs it beside the plain gate.
 
 ## `doc-links/`: for `check-doc-links.mjs`
 

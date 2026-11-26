@@ -16,6 +16,9 @@
 //   the kind's cap is itself a finding: the manifest may lower a cap, never raise it);
 // - the images README.md references (repository files; drafts excluded) total at or under
 //   5 000 000 bytes, or the manifest's top-level `readme_cap_bytes` when that is lower.
+// An entry marked `unjudged` (its noise set broke its ceiling, so `--check` reads it and does
+// not count it) is no finding; the unjudged entries are printed by name on every run, findings
+// or not, so the mark is never silent.
 // An entry with `"draft": true` need not exist nor be referenced; if its file exists its cap
 // holds, and it counts in no README total. The drafts' count is printed. Frozen files carry
 // no cap (they are figures nothing re-renders).
@@ -101,19 +104,19 @@ function resolveRef(mdPath, target) {
     : posix.normalize(posix.join(posix.dirname(mdPath), path));
 }
 
-/** Runs every rule over `root`: `{ findings, drafts, summary }`. */
+/** Runs every rule over `root`: `{ findings, drafts, unjudged, summary }`. */
 function check(root) {
   const findings = [];
   const all = files(root);
   const manifestAbs = join(root, MANIFEST);
   if (!existsSync(manifestAbs)) {
-    return { findings: [`${MANIFEST} -> missing`], drafts: 0, summary: "" };
+    return { findings: [`${MANIFEST} -> missing`], drafts: 0, unjudged: [], summary: "" };
   }
   let manifest;
   try {
     manifest = JSON.parse(readFileSync(manifestAbs, "utf8"));
   } catch (e) {
-    return { findings: [`${MANIFEST} -> does not parse: ${e.message}`], drafts: 0, summary: "" };
+    return { findings: [`${MANIFEST} -> does not parse: ${e.message}`], drafts: 0, unjudged: [], summary: "" };
   }
   const shots = manifest.shots ?? {};
   const frozen = manifest.frozen ?? {};
@@ -184,10 +187,11 @@ function check(root) {
       `README.md -> its ${readmeImages.size} image(s) total ${readmeBytes} bytes, over the cap of ${readmeCap}`,
     );
   }
+  const unjudged = Object.entries(shots).filter(([, e]) => e.unjudged !== undefined).map(([id]) => id);
   const summary =
     `images: ${Object.keys(shots).length} entries (${drafts} draft), ${Object.keys(frozen).length} frozen, ` +
     `${refs.length} image references with alt text, README.md's images ${readmeBytes} of ${readmeCap} bytes`;
-  return { findings, drafts, summary };
+  return { findings, drafts, unjudged, summary };
 }
 
 // The seeded tree's findings, in the order the gate reports them; scripts/fixtures/README.md
@@ -200,6 +204,7 @@ const EXPECTED = [
   "README.md -> its 2 image(s) total 2400 bytes, over the cap of 2000",
 ];
 const EXPECTED_DRAFTS = 1;
+const EXPECTED_UNJUDGED = ["loop"];
 
 function selfTest() {
   const results = [];
@@ -208,6 +213,10 @@ function selfTest() {
     fixture.findings.length === EXPECTED.length && fixture.findings.every((f, i) => f === EXPECTED[i]);
   results.push([`the seeded tree reports exactly the ${EXPECTED.length} expected findings`, same]);
   results.push([`the seeded tree counts ${EXPECTED_DRAFTS} draft`, fixture.drafts === EXPECTED_DRAFTS]);
+  results.push([
+    `the seeded tree names its unjudged entry: ${EXPECTED_UNJUDGED.join(", ")}`,
+    fixture.unjudged.join(",") === EXPECTED_UNJUDGED.join(","),
+  ]);
   const repo = check(REPO_ROOT);
   results.push(["the repository reports no finding", repo.findings.length === 0]);
   for (const [name, ok] of results) console.log(`${ok ? "ok  " : "FAIL"} ${name}`);
@@ -223,7 +232,13 @@ function selfTest() {
 const argv = process.argv.slice(2);
 if (argv.includes("--self-test")) selfTest();
 const root = resolve(argv.find((a) => !a.startsWith("--")) ?? REPO_ROOT);
-const { findings, summary } = check(root);
+const { findings, unjudged, summary } = check(root);
+// Printed on every run, before any finding: an unjudged entry passes the gate but is never silent.
+console.log(
+  unjudged.length
+    ? `unjudged (no tolerance; --check reads them and does not count them): ${unjudged.join(", ")}`
+    : "unjudged: none",
+);
 if (findings.length) {
   for (const f of findings) console.error(f);
   console.error(`${findings.length} finding(s)`);

@@ -1590,7 +1590,7 @@ entry's set read again; a castle under the sun.
 | 6b: a minimal window as the second example | dev | not started; waits on 6a | |
 | 7: the README on GitHub | none | no phase (owner, 2026-11-26, G5): the orchestrator's check after the push | |
 | 5d: the three picks by the bars, the dig's flash read (replaces 5c) | dev | done: dig 4, walkers 6 (the spider), castle 2; the dig a still of frame 96 by G3's rule; `walkers` and `dig` `--print` differ from the legend line in `--still-at` too (log) | `7e1a79d2` |
-| 6c: the noise sets and the tolerances | dev | not started; waits on 6a | |
+| 6c: the noise sets and the tolerances | dev | done: 76 renders in four holds (1798 s, the longest 631 s), eleven tolerances, `walkers` unjudged (twice its largest pair over the ceiling; G2 read as covering it); `--check` exit 0; files beyond the list: the image gate's seeded fixture and its README; readings in [the log](logs/0093.md) | committed with this row |
 | 6d: the tip | dev | not started; waits on 6 and 6c | |
 
 ### Notes

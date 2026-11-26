@@ -669,3 +669,10 @@ missing pass or another hour moves whole cells. A row's tolerance is read from s
 more in that quantity (every pair of them), not assumed, and `note` names the reading. A loop
 is judged by its share over all its frames; run-to-run noise there is a spike in a few frames,
 so the worst frame is printed beside it and not judged.
+
+A row whose runs differ from each other by more than a third of what a wrong picture reads
+(the same row with its yaw turned 2 degrees, or a loop started one frame late) has no
+tolerance the check could hold: its `tolerance` is `null` and it carries `unjudged`, a line
+with the largest pair, the smallest wrong share and the date. `--check` still renders it and
+prints its share marked unjudged, but never counts it towards the exit code, and
+`node scripts/check-images.mjs` names every unjudged row on each run.
