@@ -569,6 +569,12 @@ image tests are Phase 7's.
    pit headless, the other two only in the window). Recommended: (a) as written; (b) all
    three headless before the window (about 20 minutes more under the GPU lock).
 
+## Amended 2026-11-26 (owner, the architect's three questions)
+
+1. **A side dig 1 to 2 m under the mouth that shows black for about five frames and then rises is accepted** ("better than white flash"); he judges it in Phase 6's window. No further phase takes the base from the hole's own direction records unless the window asks for it.
+2. **If no flash at depth and the unchanged surface dig cannot both hold, neither is given up:** the phase stops and the architect looks for a form that keeps both.
+3. **The wide pit is read headless; the slope and the tunnel only in the window,** as written.
+
 ## Data shapes
 
 ```rust
