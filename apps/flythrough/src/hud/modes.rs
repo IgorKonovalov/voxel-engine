@@ -744,12 +744,6 @@ impl Modes {
             let _ = write!(out, ", sky rays {}, ", l.sky_rays);
             out.push_str(self.leaf_shadow.words());
             self.write_key_far(out);
-            if l.key_at != svet_render::KeyAt::default() {
-                let _ = write!(out, "key at {}, ", l.key_at.name());
-            }
-            if l.key_horizon != svet_render::KeyHorizon::default() {
-                let _ = write!(out, "key horizon {}, ", l.key_horizon.name());
-            }
             if l.key_cover != svet_render::KeyCover::default() {
                 let _ = write!(out, "key cover {}, ", l.key_cover.name());
             }

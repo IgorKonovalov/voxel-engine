@@ -119,12 +119,7 @@ struct Arm {
     /// `Lighting::light_history_far` (`hfar`).
     far_light_wide: bool,
     light_history_far: bool,
-    /// Plan 0100 Phase 1's arms: where on a cube face the key light's column horizon is read
-    /// (`keyat=hit|face|face-smooth`).
-    key_at: svet_render::KeyAt,
-    /// Plan 0100 Phase 5b's arm: how the column horizon reads the map (`keyhorizon=march|walk`).
-    key_horizon: svet_render::KeyHorizon,
-    /// Plan 0100 Phase 6's arm: the source under cover (`keycover=off|ray|record`).
+    /// Plan 0100 Phase 6's arm: the source under cover (`keycover=off|ray`).
     key_cover: svet_render::KeyCover,
     /// Plan 0100 Phase 3's arms, read by `coarse::reading` alone: the coarse pass's samples a
     /// brick direction (`coarse=N`, the fly-through's by default), the full-first radius
@@ -154,9 +149,8 @@ impl Arm {
     /// on), `fly=N` (the fly's frames) and
     /// `normals` (the normals view); Plan 0098 Phase 5's arms `wide` (`far_light_wide`) and
     /// `hfar` (`light_history_far`); Plan 0098 Phase 9's `hist` (`light_history` on, after
-    /// `calm`) and `baked` (`key_far baked`); Plan 0100 Phase 1's `keyat=hit|face|face-smooth`
-    /// (`Lighting::key_at`); Plan 0100 Phase 3's `coarse=N`, `ff=N|none` and `skyface`; Phase 5b's
-    /// `keyhorizon=march|walk`; Phase 6's `keycover=off|ray|record`; Phase 8b's `out=WxH`.
+    /// `calm`) and `baked` (`key_far baked`); Plan 0100 Phase 3's `coarse=N`, `ff=N|none` and
+    /// `skyface`; Phase 6's `keycover=off|ray`; Phase 8b's `out=WxH`.
     fn parse() -> Self {
         Self::from_spec(&std::env::var("SVET_WOBBLE").unwrap_or_else(|_| "default".into()))
     }
@@ -208,8 +202,6 @@ impl Arm {
             normals: false,
             far_light_wide: false,
             light_history_far: false,
-            key_at: flythrough::default_lighting().key_at,
-            key_horizon: flythrough::default_lighting().key_horizon,
             key_cover: flythrough::default_lighting().key_cover,
             coarse: svet_render::DEFAULT_COARSE_SAMPLES,
             full_first: Some(svet_render::DEFAULT_NEAR),
@@ -283,10 +275,6 @@ impl Arm {
                 "wide" => a.far_light_wide = true,
                 "hfar" => a.light_history_far = true,
                 "fly" => a.fly = v.parse().unwrap(),
-                "keyat" => a.key_at = svet_render::KeyAt::from_name(v).expect("keyat=NAME"),
-                "keyhorizon" => {
-                    a.key_horizon = svet_render::KeyHorizon::from_name(v).expect("keyhorizon=NAME")
-                }
                 "keycover" => {
                     a.key_cover = svet_render::KeyCover::from_name(v).expect("keycover=NAME")
                 }
@@ -385,8 +373,6 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
         source_fade: arm.source_fade,
         far_light_wide: arm.far_light_wide,
         light_history_far: arm.light_history_far,
-        key_at: arm.key_at,
-        key_horizon: arm.key_horizon,
         key_cover: arm.key_cover,
         sky_normal: if arm.sky_face {
             svet_render::SkyNormal::Face

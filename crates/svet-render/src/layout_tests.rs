@@ -482,8 +482,6 @@ fn rust_value(name: &str) -> Option<f64> {
         "FACE_KEY_ONLY" => f64::from(crate::bake::FACE_KEY_ONLY),
         "COLUMN_CELL" => f64::from(crate::gpu_world::COLUMN_CELL),
         "COLUMN_CELLS" => f64::from(crate::gpu_world::COLUMN_CELLS),
-        "COLUMN_BLOCK" => f64::from(crate::gpu_world::COLUMN_BLOCK),
-        "COLUMN_BLOCKS" => f64::from(crate::gpu_world::COLUMN_BLOCKS),
         "EMISSION_ROWS" => crate::frame::EMISSION_ROWS as f64,
         "FIRST" => f64::from(crate::font8x8::FIRST),
         "LAST" => f64::from(crate::font8x8::LAST),

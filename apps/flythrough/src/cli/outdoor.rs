@@ -97,13 +97,7 @@ pub struct OutdoorArgs {
     /// (`AutoExposure::highlight_percentile`, 0 for off); unset, the preset's
     /// (`svet_render::DEFAULT_EXPOSURE_HIGHLIGHT`).
     pub(crate) exposure_highlight: Option<f32>,
-    /// `--key-at hit|face|face-smooth`: where on a cube face the key light's column horizon is
-    /// read (`Lighting::key_at`).
-    pub(crate) key_at: svet_render::KeyAt,
-    /// `--key-horizon march|walk`: how the key light's column horizon reads the map
-    /// (`Lighting::key_horizon`).
-    pub(crate) key_horizon: svet_render::KeyHorizon,
-    /// `--key-cover off|ray|record`: the source that adds the key light back where
+    /// `--key-cover off|ray`: the source that adds the key light back where
     /// the horizon reads shadow (`Lighting::key_cover`).
     pub(crate) key_cover: svet_render::KeyCover,
 }
@@ -494,48 +488,20 @@ fn sky_light_flags() -> Vec<Flag<Parsing>> {
     ]
 }
 
-/// The section's flags of the key light on a cube face (Plan 0100): where its horizon is read,
-/// how it reads the map and the source that adds it back under cover.
+/// The section's flags of the key light on a cube face (Plan 0100): the source that adds it back
+/// under cover.
 fn key_face_flags() -> Vec<Flag<Parsing>> {
-    vec![
-        Flag::value(
-            &["--key-at"],
-            "hit|face|face-smooth",
-            "where on a cube face the key light's column horizon is read: at the hit, at the \
-                 centre of the hit's voxel face (one value a face), or blended from the four \
-                 face centres nearest the hit (a ramp a voxel wide) [hit]",
-            |p: &mut Parsing, v| {
-                p.args.outdoor.key_at =
-                    v.named(svet_render::KeyAt::from_name, "hit, face or face-smooth")?;
-                Ok(())
-            },
-        ),
-        Flag::value(
-            &["--key-horizon"],
-            "march|walk",
-            "how the key light's column horizon reads the map: the march (12 distances to 512 \
-                 voxels and one interval's cells) or a walk over every cell to the window's \
-                 side, passing 32 x 32 and 8 x 8 blocks whose tops cannot shade [march]",
-            |p: &mut Parsing, v| {
-                p.args.outdoor.key_horizon =
-                    v.named(svet_render::KeyHorizon::from_name, "march or walk")?;
-                Ok(())
-            },
-        ),
-        Flag::value(
-            &["--key-cover"],
-            "off|ray|record",
-            "the source that adds the key light back on a cube face where its horizon reads \
+    vec![Flag::value(
+        &["--key-cover"],
+        "off|ray",
+        "the source that adds the key light back on a cube face where its horizon reads \
                  shadow, the larger of the two shown: one ray from the face's centre toward \
-                 the sun's disc centre near, or the face's own baked key record at every \
-                 distance [off]",
-            |p: &mut Parsing, v| {
-                p.args.outdoor.key_cover =
-                    v.named(svet_render::KeyCover::from_name, "off, ray or record")?;
-                Ok(())
-            },
-        ),
-    ]
+                 the sun's disc centre, near [off]",
+        |p: &mut Parsing, v| {
+            p.args.outdoor.key_cover = v.named(svet_render::KeyCover::from_name, "off or ray")?;
+            Ok(())
+        },
+    )]
 }
 
 /// The section's flags after the sky's light at a hit: the slow adapter's two levers on the

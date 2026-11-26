@@ -283,8 +283,8 @@ mod reading {
     #[ignore = "reading"]
     fn sun_under_cover() {
         // `SVET_COVER=<pose>[+<arm spec>]`: the arm (`Arm::from_spec`, `default` unless given)
-        // the frames are rendered under; under `keyhorizon=walk` the port's check reads the CPU
-        // walk (`Columns::horizon_exact`), not the march.
+        // the frames are rendered under; the port's check reads the CPU march
+        // (`Columns::horizon`).
         let var = std::env::var("SVET_COVER").unwrap_or_else(|_| "w3".into());
         let (pose, spec) = var.split_once('+').unwrap_or((&var, "default"));
         let pose = pose.to_owned();
@@ -304,7 +304,6 @@ mod reading {
         };
         let rig = &mut rig;
         let arm = Arm::from_spec(spec);
-        let walk = arm.key_horizon == svet_render::KeyHorizon::Walk;
         let mut f = frame_for(rig, &arm);
         let sky = flythrough::daylight::Clock {
             minutes,
@@ -451,11 +450,7 @@ mod reading {
                 continue;
             }
             let (gpu, src) = support::defects::key_slot(pair[g][1]);
-            let cpu = if walk {
-                cols.horizon_exact(p, nf, l, radius)
-            } else {
-                cols.horizon(p, nf, l, radius)
-            };
+            let cpu = cols.horizon(p, nf, l, radius);
             checked += 1;
             agree += usize::from((gpu - cpu).abs() <= 2.0 / 255.0);
             let t = (0..3).map(|k| (p[k] - eye[k]).powi(2)).sum::<f32>().sqrt();
@@ -472,8 +467,7 @@ mod reading {
             }
         }
         out.push_str(&format!(
-            "the CPU horizon ({}) at the lighting pixel's hit against the GPU's key value: {agree} of {checked} within 2/255 (grid {gw} wide)\n",
-            arm.key_horizon.name()
+            "the CPU horizon (march) at the lighting pixel's hit against the GPU's key value: {agree} of {checked} within 2/255 (grid {gw} wide)\n"
         ));
         for (src, rows) in by_src.iter().enumerate() {
             out.push_str(&format!(
@@ -763,25 +757,21 @@ mod reading {
             .map(|(v, _)| v.map(|x| x >> 6))
             .filter(|c| s.frame.store().is_coarse(svet_world::ChunkCoord(*c)))
             .collect();
-        let (text, unequal) = walked::read(&walked::Input {
+        let text = walked::read(&walked::Input {
             faces: &faces,
             rows: &rows,
-            px: &px,
             px_face: &px_face,
             h_hit: &h_hit,
             blend: &blend,
             cols: &cols,
-            solid: &solid,
             l,
             radius,
             eye,
-            vfov: cam.vfov,
             coarse: &coarse,
             mismatches: &mismatches,
         });
         out.push_str(&text);
         print!("{out}");
         std::fs::write(dir_of().join(format!("{tag}.txt")), out).expect("the table");
-        assert_eq!(unequal, 0, "the levelled walk differs from the walk");
     }
 }
