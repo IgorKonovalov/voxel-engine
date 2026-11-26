@@ -6,6 +6,16 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.78.0] - 2026-11-26
+
+Plan 0101 (a minor bump: new public items on `svet-render`, none removed; ADR-0085 accepted with an Outcome, superseding one sentence of ADR-0080's rule 1). **The bake queue's zero record by rule is read at every opening**, on the column tops and the emitters as the mirror holds them: a buried chunk with no emitter in reach takes its record on the CPU with no GPU job whatever its class, its reach or its columns' finality, and only the re-list undoes it. No golden moved, no setting was added.
+
+- **Changed (`svet-render`): the rule at every opening.** On the RTX forest 3 589 chunks take the zero record (261 before) and the jobs opened fall from 12 183 to about 8 000; on the RENOIR forest 1 019 (14) and 3 736 jobs (4 451). A ruled record is never provisional or partial. Three clauses the close review added: the verdict is read again where a pooled listing's record is written; a chunk ruled beside a neighbour not held full is listed again when it is; a ruled chunk awaiting its block counts as in a job for the candidate pool (a debug build with the bake thread on tripped `sync_pool`'s check on the first buried chunk before this).
+- **Added (`svet-render`):** `RuleAudit`, `AuditDiffer`, `QueueStats::rule_audit`, `BakeQueue::rule_audit` (the audit: every chunk the rule would answer baked by a job and compared word for word); `RuleHashes`, `BakeQueue::ask_rule_hashes`, `QueueRead::rule_hashes` (FNV-1a 64 of each zeroed chunk's block and of the store, the landing word left out); `QueueStats::zero_border_relisted`.
+- **Added (fly-through):** `--queue-rule-audit`; under `--queue-rule-reading` the `bake queue:` line's `rule hashes` clause and line and `border re-listed`, and `run.json`'s `queue.rule_audit` and `queue.rule_hashes`. `--report DIR` also runs with `--queue-rule-reading` and no `--path` (the queue's object alone; scene, path and mode `none`).
+- **Read:** the audit differs on 0 blocks in every case on the forest and the hills on both adapters, and with the bake thread on. Six RTX forest runs (three lockstep, three with the bake thread) zero the same 3 589 chunks with every block equal chunk by chunk. The lockstep step's p50 reads within -6.9 to +5.6 % of the base.
+- **Disclosed:** what the rule buys in time to light is not shown in lockstep: the in-view landing follows the pre-roll's length (12.0 to 13.5 s after a pre-roll of 378 steps or more, 30.0 to 37.9 s after 285 to 315, base and tip alike). With the bake thread on it reads about 4.5 s sooner on the RTX forest, two runs a side. No line of `docs/nfr.md` section 2 changes its standing. With the bake thread on, a ruled chunk whose neighbour arrives or leaves between the pool's listing and the push can keep the faces of the earlier world (read from the code, seen in no run; `docs/backlog.md`).
+
 ## [0.77.0] - 2026-11-26
 
 Plan 0104 (a minor bump, and **a breaking change to `svet-render`'s public settings**: items are removed, none is added; no new ADR, an addition to ADR-0084's Outcome). **The wobble on sunlit parts was anchored on clips the owner watched and ranked blind, and he closed the plan with no remedy**: the defaults are "almost good". No default changed on any profile, and no golden or image bar moved.

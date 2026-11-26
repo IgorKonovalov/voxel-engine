@@ -763,7 +763,7 @@ a cheap query.
   positional voice as an audio source through M4's occlusion.
 - **ADRs expected:** transport; voice codec.
 
-### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0; Plan 0094 closed 2026-11-20, v0.68.0; Plan 0095 closed 2026-11-21, v0.69.0; Plan 0097 closed 2026-11-23, v0.70.0; Plan 0096 closed 2026-11-23, v0.71.0; Plan 0098 closed 2026-11-24, v0.72.0; Plan 0100 closed 2026-11-25, v0.75.0; Plan 0099 closed 2026-11-26, v0.76.0; Plan 0104 closed 2026-11-26, v0.77.0)
+### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0; Plan 0094 closed 2026-11-20, v0.68.0; Plan 0095 closed 2026-11-21, v0.69.0; Plan 0097 closed 2026-11-23, v0.70.0; Plan 0096 closed 2026-11-23, v0.71.0; Plan 0098 closed 2026-11-24, v0.72.0; Plan 0100 closed 2026-11-25, v0.75.0; Plan 0099 closed 2026-11-26, v0.76.0; Plan 0104 closed 2026-11-26, v0.77.0; Plan 0101 closed 2026-11-26, v0.78.0)
 
 The open-sky half of the "Floor, profiles and scene scale" decision, as general engine
 mechanisms: the first consumer is underground, so nothing here is on its P0 list, and terrain

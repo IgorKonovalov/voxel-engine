@@ -50,6 +50,8 @@ pub(crate) struct Books {
     pub(crate) dig_trace: Option<DigTrace>,
     /// The chunks whose block is the coarse pass's, under [`BakeQueue::trace_digs`] (a reading).
     pub(crate) coarse: Option<HashSet<[i32; 3]>>,
+    /// The newest [`RuleHashes`] a step read on request ([`BakeQueue::ask_rule_hashes`]).
+    pub(crate) rule_hashes: Option<std::sync::Arc<RuleHashes>>,
 }
 
 impl Books {
@@ -99,6 +101,7 @@ impl Books {
             cell: store.cell,
             dig_trace: q.trace_digs.then(|| q.dig_trace()),
             coarse: q.trace_digs.then(|| store.coarse.clone()),
+            rule_hashes: q.rule_hashes.clone(),
         }
     }
 

@@ -152,6 +152,7 @@ impl Args {
                 queue_withdraw: true,
                 queue_census: false,
                 queue_rule_reading: false,
+                queue_rule_audit: false,
                 edit_ms: svet_render::DEFAULT_BAKE_EDIT_MS,
                 dig_reach: true,
                 ring1_stretch: svet_render::DEFAULT_RING1_STRETCH,
@@ -290,12 +291,14 @@ fn settle(args: &mut Args, given: &Given) -> Result<(), String> {
 }
 
 /// `--path`'s rules: the path's scene and seed, nothing else steering the camera; `--path-mode`
-/// and `--report` only with a path.
+/// and `--tester` only with a path, `--report` with a path or `--queue-rule-reading` (a run
+/// whose `run.json` carries the queue's object alone).
 pub(crate) fn check_path(args: &Args, path_mode_flag: bool) -> Result<(), String> {
     let Some(path) = args.path else {
-        if path_mode_flag || args.report.is_some() || args.tester {
+        let report = args.report.is_some() && !args.bake.queue_rule_reading;
+        if path_mode_flag || report || args.tester {
             return Err(
-                "--path-mode, --report and --tester play a camera path; they need --path"
+                "--path-mode, --report and --tester play a camera path; they need --path (--report also runs with --queue-rule-reading)"
                     .to_owned(),
             );
         }

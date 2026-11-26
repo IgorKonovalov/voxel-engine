@@ -4,6 +4,7 @@
 //! every ray that ends under the column top is not sky, and no emitter reaches it, so the
 //! GPU's bake of it draws nothing; the record is the one such a bake writes.
 
+use super::list::neighbour;
 use super::*;
 use crate::gpu_world::COLUMN_NONE;
 
@@ -119,7 +120,9 @@ impl BakeQueue {
     /// Bakes again each zeroed chunk near a mirror change (`changes`; `None` untracked, every
     /// one) that the rule does not answer now: a dig that lowered a column top over its reach,
     /// an emitter arriving within it. Its block re-bakes whole ([`BakeQueue::reach`]) and fades.
-    /// A zeroed chunk whose block is gone is forgotten.
+    /// Lists again, the same way, each zeroed chunk one of whose neighbours not held full at its
+    /// record's write ([`BakeQueue::zeroed_open`]) is held full now: the next opening rules it
+    /// again on its faces as they stand. A zeroed chunk whose block is gone is forgotten.
     pub(super) fn relist_zeroed(
         &mut self,
         gpu: &Shadow,
@@ -129,7 +132,14 @@ impl BakeQueue {
         if self.zeroed.is_empty() {
             return;
         }
-        self.zeroed.retain(|c| store.blocks.contains_key(c));
+        let open = &mut self.zeroed_open;
+        self.zeroed.retain(|c| {
+            let kept = store.blocks.contains_key(c);
+            if !kept {
+                open.remove(c);
+            }
+            kept
+        });
         let cols: Option<Vec<[i32; 2]>> = changes.map(|ch| {
             let mut v: Vec<[i32; 2]> = ch.iter().map(|c| [c.0[0], c.0[1]]).collect();
             v.sort_unstable();
@@ -146,13 +156,49 @@ impl BakeQueue {
         });
         self.zeroed = zeroed;
         for z in due {
-            self.zeroed.remove(&z);
-            self.reach.insert(z);
-            self.touched.insert(z);
             self.stats.zero_relisted += 1;
-            self.counted_idle = false;
-            self.quiet_until = self.steps;
+            self.list_zeroed_again(z);
         }
+        // The border: a zeroed chunk whose record was listed with a neighbour not held full
+        // (read as rock) is listed again once one of them is held full, and ruled again on its
+        // faces as they stand (ADR-0085). Only a changed chunk can be one newly held.
+        let full = |n: [i32; 3]| gpu.is_mirrored(ChunkCoord(n)) && !gpu.is_lod(ChunkCoord(n));
+        let mut border: Vec<[i32; 3]> = match changes {
+            Some(ch) => ch
+                .iter()
+                .filter(|n| full(n.0))
+                .flat_map(|n| (0..6).map(move |f| (neighbour(*n, f), f ^ 1)))
+                .filter(|(z, f)| self.zeroed_open.get(z).is_some_and(|m| m & 1 << f != 0))
+                .map(|(z, _)| z)
+                .collect(),
+            None => self
+                .zeroed_open
+                .iter()
+                .filter(|(z, m)| {
+                    (0..6).any(|f| *m & 1 << f != 0 && full(neighbour(ChunkCoord(**z), f)))
+                })
+                .map(|(z, _)| *z)
+                .collect(),
+        };
+        border.sort_unstable();
+        border.dedup();
+        for z in border {
+            if self.zeroed.contains(&z) {
+                self.stats.zero_border_relisted += 1;
+                self.list_zeroed_again(z);
+            }
+        }
+    }
+
+    /// Takes zeroed `z` out of the zeroed set and lists it again, whole ([`BakeQueue::reach`]):
+    /// the next opening reads the rule on it again.
+    fn list_zeroed_again(&mut self, z: [i32; 3]) {
+        self.zeroed.remove(&z);
+        self.zeroed_open.remove(&z);
+        self.reach.insert(z);
+        self.touched.insert(z);
+        self.counted_idle = false;
+        self.quiet_until = self.steps;
     }
 
     /// The rule reading's check of a candidate the opening found ready and the rule did not

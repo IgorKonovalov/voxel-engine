@@ -175,6 +175,8 @@ pub(in crate::bake) struct Listing {
     provisional: bool,
     ruled: bool,
     missed: Option<(usize, bool)>,
+    /// The audit's case ([`BakeQueue::audit_checked`]).
+    audit: Option<usize>,
     /// Its faces, once back and not yet pushed (a box waited).
     listed: Option<(ChunkFaces, bool)>,
 }
@@ -301,6 +303,7 @@ impl BakeQueue {
                     provisional: self.provisional_checked.contains(&c),
                     ruled: self.ruled_checked.contains(&c),
                     missed: self.rule_missed_checked.get(&c).copied(),
+                    audit: self.audit_checked.get(&c).copied(),
                     listed: None,
                 },
             );
@@ -335,6 +338,13 @@ impl BakeQueue {
         }
     }
 
+    /// A test's read: whether the pool holds `c`'s listing, and the rule's verdict its opening
+    /// read on it.
+    #[cfg(test)]
+    pub(in crate::bake) fn listing_ruled(&self, c: [i32; 3]) -> Option<bool> {
+        self.listing.get(&c).map(|l| l.ruled)
+    }
+
     /// A test's read: the candidates in the pool's hands in the order they were sent.
     #[cfg(test)]
     pub(in crate::bake) fn listing_order(&self) -> Vec<[i32; 3]> {
@@ -349,6 +359,7 @@ impl BakeQueue {
     /// lists it again if it is back); once a box waits the rest wait for the next step.
     pub(in crate::bake) fn take_listed(
         &mut self,
+        gpu: &Shadow,
         store: &mut Store,
         eye: [i32; 3],
     ) -> Result<(), BakeError> {
@@ -370,6 +381,14 @@ impl BakeQueue {
             if self.pool.get(&c) != Some(&(l.class, l.coarse)) {
                 continue;
             }
+            // The rule's verdict was read on the shadow of the step that sent the candidate; the
+            // re-list reads only chunks already zeroed, so a change since is read here, on this
+            // step's shadow, where the record would be written (ADR-0085). Where it does not hold
+            // now the listing is dropped and the chunk stays a candidate: a later opening lists
+            // it by a job.
+            if l.ruled && !self.rule_holds(gpu, ChunkCoord(c), gpu.light_radius()) {
+                continue;
+            }
             for (on, set) in [
                 (l.partial, &mut self.partial_checked),
                 (l.provisional, &mut self.provisional_checked),
@@ -382,8 +401,11 @@ impl BakeQueue {
             if let Some(m) = l.missed {
                 self.rule_missed_checked.insert(c, m);
             }
+            if let Some(a) = l.audit {
+                self.audit_checked.insert(c, a);
+            }
             let listed = l.listed.expect("collected above");
-            match self.push_listed(store, eye, l.class, ChunkCoord(c), listed) {
+            match self.push_listed(gpu, store, eye, l.class, ChunkCoord(c), listed) {
                 Ok(samples) => {
                     self.fill.note(l.prepared, l.bound, samples);
                     if samples > 0 && self.lp.stamps.contains_key(&c) {
@@ -398,6 +420,7 @@ impl BakeQueue {
         self.provisional_checked.clear();
         self.ruled_checked.clear();
         self.rule_missed_checked.clear();
+        self.audit_checked.clear();
         self.stats.fill = self.fill.figures();
         Ok(())
     }
