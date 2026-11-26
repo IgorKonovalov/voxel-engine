@@ -316,6 +316,13 @@ The owner: "go on both, all recommended, do not start until these lanes finish".
   Phase 2.
 - **Question 3:** Phase 3 runs right after Phase 2, in the same lane.
 
+## Amended 2026-11-26 (architect)
+
+From [Plan 0106](0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md)'s Ruling 1, a note on Phase 1's readings and one instruction; no phase changes.
+
+- **A pre-roll's counts are a reading of the machine.** The box and the cap read the summed wall time of the steps, and a lockstep step reads a bake read-back at whichever step it has mapped by, so two runs of `--pre-roll full` on one tree can differ in steps, chunks baked and samples, and so can the in-view chunks waiting at the first frame. Phase 1's readings state medians of their runs with the spread, and no line of this plan compares two runs' pre-roll counts for equality.
+- **`--pre-roll-stepped`** (Plan 0106 Phase 7, headless only: a device wait before each pre-roll step, no box, no cap) lands before this lane starts. Phase 1 keeps it working beside `--pre-roll`: `near` and `off` still end the pre-roll where they say, and the stepped flag then adds only its device wait. The CLI test names the pairs.
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
