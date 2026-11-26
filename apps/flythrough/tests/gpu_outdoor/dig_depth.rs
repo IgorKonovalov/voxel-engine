@@ -62,6 +62,10 @@ mod dig_depth {
             /// The queue at D-1: the blocks fading, and each chunk the dig's box touches with the
             /// queue's sets that held it (lockstep: `fades` among them; thread: the books' sets).
             fades: (u64, Vec<Touched>),
+            /// The pool at the edit: its free words at D-1 and after the D+0 step (lockstep; `None`
+            /// with the bake thread, whose store is its own), and the places the pool refused in
+            /// the D+0 step (`QueueStats::pool_full`).
+            pool: (Option<[u64; 2]>, u64),
         }
 
         /// A chunk the dig's box touches and the queue's sets that held it at D-1.
@@ -327,12 +331,16 @@ mod dig_depth {
                 let mut fresh_at = None;
                 let mut writes = vec!["before".to_string()];
                 let whole0 = self.s.frame.bake_queue().expect("the live queue").stats().digs_whole;
+                let full0 = self.s.frame.bake_queue().expect("the live queue").stats().pool_full;
+                let free0 = (!self.thread).then(|| self.s.frame.store().free_words());
+                let mut pool = (None, 0);
                 let mut whole = 0;
                 let mut parts = Vec::new();
                 for k in 0..=SETTLED {
                     let q = queue_step(&mut self.rig, &mut self.s.frame, cam);
                     if k == 0 {
                         whole = q.digs_whole - whole0;
+                        pool = (free0.map(|f| [f, self.s.frame.store().free_words()]), q.pool_full - full0);
                     }
                     if k == 0 && !self.thread {
                         let b = self.s.frame.bake_queue().expect("the live queue");
@@ -376,7 +384,7 @@ mod dig_depth {
                 self.s.run(&self.rig, cam);
                 let back = self.state();
                 let manual = Manual { check, settled, adapted: [a60, a_s], back };
-                self.reads.push(DigRead { label: label.into(), depth, lo, hi, whole, hold, frames, writes, parts, manual, fades });
+                self.reads.push(DigRead { label: label.into(), depth, lo, hi, whole, hold, frames, writes, parts, manual, fades, pool });
                 Some(end)
             }
         }
@@ -527,7 +535,8 @@ mod dig_depth {
             let mut t = String::new();
             let settled = r.frames.last().expect("the settled frame");
             let f: Vec<Figs> = r.frames.iter().map(|fr| figs(fr, settled, r.lo, r.hi, out)).collect();
-            let _ = writeln!(t, "{site} {mode} {} depth {} voxels box {:?}..{:?} digs whole at the edit {}", r.label, r.depth, r.lo, r.hi, r.whole);
+            let pool = r.pool.0.map_or("n/a (thread)".to_string(), |[a, b]| format!("{a} at D-1, {b} after D+0 ({:+})", b as i64 - a as i64));
+            let _ = writeln!(t, "{site} {mode} {} depth {} voxels box {:?}..{:?} digs whole at the edit {}; pool free words {pool}; pool refused at D+0 {}", r.label, r.depth, r.lo, r.hi, r.whole, r.pool.1);
             // The frames against `S` (the bars' reference), then the check frame and `S`.
             let m = &r.manual;
             let fs: Vec<Figs> = r.frames.iter().map(|fr| figs(fr, &m.settled, r.lo, r.hi, out)).collect();

@@ -376,8 +376,9 @@ fn radiance_source(own: Option<&[u32]>, f: usize) -> (RadianceFrom, Option<f32>)
 /// cell in cell order, from the store's blocks as the edit found them (`words`), the edit
 /// boxes and the opacity about them: a direction's value is the mean over the cell's faces of
 /// that direction, a face outside every box dilated by one voxel at the cell's old record's,
-/// a face inside one at the held estimate; `None` for a cell with no removed surface's record
-/// above it and no chunk summary under a sky. `estimate` sets the floor: [`HELD_FLOOR`] under
+/// a face inside one at the held estimate; for a cell with no removed surface's record above it
+/// and no chunk summary under a sky, `None` under [`DigEstimate::Surface`] and 0 in every
+/// direction under [`DigEstimate::Depth`]. `estimate` sets the floor: [`HELD_FLOOR`] under
 /// [`DigEstimate::Surface`] for a dig's face and for a cell with no face, none under
 /// [`DigEstimate::Depth`], where each of the six values under one byte is 0 ([`written`]). Each
 /// dig direction's parts are pushed to `trace` where given (a
@@ -425,8 +426,13 @@ pub(crate) fn held_visibilities(
                         .map(|v| (v, HeldBase::Above(k)))
                 })
                 .or(summary_up.map(|v| (v, HeldBase::Summary)));
+            // No record within the walk and no summary (a chunk that held no block, under the
+            // walk's reach): no record under `Surface`, 0 under `Depth`, which errs dark.
             let Some((up, from)) = up else {
-                cells.push(None);
+                cells.push(match estimate {
+                    DigEstimate::Surface => None,
+                    DigEstimate::Depth => Some([0.0; 6]),
+                });
                 continue;
             };
             let own = cell_record(words, g, cell, record);
