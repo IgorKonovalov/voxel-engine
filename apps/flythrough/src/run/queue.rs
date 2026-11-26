@@ -648,7 +648,12 @@ impl Run {
         match stepped {
             Some(Ok(st)) => {
                 self.queue.note_step(&st);
-                if new_box {
+                // With the bake thread on, the mailbox holds the box until the books of the
+                // edit's step are taken, a frame or more after the edit's: the edit's frame is
+                // the one that waited.
+                let edits_frame =
+                    !gfx.frame.bake_thread_running() || gfx.frame.bake_frame_wait_parts().is_some();
+                if new_box && edits_frame {
                     self.queue
                         .dig_frames
                         .push(DigFrame::of(&gfx.frame, &st, waiting_before));
