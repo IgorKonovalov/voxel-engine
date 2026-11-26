@@ -2386,6 +2386,201 @@ lock, each part under the line, and reports if the tiers cannot be split so.
 Not amended: it names no row count and no feed bar. At the close its Outcome takes the
 feed's bound (ruling 2) and the bake thread's 16 rows as readings.
 
+## Amended 2026-11-26 (architect, after Phase 3f)
+
+Read against `6553dc54`: the hand-over (`bake_step`, `take_waiting`, `absorb`,
+`render_frame`, `DigWaitParts::of`, `bake/link.rs`), the thread's loop, `put` and
+`take_until` (`bake/thread.rs`), the mailbox (`Inbox::take`, `answered`,
+`bake/queue/message.rs`), the dig's opening (`open_now`, `bake/queue/digs.rs`), the box
+signal (`bake/queue/box_signal.rs`), the step's code between the two trees
+(`git diff 1d94e563 1b744e32`), the test (`waits_parts`, `split_tests/thread.rs`) and the
+raw rows (`live/p3fd`, `live/p3dd`, `live/p4c2dd`, `live/p3fr2`, `live/p3dr`). The evidence
+by file and row is in the log ("Architect's ruling after Phase 3f"). Where this section
+differs from the text above it wins. Nothing was built or run. **Both stops are closed with
+no fix and no further run. One new part, Phase 3g (a test and a printed figure, no
+mechanism), before Phase 4d. What the owner is told at Phase 5 (c) is restated. No owner
+question.**
+
+### Ruling 1: stop 1 is not a miss; the figure does not resolve 0.4 ms
+
+- **What "the wait less its rest" is.** A frame's wait less its `rest` is the pick-up, the
+  dig's step and the hand-back (`DigWaitParts::of`; the snapshot part is 0). Pick-up reads
+  0.000 and hand-back 0.014 ms, so it is the dig's own step on the bake thread. The line
+  prints no such figure: the table's is the p50 of the six waits less the p50 of the six
+  rests, and a p50 of six is the third smallest.
+- **The same six frames, two sums.** The p50s' difference reads 24.69 and 25.14 ms; the
+  step's two parts' p50s (`boxes` plus `step_rest`) read 24.38 and 22.55. The two differ by
+  up to 2.6 ms on one run, seven times the miss. A run's six dig frames span 20.9 to
+  43.9 ms of call (run 1) and 28.4 to 43.4 (run 2).
+- **The reference moves more than the miss.** Lockstep's step is decided by the frame
+  count, so its three runs on the same frames agree: p50 24.76, 24.80 and 25.25 ms. That
+  span, 0.49 ms, is its own run-to-run spread. The thread's dig step is not decided by the
+  frame: what the queue holds at frame 120 depends on how many steps ran before it.
+- **The code gives no reason for the thread's dig step to pass lockstep's call.** It is the
+  same `BakeQueue::step` less the listing (on the pool) and every `wgpu` call (recorded),
+  plus a depth of 3 and the read-backs of the messages merged while a step was in progress.
+  Between Phase 3d's tree and this one no line of a step's work at 16 rows changed (a range
+  check at a row's release, two counters, the rows set at the pool's start), and the steps
+  that are not a dig's read the same in both (regime B movable p50 7.74 and 7.65 ms then,
+  7.19 and 7.65 now).
+
+**Ruled: equal within what six frames a run resolve; the stop is closed; no run is added.**
+The bar stays as ruling 2 after Phase 3d wrote it. **How it is read from here:** per dig
+frame, the wait less that frame's own rest; the p50 over the dig frames of a state pooled
+over the runs; against lockstep's call pooled over as many runs, two a side at least. A
+thread figure at or under lockstep's pooled p50 holds; one over the largest of lockstep's
+run p50s is a miss; between the two it reads "equal" and is reported with both figures.
+That is a resolution, not a margin. Phase 3g prints the per-frame figure; Phase 6 (1)'s pin
+of the edit's wait reads it so.
+
+**Rejected.** *Two more lockstep runs now:* three exist and agree; the spread is on the
+thread's side and is the queue's, not the clock's. *A tolerance in ms:* it would stand for
+a spread nobody chose. *Drop the bar:* it is the one check that the thread's dig step has
+not grown past lockstep's.
+
+### Ruling 2: stop 2 is the dig finding no free row, a mode the plan already names
+
+- **The landing has two values, not a spread.** On waiting B digs 5 and 6 ring 1 lands at
+  78 to 118 ms where the dig's jobs open in the dig's step, and at 133 to 144 ms where they
+  do not. In all four late digs (Phase 3d run 3 dig 6 at 132.7 ms; this phase's 132.9,
+  143.8 and 132.8) the D+0 row reads the same: the dig's jobs "pending, no free slot", no
+  ring-1 sample in flight, one submit unread, 2 or 6 jobs withdrawn, and a step in progress
+  at the send (`rest` 1.7 to 10.8 ms). In the eight others ring 1 is in flight at D+0.
+- **The mechanism is `open_now`'s, as its comment says.** A dig withdraws the last open
+  jobs for its ring-1 jobs, but a withdrawn job's row frees only when its rounds in flight
+  are read back. Where the step in progress at the send has just planned a submit over
+  those jobs (the frame's `sent` is over what stays in flight by the withdrawn jobs'
+  samples: 2 368 914 against 1 287 294), ring 1 waits one round trip for a row: three of
+  the rig's frames. The slots ruling named it ("With every row held by jobs queued whole,
+  a dig's ring 1 on the thread waits a round trip for one"), and ruling 4 of 2026-11-25
+  counted it (2 to 4 digs of 24 and 48).
+- **Phase 3f's change gives no path that delays ring 1.** The bake side learns of a box
+  from the message alone (`Inbox::take` hands the arrivals once); the mailbox's later
+  answer is read by the public reads only (`QueueRead`). The lists reach a frame sooner
+  than before, never later: waiting B digs 1 to 3 land 6 to 14 ms sooner.
+- **What moved is how often the rig meets the mode:** 3 of 4 readings of digs 5 and 6
+  against 1 of 8, and a step in progress at the send in 6 of 12 waiting B digs against 1
+  of 24. **Not shown: why.** Two runs do not separate it from the phase between the rig's
+  fixed dig frames (34 and 42) and a submit every third frame.
+- **At the window's pace a step in progress at the send is the usual case in both trees**
+  (`rest` p50 5.5 ms now, 4.8 and 6.9 then), and there the light at the dig is no later:
+  rings 1 and 2 have landed 147 to 189 ms after the dig (median 172 of twelve) against 128
+  to 223 (178) at Phase 3d, and 194 to 401 (232 of eighteen) in lockstep.
+- **The stop's own question is answered.** At 16 rows waiting A dig 3 and waiting B dig 4
+  are back at Phase 3d's (+3.8 and -3.1 ms; +87 and +40 at 32): the rows were the cause
+  there. Digs 5 and 6 are the mode above, which 16 rows have and 32 had too (2 of 24).
+
+**Ruled: closed, within a named mode; no fix and no run.** Ring 1's bar (lockstep's ms
+plus two of its frames) holds by 69 to 83 ms at the p50, and no dig is over it. No decision
+in this plan turns on the mode's rate in the rig: the count is ruled, the bar holds, and
+the owner judges the light at the dig by eye at Phase 5 (c). **Disclosed with the pins (Phase 6):**
+a dig that finds every row with rounds in flight lands ring 1 one round trip later; 3 of
+12 waiting B digs here. **Not read:** how often at the window's pace, where a round trip
+is one frame; the fly-through prints no such count.
+
+**The lever, named and not built** (the backlog's entry on the bake thread's feed takes
+it): a step that reads a box waiting (`BoxSignal::waits`) plans no submit, so the rows stay
+free to withdraw; it also ends the step in progress sooner. It is a point to leave a step
+at, which is question 8's option (b) by another door, so it is the owner's, on his word at
+the window.
+
+**Rejected.** *Two more runs to make four:* they would settle a rate nothing here acts on.
+*A fix phase now:* no bar is missed, and the one lever is the answered question 8.
+*Free a withdrawn job's row at once:* the slots ruling's rejected re-keying.
+
+### Ruling 3: where the wait's 2 ms went, and what the owner is told
+
+**By the parts** (RTX, while in view waits, p50 of six, Phase 3d then this phase): `rest`
+4.8 and 6.9, then 5.5 and 5.5; `boxes` 4.3 and 4.2, then 4.6 and 4.3; the snapshot 1.2 and
+1.2, then 0; `step_rest` 16.7 and 15.9, then 19.8 and 18.3. The snapshot left the wait as
+ruled, and the dig's step after its `boxes` stage reads 2.4 to 3.1 ms longer. **Not shown:
+why.** The step's code is the same and the other steps read the same (ruling 1); a dig
+frame differs from the next by up to 23 ms in a run, so twelve digs a tree resolve about
+2 ms and no less. It is told as read.
+
+**The wait is not the stall the eye meets; the frame is.** The fly-through prints the
+longest frame from each dig until its rings 1 and 2 landed (`dig settled:`); with the
+thread on it is the dig's call plus 8.4 to 12.4 ms in each of this phase's twelve. RTX
+3080 Laptop, Floor 1080p, forest, headless, quiet, medians: while in view waits 43.9 ms with the thread on (twelve digs, 29.3 to 56.3)
+against 45.0 off (eighteen, 35.4 to 83.0); once drained 19.5 (10.3 to 24.5) against 31.8
+(19.2 to 55.4). RENOIR, Portable 720p, one run a side: 47.6 against 42.5 while in view
+waits, 27.7 against 34.4 after. The RENOIR's dig frame is 5 ms longer with the thread on
+while its wait is shorter (10.5 against a call of 12.8): its dig frame issues two bake
+submits where lockstep's issues one (the ruling of 2026-11-25, 5); not timed apart.
+
+**Told before he looks at Phase 5 (c), replacing ruling 3 after Phase 3d:**
+- **While the queue is deep a dig's frame is about 44 ms with the thread on and about
+  45 ms with it off. The frames around it are 8.4 ms on and 21.9 off, so the same stall is
+  now about five frames' time in a smooth run where it was two in a slow one.** Of the 44
+  the render thread waits about 30 for the bake thread (lockstep's bake call is 25).
+- **Once the queue has drained the dig's frame is about 20 ms on and about 32 off.**
+- **The light at the dig (rings 1 and 2) has landed about 170 ms after it with the thread
+  on, about 230 off;** once drained about 95 against about 127.
+- RENOIR: 48 ms on against 43 off while the queue is deep (frames around it 24 against
+  30), 28 against 34 after; the light at the dig 255 against 249 ms, and 177 against 161.
+
+Question 8 stays answered (a). The earlier text told him "about 28 ms" and "three frames'
+time"; that was the wait, and the frame is what he will see.
+
+### Ruling 4: the test compares clocks; Phase 3g tests the parts by order
+
+`the_waits_parts_sum_to_the_wait` holds a step with a 50 ms sleep and asserts three
+wall-clock facts under whatever else the machine runs: the rest within 0.5 ms of the
+sleep, every other part under the rest, the sum within 0.5 ms of a lap taken by two other
+clock reads. Each fails when a thread is descheduled; a longer hold moves the odds, not the
+cause. The parts are spans between instants (`DigWaitParts::of` is pure), so their
+arithmetic needs no thread, and what the thread shows is an order, not a duration.
+
+### Phase 3g: The wait's parts tested by order, and the wait less its rest printed per frame
+- **Owner skill:** dev
+- **What:** After Phase 3f, before Phase 4d. No mechanism; no line of the product's path
+  but a kept span. (a) `DigWaitParts::of` tested on made instants. (b) The threaded test's
+  held step waits on a gate, not a sleep: its hook returns once the queue's box signal
+  reads a box sent (`BoxSignal::waits`), with a one-second guard that fails the test. No
+  assertion compares a duration with a constant or with another part. (c) The link keeps
+  the span between the wait's own two instants (the send and the take's return) beside
+  the parts. (d) The fly-through's `bake thread dig wait:` line gains `less rest p50/p99`:
+  per dig frame, the wait less that frame's rest.
+- **Files touched:** `crates/svet-render/src/bake/link.rs`,
+  `bake/queue/split_tests/thread.rs` and `thread/books.rs`,
+  `crates/svet-render/src/frame/bake_thread.rs`, `apps/flythrough/src/run/{queue,mod}.rs`,
+  `docs/flythrough.md`, `docs/plans/logs/0099.md`.
+- **Done when:**
+  (1) `the_waits_parts_are_the_spans_between_its_instants` (CPU, no thread, under 0.1 s):
+  for made instants each part is its span exactly; a send after the thread was free reads
+  rest 0 and the pick-up from the send; a `boxes` figure past the step's end stops at it;
+  a traced step's books' end is the snapshot part; in each case the sum is the span from
+  the send to the take's return.
+  (2) `the_waits_parts_sum_to_the_wait` restated, both arms: the rest is over 0 (the held
+  step ended after the send, by the gate); the parts' sum is the kept span to the clock's
+  tick; untraced the snapshot part is 0, traced the frame holds the dig's books.
+  (3) `the_dig_wait_line_reads_the_wait_less_its_rest_per_frame` (CPU): three made dig
+  frames whose per-frame p50 differs from the difference of the two p50s; the line's
+  figure is the per-frame one.
+  (4) (2) run by name 40 times beside a running quick tier: 0 failures, the count in the
+  log. The quick tier, the phase's clippy, fmt, every `scripts/check-*.mjs`. No GPU tier
+  and no lock: no render path changes.
+  **Stops, reported:** the gate cannot be read from the hook without a change to the
+  product's path beyond the kept span; a failure in the 40.
+
+### Ruling 5: Phase 4d goes on as restated; the order
+
+**Phase 3g, Phase 4d, Phase 5, Phase 6, the close review.** Phase 4d is unchanged but for
+its (2): the cycle's four parts are spans between instants one clock took in order, so
+`the_cycle_parts_sum_to_the_time_between_two_steps` asserts their sum to the clock's tick
+and holds no step by a sleep. Phase 5's "a dig's frame as Phase 3f (5) reads it" is the
+text of ruling 3 above. Phase 6 (1) pins the edit's wait by ruling 1's reading and ring 1
+with ruling 2's disclosure.
+
+**Phase 3f's deviations stand:** the new test file (the size gate), the rig's drain on
+the message taken (a step is two entries), the three tests that take the dig's books
+before reading the place (the claim, the held block among the edit's frame's writes, is
+as it was; the close review reads them).
+
+### ADR-0083
+
+Not amended.
+
 ## Data shapes
 
 ```rust

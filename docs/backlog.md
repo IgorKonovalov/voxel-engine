@@ -239,6 +239,7 @@ From [Plan 0099](plans/0099-the-bake-step-off-the-main-thread-a-bake-thread-writ
 - **The snapshot's sets kept between steps** (1.2 to 1.4 ms a step on the RTX, by the residency; removed whole it gives about 0.73 steps a frame).
 - **The walks of the open jobs made once a step** (`JobCtx::plan` over every open job's live faces, `close_ended` once a read-back, `samples_left` three times), and the opening's walk (candidates and checks, 3.25 ms p50) not run on every step.
 - **The order** is a separate question (Plan 0099's question 9 and its Followups): 31 in-view refinements wait 9 to 11 s behind the out-of-view chunks with no block.
+- **A dig that finds no free row** (Plan 0099, "Amended 2026-11-26 (architect, after Phase 3f)", ruling 2): where the step in progress at an edit's send has just planned a submit over the jobs the dig then withdraws, their rows free only at that submit's read-back and ring 1 lands one round trip later (3 of 12 digs on the RTX waiting B timeline, 133 to 144 ms against 78 to 118). The lever: a step that reads a box waiting plans no submit. It is a point to leave a step at, so it sits beside that plan's question 8 (b) and is the owner's; how often it happens at the window's pace is not read.
 
 ### The RENOIR's line slice is mostly a dispatch's fixed cost (2026-11-25)
 
