@@ -891,7 +891,7 @@ The Implementation log gains rows for Phases 2b, 2c and 2d; Phase 2's row stays 
 | 1: the still flags and the idempotence reading | dev | done; readings in [the log](logs/0093.md) | `420bcf16` |
 | 2: the manifest and the shoot script | dev | stopped: `--check` after the shoot over tolerance on `hero` (log) | `5bc46942` (wip) |
 | 2b: the settled start | dev | done; readings in [the log](logs/0093.md) | committed with this row |
-| 2c: the check's quantity, read | dev | not started | |
+| 2c: the check's quantity, read | dev | done: C 8, L 4; the hero 0.004; readings in [the log](logs/0093.md) | committed with this row |
 | 2d: the check, the batches, the shoot | dev | not started | |
 | 3: the image gate, fragments, CI | dev | not started | |
 | 4: candidates and contact sheets | dev | not started | |
