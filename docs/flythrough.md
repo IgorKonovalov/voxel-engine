@@ -291,7 +291,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--logic native\|wasm[=PATH]` | The server's logic: native [default], or a component (needs `--features wasm` and `scripts/build-guests.sh`) |
 | `--path cave\|showcase\|castle\|outdoor` | Fly that scene's camera path (the scene's own flags and seed 1 required; `outdoor` needs `--source outdoor` with the `outside` spawn, the sparse trees and the default leaf fill, and takes any `--sun` or `--time`) |
 | `--path-mode bench\|tour` | Fly the path once by wall time with the lamp off, then exit [bench]; or loop it |
-| `--report DIR` | Write `DIR/run.json` at exit (with `--path`) |
+| `--report DIR` | Write `DIR/run.json` at exit (with `--path`, or with `--queue-rule-reading`: the queue's object alone, scene, path and mode `none`) |
 | `--tester` | Only movement, look, the dig, `F1`, `T` and `Esc` act |
 | `--pad on\|off` | Read a gamepad in a window [on; never headless or under the autopilot] |
 
@@ -428,7 +428,8 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--bake-depth N` | The submits the bake thread's steps hold unread at most, 1 to 8 (a reading's knob; lockstep, the pre-roll and the one-shot bakes hold two whatever it is) [3] |
 | `--bake-slots N` | The live queue's table slots the bake thread's steps open jobs into, 16 to 64 (a reading's knob; lockstep and the pre-roll keep 16 whatever it is) [16] |
 | `--queue-census` | Read the queue's view census at every opening, its listing once |
-| `--queue-rule-reading` | Count the jobs opened for chunks the zero rule would answer (a reading) |
+| `--queue-rule-reading` | Count the jobs opened for chunks the zero rule would answer, and hash the zeroed chunks' blocks and the store's once the queue is empty and at the end (a reading) |
+| `--queue-rule-audit` | The zero rule writes no record; compare each job it would answer with its record (a reading; implies --queue-rule-reading) |
 | `--edit-ms MS` | The slice's growth while a dig waits, 0 to 100 ms [3] |
 | `--bake-ring1-stretch X` | A dig's ring 1 goes whole in a submit within X times the priced cap, 1.0 to 2.0; the HUD and the banner name it when not the default (`stretch 1.0`) [1.5] |
 | `--dig-reach on\|off` | A dig re-bakes the chunks within the light radius [on] |

@@ -1,12 +1,12 @@
 # ADR-0085: The zero record is ruled on the mirror as it stands: exact by the re-list, not by the columns' finality
 
-> **Status:** proposed (with Plan 0101). At acceptance it supersedes one sentence of rule 1 of
+> **Status:** accepted 2026-11-26 at Plan 0101's close (v0.78.0), with an Outcome. It supersedes one sentence of rule 1 of
 > [ADR-0080](0080-the-live-queue-bakes-what-the-image-reads-a-record-by-rule-a-tier-by-size-on-screen-and-a-drain-slice.md)
 > ("Where the column map is not final for the footprint the chunk is baked, not ruled") and
 > the clause of its Negative bullet that repeats it ("the rule is off where the map is
 > provisional"). The rest of ADR-0080 stands.
 > **Date:** 2026-11-24
-> **Related plan(s):** [Plan 0101](../plans/0101-the-record-by-rule-at-every-opening-an-audit-on-the-real-scenes-first-then-the-three-exclusions-lifted.md);
+> **Related plan(s):** [Plan 0101](../plans/done/0101-the-record-by-rule-at-every-opening-an-audit-on-the-real-scenes-first-then-the-three-exclusions-lifted.md);
 > the readings are [Plan 0096](../plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md)'s
 > Phase 10a.
 > **Builds on:** ADR-0080 (rule 1, and rule 4's partial reach),
@@ -54,13 +54,29 @@ switched on per exclusion only where an audit on the real scenes (every block a 
 a chunk the rule would have answered, compared with the rule's record) reads 0 blocks that
 differ.
 
+**Two clauses added at Plan 0101's close review (2026-11-26, before acceptance)**, each a way
+the invariant above was not enough as first written:
+
+- **The verdict is read on the shadow of the step that writes the record.** A verdict carried
+  from an opening to a later step (the listing pool under the bake thread) is read again
+  where the record is written, because the re-list reads only chunks already zeroed.
+- **A ruled record's faces are part of what it must match.** A listing reads a neighbour the
+  world's store does not hold as rock, so a chunk ruled beside an absent neighbour is listed
+  again when that neighbour is held full, and ruled again on the faces as they stand. Without
+  it the record is final on faces the stream's order chose.
+- **A ruled chunk awaiting its block is in a job, for the candidate pool.** Its record is
+  placed at the submit of the step that pushes it; until then it is no candidate, as a chunk
+  whose job is open is none, so an opening between the two does not list it again.
+
 ## Consequences
 
 ### Positive
 - The rule answers the chunks it describes: no GPU job, no provisional bake and catch-up, one
   landing fewer for each buried chunk under a column not final.
 - A ruled record's bytes do not depend on which chunks were resident when a partial job would
-  have cast, nor on the adapter: it is written on the CPU from the listing.
+  have cast, nor on the adapter: it is written on the CPU from the listing. (Its faces do
+  depend on which of its six neighbours the store held at the listing; the second clause
+  above is what removes that.)
 - The correctness argument is one invariant on the mirror's change list, testable case by
   case, in place of a condition (finality) that excluded nearly every chunk while the world
   streams in.
@@ -101,3 +117,33 @@ all, where the rule can give it its final one at once.
 ADR-0080's Alternative C, for these chunks: the job is still listed, opened and submitted, so
 it keeps the per-job CPU that bounds the RTX, and the samples it saves are the same 5 to 9 %.
 It lost for the reason it lost there.
+
+## Outcome
+
+**2026-11-26, at Plan 0101's close.** Built as decided, with the three clauses the close
+review added. The readings are in `docs/nfr.md` section 2 ("The rule at every opening") and
+`docs/plans/logs/0101.md`.
+
+- **The audit cleared every case.** 0 blocks differ under `full`, `provisional`, `partial`
+  and `class 1` on the forest and the hills on both adapters, and on the RTX forest with the
+  bake thread on, so the rule is on for all three exclusions. The audit compares a job's
+  block with the zero record of the job's own faces, masked where the job's tier is not 0;
+  it does not see a face the listing left out.
+- **The bytes hold on the real scene at a still camera.** Six RTX forest runs, three in
+  lockstep and three with the bake thread, zero the same 3 589 chunks with every block equal
+  chunk by chunk (every word but the landing word).
+- **A limit, with the bake thread on: the second clause is exact in lockstep only.** The
+  listing pool reads a chunk's faces from the world's store on its own thread, and the
+  neighbours "not held full" are read from the shadow at the push, a step later. A neighbour
+  that arrives, or leaves the store, between the two leaves no note, and the record keeps the
+  faces of the earlier world until something else lists the chunk. Read from the code; no
+  run shows it, a moving camera is not read, and no image difference is expected (a missing
+  record in a buried chunk reads dark). The fix is in `docs/backlog.md` ("The record by
+  rule: what Plan 0101's close left").
+- **What it buys is smaller than the Context's arithmetic could show, or not shown.** In
+  lockstep the in-view landing is not separable from the base once runs of the same pre-roll
+  length are compared; with the bake thread on it reads about 4.5 s sooner on the RTX forest,
+  two runs a side (indicative). The RENOIR's in-view landings read 3.2 and 3.5 s sooner, one
+  run a scene, lockstep. No line of `docs/nfr.md` section 2 changes its standing.
+- **The re-list needed no index by column:** its lap reads at most 2.5 ms at the p99 with
+  3 589 zeroed chunks.

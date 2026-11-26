@@ -327,6 +327,7 @@ pub(crate) fn bake_step(
         hook(frame);
     }
     let at = stopwatch();
+    side.queue.answer_rule_hashes(&side.store);
     let books = Arc::new(Books::of(&side.queue, &side.store, frame, eye));
     let end = stopwatch();
     vec![Made::Books(Snapshot {
