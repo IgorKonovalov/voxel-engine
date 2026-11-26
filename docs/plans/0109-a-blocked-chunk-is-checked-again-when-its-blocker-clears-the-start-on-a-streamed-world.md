@@ -1,6 +1,6 @@
 # 0109: A blocked chunk is checked again when its blocker clears: the start on a streamed world
 
-> **Status:** in-progress (2026-11-26, owner's go): Phase 1 and 1b done. Phase 2 read (15 runs, both sides, both adapters): the switched pre-roll 4 to 6 steps after, 32 and 92 before; the camera chunk's block provisional at frame 0 and not final within 600 frames in 14 of 15 runs on either side, 0 catch-ups landing after frame 0 in any run; to the architect before Phase 3. The owner question gained a third arm; it is answered at Phase 4.
+> **Status:** in-progress (2026-11-26, owner's go): Phase 1 and 1b done, Phase 2 read. Ruled 2026-11-27 (Rulings 5 to 8): a catch-up waits behind every ready first bake with no bound, so none lands in view; the pre-roll holds for one by a race. Next: Phases 2b, 2c (readings), 2d (the pre-roll waits for a block), 3a, 3b; the owner question is restated at "Phase 4, restated".
 > **Created:** 2026-11-26
 > **Milestone:** none (a fix in the start-up path; follows Plan 0099, `docs/roadmap.md` M9's bake thread)
 > **Related ADRs:** [ADR-0059](../adrs/0059-loading-runs-as-time-sliced-steps-on-the-apps-frame-loop-behind-an-engine-loading-frame.md) (the pre-roll and its start-up budgets; not changed unless the owner picks the bound, and then by a new ADR, see Phase 5), ADR-0070's amendment (the column rule; not changed), ADR-0046 (the reach rule; not changed)
@@ -79,12 +79,14 @@ One dev brief a phase. Every GPU run alone under the exclusive perf lock, its lo
 - **Files touched:** `docs/plans/logs/0109.md`.
 - **Done when:** the log holds, per tree, the median of each part over the steps before the first job opens and the part or parts that hold the growth from about 65 ms to 150 to 300 ms a step, each as ms a step and ms a chunk arrived; or the statement that the parts printed do not hold it. Nothing is fixed: a part named goes to the architect, who routes it (Plan 0107 reads the sync and may already own it).
 - **Stops:** the print not applying at `c87bf7a6` without more than print lines changing (read the tip alone and say so).
+- **Amended 2026-11-27:** two briefs, 3a and 3b ("Phase 3, cut in two" below).
 
 ### Phase 4: the owner looks at the start and answers
 - **Owner skill:** human
 - **What:** On Linux, with Phase 2's rows in hand and in the same sitting as [Plan 0108](0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md) Phase 2 if that lane has reached it: the outdoor world started in a window on the tree Phase 1 leaves. The owner answers the open question: the first frame waits for the camera's chunk (arm A: this plan's dev work is then done), or start-up ends on a bound with that chunk's light landing in view (arm B: Phase 5 is written).
 - **Files touched:** none (the architect records the answer as a dated amendment).
 - **Done when:** the answer is recorded in this plan. No camera hold and no drained pre-roll in the window run.
+- **Amended 2026-11-27:** what is shown and asked is "Phase 4, restated" below; the two arms above are superseded.
 
 ### Phase 5: arm B, start-up ends on a bound (written only if the owner picks it)
 - **Owner skill:** dev
@@ -97,6 +99,7 @@ One dev brief a phase. Every GPU run alone under the exclusive perf lock, its lo
 - **What:** What Plan 0106 reserved as its Phase 12, on the tree this plan leaves (after Phase 1 under arm A, after Phase 5 under arm B). `a_source_switch_shows_the_loading_frames_before_the_new_world` (`gpu_loading`) by name five times alone on lavapipe; then ten loaded runs of a `gpu_shutdown` child, and `RUN_BOUND` resized by the rule Plan 0106 Phase 3 used for its kill guards.
 - **Files touched:** `apps/flythrough/tests/gpu_shutdown.rs` (the constant and its comment), `apps/flythrough/tests/gpu_loading.rs` (the soak mark, only under the second outcome below), `docs/nfr/07-startup-and-build.md` (the test's listed time), `scripts/test-clocks-allow.txt` (the guard's row, if its ratio changes), `docs/plans/logs/0109.md`.
 - **Done when:** the log holds the five walls and the ten child walls with their loads. Tier, by Plan 0106's Ruling 3: at or under 20 s alone in all five, the test stays in the gate under `docs/nfr/07-startup-and-build.md`'s exception with its listed time corrected to the median; over that in any run, the five walls go to the architect with each run's `pre-roll:` line and the test is **not** marked by the dev. `RUN_BOUND` is set from the slowest of the ten loaded child runs by that rule, with the ratio in its comment; the quick tier, clippy, fmt, the check scripts.
+- **Amended 2026-11-27:** cut in two (6a, 6b) with the allow-list row's stale text and the outdoor child's guard: "Phase 6, cut in two" below.
 
 ## Amended 2026-11-26 (architect, Phase 1's stop)
 
@@ -156,6 +159,8 @@ Phase 2's text above stands. Added, so the owner can judge at Phase 4:
 
 ### The owner question, restated with a third arm (a stability question: not decided here)
 
+> **Superseded 2026-11-27** ("Phase 4, restated"): arm A1's catch-up does not land in view on the tree (Ruling 5). Kept as written.
+
 When the camera's chunk cannot hold its final light at a start because its surroundings are still streaming in, the first frame:
 
 - **A1, waits for a block (as built, and as it was before this plan).** The shortest wait. The block is provisional and is baked again in view, fading over 16 frames, once its columns are in.
@@ -169,6 +174,104 @@ Phase 4 is where the owner looks, with Phase 2's rows, and picks. Until then the
 Phase 1b (one short dev brief), then Phase 2 as amended, then Phase 3 as written. **For the Implementation log** (the dev's, with Phase 1b's commit): row 1 reads done with both commits and points at Rulings 1 to 4.
 
 **Recorded, the recommended option taken** (none a stability question): the re-pin (Ruling 1), the three mechanism choices accepted and the default rejected (Ruling 3), the files and the commit accepted (Ruling 4).
+
+## Amended 2026-11-27 (architect, Phase 2's flag)
+
+Phase 2 came back at `594eccf5` with a flag: no catch-up lands after frame 0 in any of its 15 runs, before or after Phase 1, so the owner question's arm A1 ("baked again in view, fading over 16 frames, once its columns are in") describes something the tree does not do. Read for this: the queue's opening, pool, catch-up and forget stages (`bake/queue/{open,mod,step,list,reads}.rs`), the pre-roll's end (`bake/pre_roll.rs`, `apps/flythrough/src/run/loading.rs`), the column rule (`gpu_world/columns.rs`), the radius rule (`apps/flythrough/src/streaming.rs`), and the lane's raw files (`live/p2/runs/*.out`, the print diffs). Nothing was run. Each statement says whether it is from the code, from the rows, or derived.
+
+### Ruling 5: why a catch-up queues and never opens
+
+- **From the code, the order.** A due catch-up is a candidate of class 1 (`candidacy`: class is "holds a block"), with every coarse block waiting for its refinement. The fly-through's default order is `refine tier`, and under it `open` walks class 1 only in an opening that found **no class 0 candidate ready** (`stops`: `class == 1 && ready0 > 0`), or whose 16 class 0 checks were all refused. Nothing bounds how many openings that takes. This is ADR-0070's amendment as written ("re-baked once, behind the first bakes").
+- **From the code, the mark.** The due mark leaves only when the chunk leaves the mirror or turns LOD-only (`forget_unheld`) or its job is pushed (`push_listed`). Chunk events do not drop and re-make it, and the rows agree: `catch-ups queued` counts first inserts and stands still once reached (365, 420, 531 to the last frame).
+- **From the rows, the backlog.** At every `bake queue:` line after frame 0 on the RTX the queue holds 8676 to 9083 candidates and first bakes land (blocks 358 to 1023 over 600 frames in `a-rtx-def1`), with an opening in 38 to 47 of each 60 steps. On lavapipe the default start's pre-roll leaves 90 jobs in the loop and the live slice makes **no opening at all** for the first 360 frames (`opened 0 of 60 steps`), then 12 to 17 in 60.
+- **Derived, not counted.** That each of those openings found a class 0 candidate ready follows from the tier rule and the blocks rising at every row; no run printed `ready0` or whether an opening reached class 1. Phase 2b counts it.
+- **A second delay, from the rows.** The catch-up is first *due* 168 to 429 frames after frame 0 on the RTX (21 to 49 s at the print's 100 ms frames): a chunk's columns are final only when every chunk the streamer holds in them is mirrored, and the mirror's upload trails the stream. That pace is the sync's ([Plan 0107](0107-the-mirrors-slot-image-packed-on-the-stream-workers.md) reads it), not the queue's.
+- **`starved_openings` 0 says nothing here:** it counts the near shell starving the coarse front (`note_starved`), not a catch-up waiting.
+- **Every Phase 2 run is `bake thread off`** (the headless default; its `light:` line). A window runs it on. The tier rule is the same code on both; the openings' pace is not, and is unread with the thread on.
+
+**Whose fault.** Inherited, not made here: `b-lvp-sw2` (before) reads 206 queued and 0 landed. It is the intended priority with a missing bound: the amendment was written against a pre-roll that baked the near chunks behind a loading frame, not against 9000 first bakes in view. Phase 1 moved it in degree only (a shorter pre-roll leaves more of the wait in view).
+
+### Ruling 6: the one run where catch-ups landed is the same rule seen from the pre-roll, and it makes the start a race
+
+- **From the code.** The pre-roll counts a near chunk settled through `QueueRead::settled`, which reads a chunk with a due catch-up as busy. So if a near chunk's columns turn final **before** the near stage ends, the pre-roll holds until its catch-up lands, and the catch-up waits behind every ready first bake.
+- **From the rows.** `a-lvp-def2`: the near stage ends at 54262 ms after 2054 chunks; `a-lvp-def1` and `def3`: 30080 and 32640 ms after 105 and 118. The near chunks' catch-ups open at steps 270 and 300. The start paid about 22 s and 1900 first bakes for 93 re-bakes that changed 0 cells.
+- **Derived.** In `def3` the 294 catch-ups queued in the pre-roll were queued after the near stage ended (in the 5 s coarse box), so they held nothing. Which side of the line a start falls on is the stream's pace against the near bakes'. Unread: what let class 1 open at step 270, and the step at which each catch-up was queued (Phase 2b prints both).
+- **So the tree is not A1.** It is "waits for a block" or "waits for the final block" by a race: the final block in one of three lavapipe default runs, in none of three on the RTX. The owner cannot be shown a start that is one arm or another by chance: Phase 2d makes it A1 in every run. A2 stays reachable (`--column-wait on`).
+
+### Ruling 7: what the eye sees
+
+- **From the code.** A provisional block is drawn as any block: the flag lives in the queue, and neither the store nor a shader reads it. The eye sees a difference only when a catch-up lands with other values (one fade over `FADE` frames), and never when it lands with the same.
+- **When the two are equal (derived from the rule, the bake's rays not read).** A provisional block baked with its whole reach resident (light radius 4 chunks, 25.6 m, each way). What it could not read is the top of a footprint column where a chunk above or below the reach had not arrived. It equals its final block wherever no opaque voxel stands in a footprint column above the reach, and the column's top is not below it. On open ground under less than 25.6 m of relief that is everywhere.
+- **When not.** Under terrain or a structure that rises more than the reach above the chunk within the footprint (a cliff foot, a shaft, a tunnel under a hill: the amendment's "a provisional sky underground"). There the provisional block holds more sky than is true, and under Ruling 5 it holds it until the first-bake backlog lets class 1 open: minutes at the read pace, then one fade.
+- **The one data point is not an accident, and not general.** 0 cells of 93 chunks at the default spawn (open hillside) is what the rule predicts there. No run read a start under cover. Phase 2c reads `--spawn inside`.
+- **What does change in view after frame 0** is not the catch-up: it is the first bakes landing beyond the near shell, for as long as the backlog lasts. That is the settle time the owner named on 2026-11-20, and it is the queue's throughput against 17077 chunks; this plan does not change it.
+
+### Ruling 8: the three things Phase 2 left unexplained
+
+- **The falling full-chunk count is the testbed's radius rule, from the runs' own lines.** `radius: r_full 16 -> 15 at mirror pressure 0.909` every 30 frames down to 6. On lavapipe the mirror reserves 63550 records and the outdoor defaults hold 17077 full and 40700 LOD-only chunks: 57777 of 63550 is 0.909, over the rule's 0.9. A chunk demoted from full keeps a record, so the record term never falls and the radius walks to its floor. The RTX reserves more and reads 0.620. Not this plan's: a backlog entry (below). It taints any lavapipe reading of this start past about 30 frames after full residency.
+- **`a-rtx-sw1`'s 54 s to frame 0** is its `loading:` line: `building the pipelines 51112.3` ms against 1308.8 in `a-rtx-sw2`. The first RTX run of a new binary; its pre-roll was 6 steps. [Plan 0108](0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md) owns the cold pipelines.
+- **Marks dropped equal marks made** in the switched runs is the rule working (every mark left by an event), not churn of the due mark (Ruling 5).
+
+### Phase 2b: the tier counted, the race printed, the thread on
+- **Owner skill:** dev
+- **What:** A reading, no code change. One build of the tip with Phase 2's print (`live/p2/print.py`) and three lines added, **not committed**: (1) per opening after frame 0, the class 0 candidates found ready and whether the walk reached class 1; (2) the queue step at which each near chunk's catch-up is queued; (3) per pre-roll step, the near chunks unsettled **only** by a due catch-up or its job. Two runs on the RTX of Phase 2's default line (`--headless --source outdoor --frames 600 --render 64x36 --loading-screen on`): one as it is, one with `--bake-thread on`.
+- **Files touched:** `docs/plans/logs/0109.md`.
+- **Done when:** the log holds, per run: openings after frame 0, those with no class 0 ready, those that reached class 1, class 1 jobs opened; the candidates waiting at frame 0 and at the last frame; the frame the camera chunk's catch-up is queued and (if any) opened; the pre-roll steps on which count (3) is over 0. One sentence each, as counts: whether any opening after frame 0 reached class 1, and whether the thread on changes that. Lock: about 3 minutes (each run about 75 s as Phase 2 read them); the second run is projected from the first.
+- **Stops:** the print not applying to the tip without more than print lines (say so, read what applies).
+
+### Phase 2c: is a provisional block ever different from its final one
+- **Owner skill:** dev
+- **What:** A reading, no code change. The same build with one more local print: at frame 0, for each near chunk, its sets and its block's cell words (the words Phase 2's `reading_diff` compares, not the landing word), written to a file a run; a run given another's file prints `reading_diff` per chunk against it. On the RTX, `--frames 3`, at the default spawn and at `--spawn inside`: `--column-wait on` twice (the final blocks, and the control), then `--column-wait off` once (the provisional blocks). Six runs.
+- **Files touched:** `docs/plans/logs/0109.md`.
+- **Done when:** per spawn the log holds: the control (the two wait-on runs differ in 0 cells of every near chunk; **if they differ the method is void: stop and say so**); wait off against wait on, per near chunk flagged provisional at frame 0: chunks that differ, cells that differ, the largest and mean level change, the sky visibility bytes changed; and each run's `pre-roll:` line and `first frame after` ms (the wait-on runs are arm A2's first measured wait). A near chunk final at frame 0 in the wait-off run (the race of Ruling 6) is counted apart. Lock: about 5 minutes, projected from the first run; a wait-on run past 3 minutes is stopped and reported.
+- **Stops:** `--spawn inside` giving no near chunk provisional at frame 0 (report the sets; the architect names another pose with `--eye`).
+
+### Phase 2d: the pre-roll waits for a block, not for a catch-up
+- **Owner skill:** dev
+- **What:** The pre-roll counts a near chunk done when it holds its block at the full count, whether or not a catch-up is due or in a job for it. `QueueRead::settled` keeps its meaning for every other caller; the shape (a second reading form, or an argument) is the dev's. Nothing changes under `--column-wait on` (no block is provisional there).
+- **Files touched:** `crates/svet-render/src/bake/pre_roll.rs`, `crates/svet-render/src/bake/queue/{reads,books}.rs`, the frame's `bake_settled` (where it lives), the tests beside them, `docs/flythrough.md` only if a printed line changes, `docs/plans/logs/0109.md`.
+- **Done when:** two CPU tests (each under 1 s, walls in the log): (a) a near chunk holding a full-count provisional block with its catch-up due counts done for the pre-roll, and the pre-roll leaves its near stage at that step; the test states the base's reading (it stays in the near stage); (b) the same with the catch-up's job in the loop. (c) `settled` reads as before for a chunk with a due catch-up (asserted; its other callers listed in the log). Then the default line three times on the RTX and three on lavapipe with `--frames 3`: the log holds each `bake queue: the camera's chunk ..` line; with the near stage's chunks and ms as they fall (Phase 2 read 105 to 118 chunks, and 2054 in the run that held). **Bar:** no run's near stage ends with a near chunk short of its full-count block; a near stage that bakes over four times the least run's chunks is reported with its lines and is a stop. `--binaries gpu_loading,gpu_queue` on lavapipe (the dev names any other binary the change reaches), the quick tier, clippy, fmt, the check scripts. Lock under 10 minutes.
+- **Stops (report, change nothing to pass):** a golden or a pinned count anywhere moving (name the test and both values); a test that asserted final near blocks at frame 0.
+- **Goes unless** Phase 2b's count (3) is 0 on every step of a run whose near stage ran long: then the attribution of Ruling 6 is wrong and it returns here.
+
+### Phase 2e: the catch-up's place in the order, as a setting (written only if Phase 2c finds a difference)
+- **Owner skill:** dev
+- **What:** Not written. If Phase 2c reads a start where provisional blocks differ from their final ones, the architect writes this phase from its rows: a render setting, default as built (`behind`), whose other arm opens a due catch-up near the camera among the first bakes by its own score, so the owner can be shown both at Phase 4; its mode shows in the window. An exploration phase: readings, no image test. If Phase 2c reads 0 cells at both spawns this phase is struck, the missing bound goes to `docs/backlog.md` and the question below loses its last arm.
+- **Files touched:** named then.
+- **Done when:** stated then.
+
+### Phase 3, cut in two
+
+Phase 3's text above stands, in two briefs: **3a** the tip alone (the print, two lavapipe runs, each part's median over the steps before the first job opens); **3b** the worktree at `c87bf7a6` (the same print, two runs) and the comparison. 3b's stop is Phase 3's. Both run with `--frames 3` (the radius rule of Ruling 8 does not reach a pre-roll). Phase 3 does not gate Phase 4.
+
+### Phase 4, restated: what the owner is shown and asked (supersedes the question of 2026-11-26)
+
+**What the tree does at a start on a streamed world**, after Phase 2d: the first frame waits until the camera's chunk and the near shell around it hold their light at the full count (94 of the 125 near chunks hold any at the default spawn). Those blocks may be provisional. Nothing near the camera is baked again in the first minutes: the one more bake a provisional block is owed waits behind every first bake that is ready (8986 chunks waiting at frame 0 in `a-rtx-def1`). When it lands it fades once; at the default spawn it changes nothing (0 cells of 93 chunks, one run), and under cover as Phase 2c reads. What the eye sees change after frame 0 is light landing on chunks beyond the near shell.
+
+The window (Linux, the outdoor source, the default spawn and `--spawn inside`, the terminal's lines visible, no camera hold, no drained pre-roll), one launch an arm:
+
+- **W1, as built** (the defaults). To see: the seconds to the first frame (`first frame after`), what is lit in it, what changes in the first 30 s standing still and walking.
+- **W2, the first frame waits for final light** (`--column-wait on`; every chunk waits, the near ones included). To see: the same three things; the start is longer by Phase 2c's figure and no block is ever baked twice by the stream. The owner picked `off` on 2026-11-18 after one window (ADR-0070's amendment); this is the same setting on today's tree.
+- **W3, the first frame waits for the camera's chunk only** (`--near 0 --coarse 0`). To see: the shortest start the tree has (5 to 6 pre-roll steps, about 1 s, against 92 to 135 steps and 17 to 24 s on the RTX headless) and the near shell's light landing in view after it (1 block at frame 0, 33 to 133 by frame 30 in Phase 2's runs).
+- **W4, only if Phase 2e is built:** W1 with the catch-up near the camera opened among the first bakes, at the spawn where Phase 2c read a difference. To see: the false sky corrected in the first seconds by one fade in view, against W1 holding it for minutes.
+
+**Asked** (stability questions, the owner's; not answered here):
+
+1. Which start: W1, W2 or W3. Arm B as first written (start-up ends on a bound, the camera's own chunk still unlit) is not built and has no window; W3 is its nearest built relative. If the owner wants B after W3, Phase 5 is written.
+2. Only if W4 exists: a provisional block that is wrong is corrected as soon as its columns are in, in view (W4), or behind the first bakes (W1).
+
+Phase 4's **Done when** stands: the answers are recorded here as a dated amendment.
+
+### Phase 6, cut in two, with Plan 0106's two notes
+
+- **6a** is Phase 6 as written, plus: the allow-list row `apps/flythrough/tests/gpu_shutdown.rs | headless_run | elapsed` says its resize "is deferred to Phase 11"; the row is rewritten with the bound and ratio this phase sets and names no phase.
+- **6b, the outdoor child's guard** (Plan 0106 Ruling 9). **Owner skill:** dev. `apps/flythrough/tests/gpu_outdoor.rs`'s `run` kills its child at 300 s, 4.8 times the slowest wall read. The two soak tests on it (`a_source_switch_leaves_nothing_behind` and its 60-frame form) by name, three loaded runs each on lavapipe under the lock, projected from the first; the guard is set to ten times the slowest child, and the row `gpu_outdoor.rs | run | sleep` states the bound, the slowest and the ratio. No `elapsed` row is added: the script does not read a duration compared with a parameter, a blind spot Plan 0106's readings log names. **Files touched:** `apps/flythrough/tests/gpu_outdoor.rs` (the bound and its comment), `scripts/test-clocks-allow.txt`, `docs/plans/logs/0109.md`. **Done when:** the log holds the six walls with their loads; the guard and the row agree; `check-test-clocks.mjs` exits 0. A failing assertion in either test is logged and not fixed (`docs/backlog.md`, "The outdoor soak goldens are red on the tree"); the wall is the child's either way.
+
+### What proceeds now
+
+In order, one brief each: **2b**, **2c**, **2d**, **3a**, **3b**; **2e** if the architect writes it after 2c; then Phase 4; then 5 if picked, 6a, 6b. Phase 2c's rows come to the architect before 2e or Phase 4; 2d and Phase 3 do not wait for that reading.
+
+**Recorded, the recommended option taken** (none a stability question): the pre-roll waits for a block and not for a catch-up (Ruling 6, Phase 2d: the arm the plan already called "as built", made true in every run); the radius rule's walk goes to the backlog (Ruling 8); Phases 3 and 6 cut in two. **Left to the owner:** the two questions of Phase 4.
 
 ## Data shapes
 
