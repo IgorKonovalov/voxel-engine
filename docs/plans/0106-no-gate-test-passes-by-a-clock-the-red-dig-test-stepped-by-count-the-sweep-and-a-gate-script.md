@@ -1,6 +1,6 @@
 # 0106: No gate test passes by a clock: the red dig test stepped by count, the sweep, and a gate script
 
-> **Status:** in-progress (2026-11-26): Phase 1, the fix for main's red CI, done and merged on its own. Phases 2 to 4 approved (owner, 2026-11-26), with the soak tier's sweep added as Phases 5 and 6. Phases 1 to 4 and 7 done. Phase 10 read; Phase 11 (a reading of the switched pre-roll, step by step) is next, Phase 12 reserved ("Amended 2026-11-26 (architect, Phase 10's reading)").
+> **Status:** in-progress (2026-11-26): Phase 1, the fix for main's red CI, done and merged on its own. Phases 2 to 4 approved (owner, 2026-11-26), with the soak tier's sweep added as Phases 5 and 6. Phases 1 to 4 and 7 done. Phases 10 and 11 read (Phase 11 returned to the architect); Phase 12 reserved ("Amended 2026-11-26 (architect, Phase 10's reading)").
 > **Created:** 2026-11-26
 > **Milestone:** none (harness; follows Plan 0099, `docs/roadmap.md` M9's bake thread)
 > **Related ADRs:** [ADR-0083](../adrs/0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md) (the bake thread; not changed)
@@ -297,7 +297,8 @@ impl Frame {
 | 8: the reset seed under each dig hold | dev | not started | |
 | 9: the reset seed's test under its hold | dev | not started | |
 | 10: where the source switch's 43 s went | dev | read; readings in [the log](logs/0106.md#phase-10-where-the-source-switchs-43-s-went). The growth is the switched run's pre-roll and enters at `e1628197` (sometimes 256 to 260 chunks, 27 s, against 9 chunks before); two modes at the tip (32/9 in 7 to 8 s, or 789 chunks in 44.7 s). One `db9c170a` run over the 30 s stop at load 22 to 30, read as load. Returned to the architect, no fix made | committed with this row |
-| 11: reserved for Ruling 3's tier | dev | not started | |
+| 11: the camera's chunk through the switched pre-roll, step by step | dev | read; readings in [the log](logs/0106.md#phase-11-the-cameras-chunk-through-the-switched-pre-roll-step-by-step). Checks at 1, 31, 61 and the first opening from 91; long runs are 1 or 2 failed rechecks; after the first check the reach was ready and the footprint's columns were not (a chunk pending upload), against Ruling 4's "the reach"; `c87bf7a6` checked at 31 and found it ready, 0 chunks pending at every step; long mode on the RTX 1 of 5. The column chunk is not named (eight-run cap). Returned to the architect | committed with this row |
+| 12: reserved for the switch test's tier and `RUN_BOUND` | dev | not started (written by the architect after Phase 11) | |
 
 ### Notes
 
