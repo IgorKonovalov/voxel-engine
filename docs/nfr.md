@@ -168,6 +168,31 @@ drain is over twice the shortest is out; Plan 0096's readings log, Phase 9): the
 and 25.1), the RENOIR kept 6.0. The window's readings (the owner's Plan 0096 Phase 8 at 2530 x
 1378, not against these lines) are in [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md).
 
+**The bake step off the render thread** (Plan 0099, ADR-0083; pinned at its Phase 6b,
+2026-11-26, release `flythrough` at `cde2e966`, headless, `--source outdoor` from the first world
+frame, the forest at 15:00 and the hills at 17:00; the bake thread on (`--bake-thread on`), 16
+table rows, depth 3, the default order; RTX 3080 Laptop at Floor 1920 x 1080 (drain slice 1.5
+ms), RADV RENOIR at Portable 1280 x 720 (6.0 ms); exclusive perf lock per run, quiet (the
+1-minute load at the lock 0.6 to 1.5); two runs a scene on the RTX, one on the RENOIR (its
+forest twice: the second, of 10 000 frames, read the residency to its end); every row
+in `docs/plans/logs/0099.md`, Phases 4d and 6b). These rows supersede the table above's RTX
+standing for the in-view landing, the step and the frame while draining. The lines are the
+plan's, unmoved; a miss is disclosed with what holds it.
+
+| line | RTX 3080 Laptop, Floor | RADV RENOIR, Portable | standing |
+|---|---|---|---|
+| The render thread's bake share while in view waits (regime B): p50 at most 1.0 ms, p99 at most 4.0 | forest 0.784 / 1.247 and 0.758 / 1.215, hills 0.797 / 1.287 and 0.791 / 1.290 | forest 0.303 / 0.587 and 0.322 / 0.527, hills 0.312 / 0.537 | met on both |
+| The frame's wall p50 while in view waits: Floor at most 16.6 ms; Portable not over the step-on-the-render-thread base (Phase 1: 33.68 ms forest) by more than 2 % | forest 8.28 and 8.35 ms, hills 9.94 and 9.92 | forest 24.15 and 23.94 ms, hills 28.40 | met on both |
+| The submits fed at least 0.85 of the granted drain slice while in view waits | forest **0.611 and 0.599**: submits a frame 0.714 and 0.686 (a bake step takes 10.45 and 11.06 ms p50 from one pick-up to the next against a frame of 8.27 and 8.34), drawn a submit 0.856 and 0.874; hills **0.589 and 0.582**: submits a frame 0.842 and 0.879, drawn a submit 0.700 and 0.662 | forest 1.000 and 0.999, hills 0.996 | **RTX missed**, by both factors at once: the bake step is longer than the frame (no wait in it: 0 ms p50), and with every one of the 16 rows held a submit carries what sixteen jobs' live faces give in one pass (a hills chunk's fewer faces fill less of it). No single lever reaches 0.85; the backlog's entry on the feed names the one cheap change, unbuilt |
+| In view landed after the first world frame: RTX at most 10 s, RENOIR at most 30 s | forest **17.9 and 19.0 s**, hills 6.5 and 6.6 | forest 12.7 and 12.7 s, hills 11.5 | **RTX forest missed**, held by the order: the in-view chunks with no block land at 7.5 and 8.1 s, then 31 coarse blocks in view wait 10.4 and 10.9 s more behind the chunks with none (ADR-0048's tiered order, kept by Plan 0099's ruling after Phase 4d). RTX hills and the RENOIR met |
+| The whole residency empty after the first world frame: RTX at most 60 s, RENOIR at most 180 s | forest 26.2 and 29.1 s, hills 23.2 and 23.5 | forest 124.9 s, hills 92.6 | met on both |
+| The bake thread's outbox (at most 8 MiB) and its shadow of the books (a guess of 0.5 MB) at their peak | not read | not read | **not read**: no line at `cde2e966` prints either. The outbox is bounded by construction (the bake thread waits once it holds 8 MiB); the books' snapshot's bytes are counted (`Books::bytes`) but not printed |
+
+The figures beside these lines (the per-second budget, the `taskset` arm, the RENOIR dig's
+withdrawn samples, and the readings not taken) are in
+[`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md). The dig's frame, an edit's wait and
+ring 1 on the bake thread are section 4's, pinned at Plan 0099's last phase.
+
 **Disclosed at the close review (2026-11-23):** the record by rule (ADR-0080 rule 1)
 answered 236 of the 3 540 buried chunks of the RTX's forest (233 to 241 of 3 526 on the hills)
 and 1 to 12 of 1 019 on the RENOIR (6 of 1 066), because the opening applies it only to a
