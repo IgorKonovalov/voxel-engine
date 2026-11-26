@@ -17,6 +17,14 @@ Rules:
 
 ## Next up
 
+### The pre-roll's end on a streamed world rides a 30-step recheck (2026-11-26)
+
+From [Plan 0106](plans/0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md), "Ruling 4" (readings in `docs/plans/logs/0106.md`, Phase 10). An engine finding in the start-up path, owed a small fix plan of its own once that plan's Phase 11 has read the cause.
+
+- **The reading:** after a source switch to the outdoor world on lavapipe the pre-roll ends at 32 steps and 9 chunks, or at 95 to 129 steps and 256 to 789 chunks (26 to 45 s more), run to run on one tree; before the Plan 0099 merge every run on record is short. Derived from the code, not yet read step by step: a camera chunk whose reach is not ready at an opening is skipped for `QUEUE_RECHECK` (30) steps, the queue bakes every other ready chunk meanwhile, and whether the next check finds the reach ready races the stream workers and the mirror's upload.
+- **Open:** which chunk blocks and why, why the odds moved at the merge, whether the RTX host or a window shows it. The owner's question (wait for the camera's chunk, or end on a bound and let its light land in view) is in the plan.
+- **Beside it:** [Plan 0108](plans/0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md)'s start-up readings on a streamed source log the pre-roll's steps and chunks per start, or its seconds mix the two lengths.
+
 ### The record by rule at every opening, and the bake's key ray at its cap (2026-11-23)
 
 From [Plan 0096](plans/done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md) Phase 10 (its section "Phase 10 after its reading"; readings in `docs/plans/logs/0096.md`, "Phase 10a"). A small plan of its own, to run ahead of Plan 0099's Phase 1 (ruled at Plan 0096's close, 2026-11-23, v0.71.0). **Drafted 2026-11-24 as [Plan 0101](plans/0101-the-record-by-rule-at-every-opening-an-audit-on-the-real-scenes-first-then-the-three-exclusions-lifted.md) with [ADR-0085](adrs/0085-the-zero-record-is-ruled-on-the-mirror-as-it-stands-exact-by-the-re-list-not-by-the-columns-finality.md) (proposed); awaits the owner's go.** The draft carries the rule alone (the key ray is Plan 0100's Phase 2), puts the audit on the real scenes ahead of any behaviour change, and recommends running after Plan 0099 closes instead of ahead of its Phase 1 (its question 1); this entry leaves when the owner answers.
