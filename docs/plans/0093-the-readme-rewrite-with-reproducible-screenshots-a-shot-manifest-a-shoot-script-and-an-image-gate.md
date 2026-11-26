@@ -6,7 +6,8 @@
 > the frame-time figure; the hero from the sheet). **Refreshed 2026-11-26** against main
 > `aa8a76a3` (v0.76.0): see "Amended 2026-11-26" below, which wins where it differs (a wording
 > standard, the examples, the first screen, `--eye` for `--camera`, nine feature groups, the
-> scrub at the close). Not started; the lane starts after Plan 0104 closes, beside 0101 and 0105
+> scrub at the close). The lane started after Plan 0104 closed, beside 0101 and 0105. **Phase 5
+> picked 2026-11-26**; next is Phase 5b, the re-shoot round (the last amendment)
 > **Created:** 2026-11-19
 > **Milestone:** M7 in `docs/roadmap.md` (tooling); a docs plan: no engine crate changes
 > **Related ADRs:** none. The one choice with a rejected alternative (the README's images come
@@ -1092,6 +1093,205 @@ chunk or its record.
 - **Stop, reported:** as written (a `--check` over its tolerance; nothing edited, no render
   added). A hero render in the patch's pale state inside the tolerance is a line, not a stop.
 
+## Amended 2026-11-26 (owner, the picks; architect, the re-shoot round and the final shoot)
+
+Phase 5 is done: the owner picked from the candidate sheet. Three shots get a re-shoot round
+he confirms (Phases 5b and 5c below), and Phase 6 splits into the final shoot (6a) and the
+rewrite (6, as written). Two thin margins of Phase 2f are ruled on in F4; no tolerance is
+edited.
+
+### F1. The owner's picks (2026-11-26, verbatim, from `target/shots/candidates/index.html`)
+
+> hero 8
+> for dig dig 3 but no lamp
+> hall 3
+> lamp-cave 4
+> canppy 2
+> skylight 1
+> walkers needs redone, so full spider is visible (single)
+> chapel 5
+> castle 2, maybe its better under sunlight
+> hud 2
+
+**The reading (the orchestrator's; the owner corrects it if wrong).** Each number is the tile
+of that shot's legend (`target/shots/candidates/<id>.txt`); the flags are the legend's, over
+the entry's.
+
+| Shot | Pick | The candidate's flags over the entry's |
+|---|---|---|
+| `hero` | 8 | `--eye 0,640,579,180,15 --lamp off` (the forest spawn's point, south, 15 degrees up, 18:10) |
+| `hall` | 3 | `--shot crystals` |
+| `lamp-cave` | 4 | `--eye 32,32,32,180,0` (auto exposure) |
+| `canopy` | 2 | `--eye 0,640,579,270,30` |
+| `skylight` | 1 | the entry's flags (`--eye 96,0,535,180,60`, frame 90) |
+| `chapel` | 5 | `--eye 32,32,32,0,15 --lamp off` |
+| `hud` | 2 | `--shot crystals` |
+| `dig` | re-shoot | candidate 3's framing (`--eye 32,32,32,180,-10`) with no lamp in the shot |
+| `walkers` | re-shoot | one body, the whole of it in the frame |
+| `castle` | 2, and a variant | `--castle-shot nave`; a sunlit variant beside it ("maybe": both are shown, he chooses) |
+
+No shot is dropped. The hero is named (8). The canopy goes in now (2). Phase 5's Done when is
+met for the picks. A8's two additions were not answered and take the recommended option,
+recorded here and shown to him again at Phase 5c:
+
+- **The images after the groups without a shot of their own:** Structures takes `chapel`;
+  Audio takes `castle` (the vaulted nave is a room whose reflections are heard); Entities
+  takes `walkers`; Simulation and determinism takes `spider-walk` (the body that crawls on
+  any face); Outdoors takes `canopy`, and `skylight` and `walker-walk` go to the gallery.
+- **Which body "spider" names** is not settled by his line: `--entities N` places the
+  library's selected entry, which is the walker unless `--model` names another rig, so the
+  bodies he saw were walkers. Phase 5b shows both bodies; he chooses.
+
+### F2. The dig and Plan 0105's default
+
+The owner picked `--dig-estimate depth` as the default for digs the same day (Plan 0105; the
+flip is its Phase 7a, not built). This lane's tree has no `--dig-estimate` row (`git grep` at
+`19603a3f`: nothing), so Phase 5b's dig candidates show the tree's present dig. They settle
+the framing and the light without the lamp, which the estimate does not change; the sheet
+says so beside them. The README's `dig` loop is shot in Phase 6a on a tree whose default is
+`depth`, and the entry names no dig-estimate flag (A6: a shot shows the default look).
+Rejected: **holding the re-shoot round until Plan 0105 merges** (the owner's confirmation of
+a framing would wait on a lane that does not change the framing).
+
+### F3. What a re-shoot may change
+
+A pose (`--eye`), a clock (`--time`, `--sun`), the lamp, the exposure, the entity count and
+the selected rig (`--model`), the frames: all rows of `docs/flythrough.md`. Nothing else: no
+scene, asset, material or generator is edited, no light is added, and no lighting-mode flag
+is passed (A6). A shot these cannot make is reported on the sheet and goes to the owner.
+
+### Phase 5b: The re-shoot round for `dig`, `walkers` and `castle`
+- **Owner skill:** dev
+- **What:** in `docs/images/shots.json`, the entries `hero`, `hall`, `lamp-cave`, `canopy`,
+  `skylight`, `chapel` and `hud` take their pick's flags as the entry's flags (F1's table;
+  `candidates` kept, the numbers unchanged). `hero`'s tolerance becomes `null`: 0.004 was
+  read for other flags, and its `note` says so. The three re-shot entries gain candidates,
+  numbered on from Phase 4's so his next numbers cannot be misread:
+  - **`dig`** (the loop, the entry's frames): candidate 3's pose with `--lamp off`, at auto
+    exposure, and the same with `--exposure-comp 1`. No other pose. The cave is then lit by
+    its ore alone; a frame in which no rock reads is reported on the sheet, never lit.
+  - **`walkers`** (the loop): `--entities 1`, the lamp off as the showcase has it, once for
+    each body: the walker (the default selection) and the spider (`--model
+    apps/flythrough/assets/entities/spider/spider.rig`), each from two poses, near the
+    `hall` shot and near the `crystals` shot. The dev scouts where the body stands and
+    wanders (low-resolution runs, the first line's position) and sets `--eye` so the whole
+    body, legs included, stays in the frame over the loop's frames with air on every side.
+    If the wander leaves the frame, the loop's frames move to a stretch where it does not.
+  - **`castle`** (the still): the nave as picked (candidate 2, unchanged); the nave with
+    `--lamp off` (its own lamps); and the sunlit try: `--castle-shot nave --sky on` with a
+    `--sun EL,AZ` or `--time` the dev scouts for direct sun on the nave's floor or walls,
+    lamp off and lamp on. The castle stands in the streamed cave's hall, so it is not known
+    that any sun reaches it. If `--sky on` is refused with the castle, or no sun position
+    lights it, that is the round's finding, in one line on the sheet with the scout's
+    stills; the castle is not moved, opened or placed outdoors here (`--vox` is ignored on
+    `--source outdoor`, Phase 1; a castle outdoors is code and scene work, F5 question 3).
+
+  Then `node scripts/shoot-images.mjs --candidates --only dig,walkers,castle`, and one page
+  for the owner (the script's `index.html`, or a page beside it) that shows the new tiles and
+  loops with their numbers and flags, the three earlier picks they are compared against (dig
+  3, walkers 2, castle 2), and the tiles of the picked entries from Phase 4's sheet, marked
+  picked and not rendered again. The page states F2's line beside the dig and lists F1's
+  group assignments and the two bodies as the questions he answers. Every render is under
+  the perf lock by B4 (no render starts in a hold older than 600 s). Expected, from Phase
+  4's times: one hold, two at most (a guess).
+- **Files touched:** `docs/images/shots.json`, `scripts/shoot-images.mjs` and
+  `scripts/shoot-images.test.mjs` (only if the page needs it), `docs/plans/logs/0093.md`.
+- **Done when:** the manifest's picked entries print the picked tiles' commands
+  (`--print ID` equals the legend line of F1's number but for the still directory). The page
+  opens from one path, named in the log, and shows every new candidate with its number and
+  flags. For each `walkers` candidate the log holds the body's box: the pixels that differ
+  from a render of the same pose with `--entities 0`, at the loop's first, middle and last
+  frame; the box touches no edge of the frame and is at least a quarter of the frame's
+  height. For each `dig` candidate the log holds the count of pixels that differ between
+  the frame before the dig and the loop's last frame, over zero, and where they lie. The
+  castle's sunlit try has either a candidate on the page in which sun lies on a surface of
+  the nave, or the finding's line with the refusal or the scout's stills. `node --test
+  scripts/shoot-images.test.mjs` and `node scripts/check-images.mjs` pass; no hold is over
+  900 s; nothing under `apps/` or `crates/` changes.
+- **Stop, reported:** a candidate that can only be made by a change F3 excludes. It is
+  left off, with the reason on the page.
+
+### Phase 5c: The owner confirms the three
+- **Owner skill:** human
+- **What:** the owner opens Phase 5b's page and names the tile for `dig`, `walkers` and
+  `castle` (or a drop, or the earlier pick), and corrects F1's reading, the group
+  assignments and the body if they are wrong. The orchestrator writes his words verbatim
+  into the readings log, dated.
+- **Files touched:** `docs/plans/logs/0093.md`.
+- **Done when:** each of the three entries has a tile, the earlier pick or a drop in the log.
+
+Phase 6b does not wait: the dev runs it after Phase 5b, while the owner looks.
+
+### F4. Rulings on the two thin margins, and the noise sets
+
+Phase 2f's second check read `walker-walk` 0.001980 against 0.002 and `hero` 0.003142
+against 0.004. Both are passes as read and are recorded as that, with their margins; neither
+is restated, and neither tolerance is edited.
+
+- **`walker-walk`.** The reading is three times its set's largest pair (0.000667) and over
+  twice it (0.001334), so D2's bound did not hold: the set of six missed a state, and the
+  check passed on the rounding alone. The pass stands; the set is refuted as a description
+  of the loop's noise. D2 rejected more renders to count the states; with this reading that
+  rejection no longer holds for this entry. Its next set is eight renders.
+- **`hero`.** The reading is under its set's largest pair (0.003363) and its largest cell
+  (57.97 levels) is D3's patch in its pale state. The margin is the one C2 expected. The
+  pass stands. Its flags changed with the pick, so its set is void and is read again anyway.
+- **Every set is read again in Phase 6a, once.** The merged tree is a named change of the
+  look (Plans 0101 and 0105 in the bake, Plan 0106's stepped pre-roll on every `flythrough`
+  entry), which is C2's condition for a new set. No number of Phase 2f carries over, in
+  either direction: a set that reads tighter gives a tighter tolerance. The rules are C2's
+  for a still and D2's for a loop, with the ceiling of a third of the smallest wrong share.
+  A set whose largest pair breaks its ceiling is a stop for the architect; a tolerance is
+  never widened to pass a `--check`.
+- **The sets and their wrong pictures.** `hero` and `walker-walk`: eight renders. Every
+  other entry: six. A still's wrong picture is the entry with its yaw turned 2 degrees (one
+  render); a `flythrough` loop's are that and the loop started one frame late (no render);
+  the `clip` loops keep D1's. A wrong render whose frames are the noise set's is no wrong
+  picture (D1).
+- **The schedule.** About eighty renders, some forty minutes held by Phase 4's times (a
+  guess). They run as B4's batches: no render starts in a hold older than 600 s, no hold
+  passes 900 s, and the lock is released between holds so other lanes run. An entry's
+  renders and its wrong render share a hold where they fit. The order is by scene, so a
+  stop names one scene: the hero and the two `clip` loops; the cave's entries (`lamp-cave`,
+  `chapel`, `dig`); the outdoor ones (`canopy`, `skylight`); the showcase's and the
+  castle's (`hall`, `hud`, `walkers`, `castle`). If the first hold projects the whole over
+  an hour held, the dev stops and reports the projection before the second.
+
+### Phase 6a: The merged tree, the noise sets and the final shoot
+- **Owner skill:** dev
+- **Waits on:** Phase 5c; Plan 0105 closed and in main, with `depth` the dig's default;
+  Plan 0106's `--pre-roll-stepped` in main. If either plan is not in main when the rest is
+  ready, the lane waits: a README image is not shot twice to save a day.
+- **What:** main is merged into the lane. Phase 5c's tiles become the three entries' flags.
+  Every `flythrough` entry takes `--pre-roll-stepped`, and `validate` refuses one without
+  it, as it does the settled start. The noise sets are read by F4 and each `tolerance` and
+  `note` written from them; for every hero render the log keeps D4's line (the pre-roll's
+  end and the patch's state). Then `node scripts/shoot-images.mjs`, `--check` right after,
+  and a second `--check` later the same day. The orchestrator shows the owner the final
+  `dig` loop beside Phase 5c's tile before the lane merges, since its dig is Plan 0105's.
+- **Files touched:** `docs/images/shots.json`, `docs/images/*.webp`,
+  `scripts/shoot-images.mjs` and its test, `docs/flythrough.md` (the shooting section),
+  `docs/plans/logs/0093.md`.
+- **Done when:** every entry's `note` names its renders, pairs, largest pair, rule and
+  smallest wrong share, and no tolerance is `null`; both checks exit 0 with each entry at
+  or under its tolerance; the log holds each hold's wait and length, none over 900 s; the
+  hero's lines say whether the patch still has two states under the stepped pre-roll.
+- **Stop, reported:** a set over its ceiling; a `--check` over its tolerance; the hero's
+  patch in two states with the stepped pre-roll on (a stable-image finding: the renders and
+  logs go to the architect, and the hero is not committed on a tolerance that hides it).
+
+Phase 6, as written and amended, is then the rewrite alone: its first two clauses (the picks
+into the manifest, the final shoot) are Phases 5b and 6a's. Its Done when stands.
+
+### F5. Owner questions (none blocks Phase 5b)
+
+1. **F1's reading** of the ten lines: right as written?
+2. **The group assignments** of F1. Recommended: as listed.
+3. **A castle under the sun**, if Phase 5b finds no flag that lights it. Recommended: keep
+   the nave as picked and park the castle on a hill in [the backlog](../backlog.md), since
+   it needs the castle placed outdoors, which this plan excludes. Alternative: a plan for it
+   and the `castle` slot left out of the README until then.
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
@@ -1112,8 +1312,11 @@ chunk or its record.
 | 2f: the tolerances, the worst frame, the shoot | dev | done; readings in [the log](logs/0093.md) | `30213ffa` |
 | 3: the image gate, fragments, CI | dev | done; readings in [the log](logs/0093.md) | `5b3fdd71` |
 | 4: candidates and contact sheets | dev | done; sheets under `target/shots/candidates/`; readings in [the log](logs/0093.md) | committed with this row |
-| 5: the owner picks | human | not started | |
-| 6: the picks, the final shoot, the rewrite | dev | not started | |
+| 5: the owner picks | human | done 2026-11-26: seven picks, three re-shoots, no drop (F1, verbatim) | recorded by the architect |
+| 5b: the re-shoot round (dig, walkers, castle) | dev | not started | |
+| 5c: the owner confirms the three | human | not started | |
+| 6a: the merged tree, the noise sets, the final shoot | dev | not started; waits on 5c, Plans 0105 and 0106 in main | |
+| 6: the rewrite | dev | not started | |
 | 6b: a minimal window as the second example | dev | not started | |
 | 7: the README on GitHub | human | not started | |
 
