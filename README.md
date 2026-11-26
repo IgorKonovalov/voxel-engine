@@ -93,7 +93,7 @@ fn main() {
 A window on a small world, with the renderer and the shell:
 
 <!-- quoted from crates/svet-app/examples/minimal_window.rs, between its readme markers -->
-```rust
+```rust ignore
 impl App for Demo {
     fn device_request(&mut self, adapter: &wgpu::Adapter) -> (wgpu::Features, wgpu::Limits) {
         let limits = svet_render::limits_for(adapter, 16 << 20).expect("a capable adapter");

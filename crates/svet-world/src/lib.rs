@@ -18,6 +18,13 @@
 //! assert_eq!(r.changed_from, [(rock, 33)]);
 //! ```
 
+/// The repository README, compiled as this crate's doctests: its `rust` fences build and run
+/// against this API, so a renamed item or a changed edit count turns `cargo test --doc` red.
+/// Fences that need more than this crate carry `ignore`.
+#[cfg(doctest)]
+#[doc = include_str!("../../../README.md")]
+pub struct ReadmeDoctests;
+
 mod brick;
 mod census;
 mod chunk;
