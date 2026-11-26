@@ -203,6 +203,17 @@ jobs opened before the in-view landing the rule would have answered 11.4 % in th
 the samples, so the causes in the standing column are the larger part and this is the rest.
 Applying the rule there is the backlog's "The record by rule at every opening".
 
+**The rule at every opening** (Plan 0101 Phase 3, ADR-0085; 2026-11-26, release at `85bf694d`,
+headless, lockstep, the forest and the hills as above, one run a scene, quiet at the start;
+beside the same tree without it, Phase 1 at `67062697`). The zero records by the rule: RTX
+forest 3 589 (261 before), hills 3 702 (320); RENOIR forest 1 019 (14), hills 1 066 (6); the jobs
+opened 7 989 (12 183), 8 425 (11 351), 3 736 (4 451), 4 129 (5 218). The audit at the tip
+(`--queue-rule-audit`) differs on 0 blocks in every case on all four runs. In view landed: the
+RENOIR forest 14.1 s (17.3), hills 10.2 (13.7); the RTX's 13.5 (35.6) and 11.0 (20.2), and every
+residency, are inside the run-to-run spread of the same behaviour (not separable). The queue's
+step, regime B, RTX forest p50 / p99 13.008 / 33.734 ms (14.347 / 28.525). The lines above keep
+their standing. Every row: [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md).
+
 Every reading against this budget, with its machine, scene and commit, is in
 [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md); new readings go there.
 

@@ -1,6 +1,6 @@
 # 0101: The record by rule at every opening: an audit on the real scenes first, then the three exclusions lifted
 
-> **Status:** in-progress (lane `plan-0101`, Phase 1 from 2026-11-26, Phase 2 done 2026-11-26); approved (owner, 2026-11-24: lane after Plan 0099 closes; drafted 2026-11-24 with no interview; the guesses
+> **Status:** implemented, awaits the close review (lane `plan-0101`, Phases 1 to 3 done 2026-11-26); approved (owner, 2026-11-24: lane after Plan 0099 closes; drafted 2026-11-24 with no interview; the guesses
 > and the open questions are under "Risks & open questions", each with a recommended option).
 > **Order (recommended, question 1):** after Plan 0100's Phase 2 and **after Plan 0099 closes**,
 > not ahead of its Phase 1 as Plan 0096's close ruled; the reasons are under "The order".
@@ -445,8 +445,8 @@ once he says go).
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: The audit and the re-read, no behaviour change | dev | done: 0 blocks differ in every case on all runs, both forests over the 10 % job line ([readings log](logs/0101.md)) | wip `67062697`; the readings `30e771b9` |
-| 2: The rule at every opening | dev | done: the rule on every ready candidate; CPU tests (1)-(3), two soak-born lavapipe rigs (4) ([readings log](logs/0101.md)) | committed with this row |
-| 3: The readings on both adapters, the audit at the tip, and the documents | dev | not started | |
+| 2: The rule at every opening | dev | done: the rule on every ready candidate; CPU tests (1)-(3), two soak-born lavapipe rigs (4) ([readings log](logs/0101.md)) | `85bf694d` |
+| 3: The readings on both adapters, the audit at the tip, and the documents | dev | done but (5): audit 0 differ on four runs, the step under the base, gate 1 443 of 1 443; the bytes not read ([readings log](logs/0101.md)) | committed with this row |
 
 ### Notes
 
@@ -496,15 +496,36 @@ each. Empty is fine.)_
   step 120 steps on instead of a settle. Both are born `#[ignore = "soak"]`.
 - Phase 2: `note_rule_missed` is called only under the audit: off it, the reading's missed jobs
   are 0 by construction.
+- Phase 3: done-when (5) not met as stated: `--bake-file` is refused since Plan 0059 and no
+  fly-through line hashes the store; the two RTX forest runs for the bytes were not taken, nothing
+  substituted.
+- Phase 3: done-when (2)'s 0 / 0 / 0 is the construction of Phase 2's note above, not a count.
+- Phase 3: one run a scene (the RENOIR forest twice: the first had a cold pipeline build of 4.1 s
+  and no provisional jobs); the spread for "not separable" is the audit runs of Phases 1 and 3.
+- Phase 3: the readings are lockstep (headless default), like Phase 1's base; none in thread mode.
+- Phase 3: `docs/flythrough.md` unchanged (the flags' rows landed in Phase 1); `rule.rs`
+  unchanged (no index by column).
+- Phase 3: the gate's first CPU try failed `the_first_flush_of_the_streamed_window_is_cheap`'s
+  1000 ms wall-clock bar (1452.8 ms) at load1 49.4; passed on the re-run at 0.48.
 
 ### Close triggers
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** feature / fix-only / docs-chore-only
-- **Public API changed:** types, traits, functions, shader interfaces, config (list them, or none)
-- **Budget readings:** each `nfr.md` figure touched, with its measured value, machine and commit
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
+- **What shipped:** feature (the record by rule at every opening; the audit and its reading)
+- **Public API changed:** `svet_render::{RuleAudit, AuditDiffer}`, `QueueStats::rule_audit`,
+  `BakeQueue::rule_audit`; fly-through `--queue-rule-audit`; the `bake queue:` line's `rule
+  audit` clause and `run.json`'s `queue.rule_audit`
+- **Budget readings:** `docs/nfr.md` section 2 (paragraph "The rule at every opening") and
+  `docs/nfr/02-frame-budget.md`: release `85bf694d`, lockstep, RTX 3080 Laptop Floor 1920 x
+  1080 and RADV RENOIR Portable 1280 x 720, quiet at the start; in view RTX forest 13.5 s, hills
+  11.0, RENOIR forest 14.1, hills 10.2; residency 39.5, 29.1, not empty by frame 5 940, 111.4 s;
+  step B RTX forest p50 / p99 13.008 / 33.734 ms (base 14.347 / 28.525); the lines keep their
+  standing. Section 6 (bytes across two runs): not read
+- **Gate at the tip `85bf694d`:** build exit 0; nextest gate tier in four parts 1 443 run, 1 443
+  passed (CPU 1 107, A 108, B 100, C 128; a first CPU try at load1 49.4 failed one wall-clock
+  test, passed on re-run); sole 1 of 1; doctests 10 passed; clippy, fmt, deny, doc and tier
+  scripts exit 0
 - **Outstanding `human` phases:** none are planned
 
 ## Followups
