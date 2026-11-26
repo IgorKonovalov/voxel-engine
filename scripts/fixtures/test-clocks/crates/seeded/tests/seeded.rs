@@ -48,7 +48,7 @@ fn tokens_in_strings() {
     println!("std::thread::sleep(1) and t.elapsed() < LIMIT");
 }
 
-/// Silent: a soak test, and a helper only it calls.
+/// Rule 1 in a soak test, and in a helper only it calls: no tier mark is exempt.
 #[test]
 #[ignore = "soak"]
 fn a_long_series() {
