@@ -27,20 +27,18 @@
       "note": "no tolerance: the flags are candidate 8, the owner's pick; the tolerance 0.004 (eight settled renders, 28 pairs, largest pair 0.003363, smallest wrong share 0.022832, RTX 3080 Laptop) was read for the entry's earlier flags and is void; the noise set is read again (F4); 2026-11-26"
     },
     "dig": {
-      "kind": "loop",
+      "kind": "still",
       "file": "dig.webp",
       "draft": true,
-      "width": 800,
-      "fps": 20,
-      "quality": 70,
+      "width": 1600,
+      "quality": 82,
       "source": "flythrough",
       "seed": 1,
-      "flags": ["--headless", "--settled-start", "--source", "cave", "--dig-at", "40", "--render", "1280x720", "--frames", "97"],
-      "still_at": "36..96",
+      "flags": ["--headless", "--settled-start", "--source", "cave", "--dig-at", "40", "--render", "1280x720", "--frames", "97", "--eye", "32,32,32,180,-10", "--lamp", "off"],
+      "still_at": 96,
       "tolerance": null,
-      "cap_bytes": 700000,
-      "fallback": "gif",
-      "shows": "A dig in the cave: the sphere opens, the light re-bakes (World and edits)",
+      "cap_bytes": 300000,
+      "shows": "A dug cave with its light settled, the lamp off (World and edits)",
       "candidates": [
         [],
         ["--eye", "32,32,32,90,0"],
@@ -48,7 +46,7 @@
         ["--eye", "32,32,32,180,-10", "--lamp", "off"],
         ["--eye", "32,32,32,180,-10", "--lamp", "off", "--exposure-comp", "1"]
       ],
-      "note": "candidates for the owner's pick; no noise set read, so no tolerance; 2026-11-26"
+      "note": "the flags are candidate 4, a default picked by the bar (Plan 0093 Phase 5d) for the owner to correct; a still of the loop's last frame by G3's flash read (the mean over the changed pixels is over the last frame's at frames 40..92, two renders identical); the loop for the re-shoot was kind loop, still_at 36..96, fps 20, width 800, quality 70, cap_bytes 700000, fallback gif; no noise set read, so no tolerance; 2026-11-26"
     },
     "hall": {
       "kind": "still",
@@ -150,12 +148,12 @@
       "quality": 70,
       "source": "flythrough",
       "seed": 1,
-      "flags": ["--headless", "--settled-start", "--source", "showcase", "--entities", "6", "--entities-walk", "on", "--shot", "hall", "--render", "1280x720", "--frames", "121"],
+      "flags": ["--headless", "--settled-start", "--source", "showcase", "--entities", "1", "--entities-walk", "on", "--shot", "crystals", "--render", "1280x720", "--frames", "121", "--lamp", "off", "--model", "apps/flythrough/assets/entities/spider/spider.rig", "--eye", "680,300,215,0,-65"],
       "still_at": "60..120",
       "tolerance": null,
       "cap_bytes": 700000,
       "fallback": "gif",
-      "shows": "Walkers wandering the showcase hall (Entities)",
+      "shows": "One spider wandering among the lit crystals of the showcase (Entities)",
       "candidates": [
         ["--shot", "hall"],
         ["--shot", "chasm"],
@@ -164,7 +162,7 @@
         ["--entities", "1", "--lamp", "off", "--model", "apps/flythrough/assets/entities/spider/spider.rig", "--eye", "190,384,218,0,-65"],
         ["--entities", "1", "--lamp", "off", "--model", "apps/flythrough/assets/entities/spider/spider.rig", "--shot", "crystals", "--eye", "680,300,215,0,-65"]
       ],
-      "note": "candidates for the owner's pick; no noise set read, so no tolerance; 2026-11-26"
+      "note": "the flags are candidate 6, a default picked by the bar (Plan 0093 Phase 5d) for the owner to correct; no noise set read, so no tolerance; 2026-11-26"
     },
     "spider-walk": {
       "kind": "loop",
@@ -230,7 +228,7 @@
       "still_at": 63,
       "tolerance": null,
       "cap_bytes": 300000,
-      "shows": "The castle: the gate, or the nave under its vault (Structures)",
+      "shows": "The castle's nave under its vault (Audio)",
       "candidates": [
         ["--castle-shot", "gate"],
         ["--castle-shot", "nave"],
@@ -239,7 +237,7 @@
         ["--castle-shot", "nave", "--sky", "on", "--sun", "20,120", "--lamp", "off"],
         ["--castle-shot", "nave", "--sky", "on", "--sun", "20,120", "--lamp", "on"]
       ],
-      "note": "candidates for the owner's pick; no noise set read, so no tolerance; 2026-11-26"
+      "note": "the flags are candidate 2, the owner's pick, kept by the bar (Plan 0093 Phase 5d): no sunlit candidate has sun on the nave; no noise set read, so no tolerance; 2026-11-26"
     },
     "hud": {
       "kind": "still",

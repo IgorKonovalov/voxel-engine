@@ -1581,15 +1581,15 @@ entry's set read again; a castle under the sun.
 | 2e: the noise sets, read | dev | stopped: both loops' `--filter off` reads 0, under their noise; the hero 0.004 (log) | `bceef9a9` |
 | 2f: the tolerances, the worst frame, the shoot | dev | done; readings in [the log](logs/0093.md) | `30213ffa` |
 | 3: the image gate, fragments, CI | dev | done; readings in [the log](logs/0093.md) | `5b3fdd71` |
-| 4: candidates and contact sheets | dev | done; sheets under `target/shots/candidates/`; readings in [the log](logs/0093.md) | committed with this row |
+| 4: candidates and contact sheets | dev | done; sheets under `target/shots/candidates/`; readings in [the log](logs/0093.md) | `19603a3f` |
 | 5: the owner picks | human | done 2026-11-26: seven picks, three re-shoots, no drop (F1, verbatim) | recorded by the architect |
-| 5b: the re-shoot round (dig, walkers, castle) | dev | done but walkers 4 (settled start fails near the crystals); no sun reaches the nave; the default body is the spider; page and readings in [the log](logs/0093.md) | committed with this row |
-| 5c: the owner confirms the three | human | not started | |
+| 5b: the re-shoot round (dig, walkers, castle) | dev | done but walkers 4 (settled start fails near the crystals); no sun reaches the nave; the default body is the spider; page and readings in [the log](logs/0093.md) | `383fb994` |
+| 5c: the owner confirms the three | human | replaced by 5d (G4) | |
 | 6a: main merged and the final shoot (G7) | dev | not started; waits on 5d | |
 | 6: the rewrite | dev | not started; waits on 6a and 6b | |
 | 6b: a minimal window as the second example | dev | not started; waits on 6a | |
 | 7: the README on GitHub | none | no phase (owner, 2026-11-26, G5): the orchestrator's check after the push | |
-| 5d: the three picks by the bars, the dig's flash read (replaces 5c) | dev | not started; waits on 5b | |
+| 5d: the three picks by the bars, the dig's flash read (replaces 5c) | dev | done: dig 4, walkers 6 (the spider), castle 2; the dig a still of frame 96 by G3's rule; `walkers` and `dig` `--print` differ from the legend line in `--still-at` too (log) | committed with this row |
 | 6c: the noise sets and the tolerances | dev | not started; waits on 6a | |
 | 6d: the tip | dev | not started; waits on 6 and 6c | |
 
