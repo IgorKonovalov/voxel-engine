@@ -444,7 +444,7 @@ once he says go).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: The audit and the re-read, no behaviour change | dev | in progress, checkpointed ([readings log](logs/0101.md)) | wip committed with this row |
+| 1: The audit and the re-read, no behaviour change | dev | done: 0 blocks differ in every case on all runs, both forests over the 10 % job line ([readings log](logs/0101.md)) | wip `67062697`; the readings committed with this row |
 | 2: The rule at every opening | dev | not started | |
 | 3: The readings on both adapters, the audit at the tip, and the documents | dev | not started | |
 
@@ -453,6 +453,29 @@ once he says go).
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1 (`67062697`): files outside `Files touched`: the drain text and json are in
+  `apps/flythrough/src/report/queue.rs` (no `report.rs`); the flag is wired in
+  `apps/flythrough/src/run/loading.rs` and `cli/{mod,parse}.rs`; the pooled listing half is
+  `bake/queue/lister.rs`; `svet-render/src/lib.rs` re-exports `RuleAudit`, `AuditDiffer`.
+- Phase 1 (`67062697`): the CPU test sits in `bake/queue/split_tests.rs` (the rig with a
+  device-free render half), not `queue/tests.rs`; the rig's mirror gained `lowest` and `lr`.
+- Phase 1: the rule reads `Shadow` (the bake half's copy), not `GpuWorld`, since Plan 0099; the
+  three facts were re-read against it.
+- Phase 1: the tier bits (`TIER_SHIFT`, bits 18-19 of each cell record's `VIS_WORD + 1`) are
+  masked where the job's tier is not 0; every compared block on every run counted as masked.
+- Phase 1: the first RTX forest and RENOIR forest audit runs compared 0 under `provisional`
+  (a cold pipeline build of 45.8 s and 4.2 s; the stream was final before the first opening);
+  done-when (3) is read from their re-runs, `audit-*-forest-2`, with the first runs kept in the
+  log.
+- Phase 1: `class 1` compared 0 on the RENOIR forest (both audit runs); the done-when asks for
+  `provisional` and `partial` only.
+- Phase 1: the RENOIR forest runs end at frame 5 940 before the queue is empty (in-view landing
+  at 17.2 to 17.3 s after the first world frame, then about 100 s more).
+- Phase 1: the first sitting's runs used a 16G scope and a load1 < 1.8 wait outside the lock
+  (two lanes at their start); RTX hills audit and RENOIR forest reading are labelled loaded.
+- Main moved to `9b1cd85d` (v0.77.0; Plan 0104 removed `key_at`, `key_horizon`, `key_cover`
+  record); not merged into this lane; Phase 1 uses none of them.
 
 ### Close triggers
 
