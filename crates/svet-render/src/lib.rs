@@ -35,7 +35,8 @@ pub mod test_support;
 /// tests that measure the renderer; the API it reads may change with what is measured.
 pub mod debug {
     pub use crate::bake::{
-        LightSummaries, ParentTable, Regime, STEP_STAGES, StepStages, StepTally, WRITE_KINDS,
+        HeldBase, HeldPart, LightSummaries, ParentTable, Regime, STEP_STAGES, StepStages,
+        StepTally, WRITE_KINDS,
     };
     pub use crate::gpu_util::{compute_pipelines_created, pipeline_cache_data, set_pipeline_cache};
     pub use crate::probes::ProbeRead;

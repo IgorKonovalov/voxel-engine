@@ -187,12 +187,49 @@ fn any_visibility(r: &[u32], face: usize) -> Option<f32> {
     record_visibility(r, face)
 }
 
+/// Where a held value's base came from (a reading's trace, [`HeldPart`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HeldBase {
+    /// The record of the cell this many cells above (0: the cell's own).
+    Above(i32),
+    /// The chunk summary's up visibility.
+    Summary,
+}
+
+/// One cell's held value of one direction with its parts, for a reading
+/// (`BakeQueue::trace_held`): the dug cell, the value the record holds (the mean over the
+/// cell's faces of the direction), the estimate its dig faces took, the removed surface's up
+/// visibility and where it came from, the cell's own old record's value (the cap), the
+/// openness (the mean over the picked faces), the faces the dig made and the faces it kept,
+/// and the record's words a brick ([`record_words`]).
+#[derive(Clone, Copy, Debug)]
+pub struct HeldPart {
+    pub chunk: [i32; 3],
+    pub slot: u16,
+    pub sub: u16,
+    pub face: u8,
+    pub value: f32,
+    pub estimate: f32,
+    pub up: f32,
+    pub from: HeldBase,
+    pub own: Option<f32>,
+    pub open: f32,
+    pub new_faces: u16,
+    pub old_faces: u16,
+    pub record: u32,
+}
+
 /// The held visibilities of chunk `c`'s bricks `touched` that `faces` lists, a `[f32; 6]` a
 /// cell in cell order, from the store's blocks as the edit found them (`words`), the edit
 /// boxes and the opacity about them: a direction's value is the mean over the cell's faces of
 /// that direction, a face outside every box dilated by one voxel at the cell's old record's,
 /// a face inside one at the held estimate; `None` for a cell with no removed surface's record
-/// above it and no chunk summary under a sky.
+/// above it and no chunk summary under a sky. Each dig direction's parts are pushed to
+/// `trace` where given (a reading).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the edit's inputs and a reading's trace"
+)]
 pub(crate) fn held_visibilities(
     solid: &mut Opaque<'_>,
     words: &BTreeMap<[i32; 3], Vec<u32>>,
@@ -201,6 +238,7 @@ pub(crate) fn held_visibilities(
     faces: &ChunkFaces,
     touched: &[u16],
     cell: u32,
+    mut trace: Option<&mut Vec<HeldPart>>,
 ) -> Vec<(u16, Vec<Option<[f32; 6]>>)> {
     let record = record_words(cell);
     let per = 8 / cell as i32;
@@ -223,9 +261,10 @@ pub(crate) fn held_visibilities(
                 .find_map(|k| {
                     cell_record(words, [g[0], g[1], g[2] + k], cell, record)
                         .and_then(|r| any_visibility(r, 5))
+                        .map(|v| (v, HeldBase::Above(k)))
                 })
-                .or(summary_up);
-            let Some(up) = up else {
+                .or(summary_up.map(|v| (v, HeldBase::Summary)));
+            let Some((up, from)) = up else {
                 cells.push(None);
                 continue;
             };
@@ -256,6 +295,7 @@ pub(crate) fn held_visibilities(
                         })
                 });
                 let mut sum = old.len() as f32 * own_f.unwrap_or(0.0);
+                let mut parts = None;
                 if !new.is_empty() {
                     let picks = new.len().min(HELD_FACES);
                     let open: f32 = (0..picks)
@@ -267,9 +307,30 @@ pub(crate) fn held_visibilities(
                         .sum::<f32>()
                         / picks as f32;
                     let base = own_f.map_or(up, |o| o.min(up));
-                    sum += new.len() as f32 * (base * open.sqrt()).max(HELD_FLOOR);
+                    let estimate = (base * open.sqrt()).max(HELD_FLOOR);
+                    sum += new.len() as f32 * estimate;
+                    parts = Some((estimate, open, new.len(), old.len()));
                 }
                 vis[f] = sum / list.len() as f32;
+                if let (Some(t), Some((estimate, open, n_new, n_old))) =
+                    (trace.as_deref_mut(), parts)
+                {
+                    t.push(HeldPart {
+                        chunk: c,
+                        slot: *slot,
+                        sub: sub as u16,
+                        face: f as u8,
+                        value: vis[f],
+                        estimate,
+                        up,
+                        from,
+                        own: own_f,
+                        open,
+                        new_faces: n_new as u16,
+                        old_faces: n_old as u16,
+                        record: record as u32,
+                    });
+                }
             }
             // A direction with no face of the cell takes the mean of those with one (the light
             // pass's smoothed normal reads beside directions); a cell with none, the base.
@@ -404,6 +465,7 @@ mod tests {
             &faces,
             &touched,
             8,
+            None,
         );
         let up = held_of(&held, floor)[5];
         let side = held_of(&held, wall)[1];
@@ -418,8 +480,16 @@ mod tests {
             "the ground's up {ground}"
         );
         // Under a roof one voxel above the ground, the floor holds the floor value.
-        let roofed =
-            held_visibilities(&mut dug(true), &words, &BOX, [0, 0, 0], &faces, &touched, 8);
+        let roofed = held_visibilities(
+            &mut dug(true),
+            &words,
+            &BOX,
+            [0, 0, 0],
+            &faces,
+            &touched,
+            8,
+            None,
+        );
         assert_eq!(held_of(&roofed, floor)[5], HELD_FLOOR);
         // A kept brick the box touches holds the estimate, not its old record, and its key
         // words go; the held record is not stale.
@@ -452,6 +522,7 @@ mod tests {
             &faces,
             &[floor, wall],
             8,
+            None,
         );
         let mut from = words[&[0, 0, 0]].clone();
         apply_held(&mut from, &held, BRICK_WORDS);

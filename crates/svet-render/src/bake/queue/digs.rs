@@ -1,7 +1,7 @@
 //! The queue's digs: the boxes to rebake, their opening, and the fades they start.
 
 use super::*;
-use crate::bake::held::{Opaque, apply_held, held_visibilities};
+use crate::bake::held::{HeldPart, Opaque, apply_held, held_visibilities};
 use crate::bake::job_loop::JobCtx;
 
 /// A chunk's held visibilities ([`held_visibilities`]): by touched brick, a value a cell.
@@ -97,7 +97,8 @@ impl BakeQueue {
         }
         let classes = self.classes(run.world.materials());
         let listed = self.list_dug(run, &store.words, &boxes, &dug, &classes);
-        for ((c, near), (faces, held)) in dug.into_iter().zip(listed) {
+        for ((c, near), (faces, held, trace)) in dug.into_iter().zip(listed) {
+            self.held_trace.extend(trace);
             let coord = ChunkCoord(c);
             if let Some(m) = self.prepared.remove(&c) {
                 self.prepared_bytes -= m.masks.bytes();
@@ -175,12 +176,12 @@ impl BakeQueue {
         boxes: &[[[i32; 3]; 2]],
         dug: &[([i32; 3], Vec<u16>)],
         classes: &Arc<Vec<u8>>,
-    ) -> Vec<(ChunkFaces, Held)> {
+    ) -> Vec<(ChunkFaces, Held, Vec<HeldPart>)> {
         let threads = std::thread::available_parallelism()
             .map_or(4, std::num::NonZero::get)
             .clamp(1, 16);
         let per = dug.len().div_ceil(threads).max(1);
-        let (cell, hold) = (self.settings.cell, self.dig_store_hold);
+        let (cell, hold, traced) = (self.settings.cell, self.dig_store_hold, self.trace_held);
         std::thread::scope(|scope| {
             let handles: Vec<_> = dug
                 .chunks(per)
@@ -189,16 +190,24 @@ impl BakeQueue {
                         part.iter()
                             .map(|(c, near)| {
                                 let faces = self.list(run.world, ChunkCoord(*c), classes).0;
+                                let mut trace = Vec::new();
                                 let held = if hold {
                                     let mut solid =
                                         Opaque::about(run.world, &classes[..], *c, near);
                                     held_visibilities(
-                                        &mut solid, words, boxes, *c, &faces, near, cell,
+                                        &mut solid,
+                                        words,
+                                        boxes,
+                                        *c,
+                                        &faces,
+                                        near,
+                                        cell,
+                                        traced.then_some(&mut trace),
                                     )
                                 } else {
                                     Vec::new()
                                 };
-                                (faces, held)
+                                (faces, held, trace)
                             })
                             .collect::<Vec<_>>()
                     })

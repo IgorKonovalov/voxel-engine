@@ -278,6 +278,12 @@ pub struct BakeQueue {
     /// reading's dig timeline ([`QueueRead::dig_trace`]); off by default. Lockstep reads the
     /// queue itself.
     pub trace_digs: bool,
+    /// Whether a dig's held records push their parts to [`BakeQueue::held_trace`] (a
+    /// reading); off by default. The queue's own: with the bake thread on it is not read back.
+    pub trace_held: bool,
+    /// The held values' parts of the digs taken since it was last cleared, under
+    /// [`BakeQueue::trace_held`].
+    pub held_trace: Vec<HeldPart>,
     /// The order candidates open in.
     pub order: QueueOrder,
     /// Whether the queue withdraws the jobs of chunks the camera has passed (ADR-0048): at a
@@ -658,6 +664,8 @@ impl BakeQueue {
             key_step: crate::frame::DEFAULT_KEY_STEP,
             landing_fade: false,
             dig_store_hold: true,
+            trace_held: false,
+            held_trace: Vec::new(),
             landed_word: None,
             keys: Default::default(),
             far_normal: [0.0; 2],

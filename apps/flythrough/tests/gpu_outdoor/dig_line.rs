@@ -22,7 +22,7 @@ mod dig_line {
 
         /// Where sequence B's five digs aim, voxels on the ground about the view's centre's hit;
         /// the sixth digs into the first.
-        const B_AIMS: [[f32; 2]; 5] = [[0.0, 0.0], [9.0, 0.0], [-9.0, 2.0], [2.0, 9.0], [-2.0, -9.0]];
+        pub(in super::super) const B_AIMS: [[f32; 2]; 5] = [[0.0, 0.0], [9.0, 0.0], [-9.0, 2.0], [2.0, 9.0], [-2.0, -9.0]];
 
         /// The run of [`dig_timeline`]: the frames, per dig its frame index and box, and the
         /// queue's trace after each frame's step.
@@ -279,12 +279,12 @@ mod dig_line {
         }
 
         /// Brick records by chunk and slot.
-        type RingRecords = BTreeMap<([i32; 3], usize), Vec<u32>>;
+        pub(in super::super) type RingRecords = BTreeMap<([i32; 3], usize), Vec<u32>>;
 
         /// The ring-1 records of the box `lo ..= hi` (every brick within a voxel of it) as the
         /// pool holds them now, by chunk and slot, from the blocks the frame reads
         /// (`Frame::read_store_block`: each at the place the pool's chunk table names, read back).
-        fn pool_ring(f: &svet_render::Frame, rig: &Rig, lo: [i64; 3], hi: [i64; 3]) -> RingRecords {
+        pub(in super::super) fn pool_ring(f: &svet_render::Frame, rig: &Rig, lo: [i64; 3], hi: [i64; 3]) -> RingRecords {
             let mut out = BTreeMap::new();
             let a = lo.map(|v| (v - 1).div_euclid(64) as i32);
             let b = hi.map(|v| (v + 1).div_euclid(64) as i32);
