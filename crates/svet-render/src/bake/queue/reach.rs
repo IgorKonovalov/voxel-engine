@@ -277,18 +277,17 @@ impl BakeQueue {
 
 /// What refused a candidate at its last check ([`BakeQueue::bakeable`],
 /// [`Shadow::lights_ready_near`]).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::bake) enum Blocker {
     /// A chunk of its reach waiting to upload or not resident full, or the lowest chunk that
     /// holds a column over its reach footprint from final.
     Chunk([i32; 3]),
     /// A light range near it not current.
-    #[default]
     Lights,
 }
 
 /// A candidate's blocked mark: the step that refused it and what refused it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::bake) struct Blocked {
     pub(in crate::bake) at: u64,
     pub(in crate::bake) by: Blocker,

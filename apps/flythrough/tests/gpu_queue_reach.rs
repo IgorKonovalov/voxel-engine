@@ -915,8 +915,8 @@ fn a_still_step_scans_nothing() {
 /// still mirror would read more. No step changes the order's leads (`rebuilt` 0 throughout),
 /// and the 40 still steps after score nothing. Mirroring chunk 7 adds it to the scanned cell
 /// 4 to 7, so its arrival starts that cell's walk again once: the first step that scores
-/// after it scores exactly chunks 5, 6 and 7. 7 opens, then 5 and 6 once their last check is
-/// old enough to be read again.
+/// after it scores exactly chunks 5, 6 and 7. Chunk 7's upload drops the blocked marks of 5 and
+/// 6, so the three open nearest first: 5, 6, 7.
 #[test]
 fn an_opening_without_a_mirror_event_rebuilds_nothing() {
     let Some(mut q) = row_n(
@@ -992,8 +992,9 @@ fn an_opening_without_a_mirror_event_rebuilds_nothing() {
         Some(3),
         "chunk 7's arrival scores chunks 5, 6 and 7 once"
     );
-    // 5 and 6 were found blocked at the last openings and wait out the recheck: 7 first.
-    assert_eq!(order, [2, 3, 1, 4, 0, 7, 5, 6]);
+    // Chunk 7's upload is what refused 5 and 6 (their reach walk stopped at it): their marks
+    // drop with it and the openings take the three nearest first.
+    assert_eq!(order, [2, 3, 1, 4, 0, 5, 6, 7]);
 }
 
 /// The order of a flight: the six-chunk row, the coarse pass on, the near shell 1 and the
