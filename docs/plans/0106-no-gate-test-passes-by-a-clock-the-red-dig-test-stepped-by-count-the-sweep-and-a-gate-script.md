@@ -257,7 +257,7 @@ impl Frame {
 | 7: the pre-roll stepped by count | dev | done; readings in [the log](logs/0106.md#phase-7-the-pre-roll-stepped-by-count). Taken before Phases 4 to 6; one quick tier ran beside runs 1 to 3 of the ten, not looped | committed with this row |
 | 8: the reset seed under each dig hold | dev | not started | |
 | 9: the reset seed's test under its hold | dev | not started | |
-| 10: where the source switch's 43 s went | dev | not started | |
+| 10: where the source switch's 43 s went | dev | read; readings in [the log](logs/0106.md#phase-10-where-the-source-switchs-43-s-went). The growth is the switched run's pre-roll and enters at `e1628197` (sometimes 256 to 260 chunks, 27 s, against 9 chunks before); two modes at the tip (32/9 in 7 to 8 s, or 789 chunks in 44.7 s). One `db9c170a` run over the 30 s stop at load 22 to 30, read as load. Returned to the architect, no fix made | committed with this row |
 | 11: reserved for Ruling 3's tier | dev | not started | |
 
 ### Notes
