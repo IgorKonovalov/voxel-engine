@@ -1,6 +1,6 @@
 # 0106: No gate test passes by a clock: the red dig test stepped by count, the sweep, and a gate script
 
-> **Status:** in-progress (2026-11-26): Phase 1, the fix for main's red CI, done and merged on its own. Phases 2 to 4 approved (owner, 2026-11-26), with the soak tier's sweep added as Phases 5 and 6. Phases 1 to 3 and 7 done.
+> **Status:** in-progress (2026-11-26): Phase 1, the fix for main's red CI, done and merged on its own. Phases 2 to 4 approved (owner, 2026-11-26), with the soak tier's sweep added as Phases 5 and 6. Phases 1 to 4 and 7 done.
 > **Created:** 2026-11-26
 > **Milestone:** none (harness; follows Plan 0099, `docs/roadmap.md` M9's bake thread)
 > **Related ADRs:** [ADR-0083](../adrs/0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md) (the bake thread; not changed)
@@ -251,7 +251,7 @@ impl Frame {
 | 1: the red test steps by count | dev | done; readings in [the log](logs/0106.md#phase-1-the-red-test-steps-by-count); the wall-paced reading's `ms` is taken after each frame's pad, not after the last pool read | 4c90a671, then committed with this row |
 | 2: class A, the rest | dev | done but one row; readings in [the log](logs/0106.md#phase-2-class-a-the-rest). `a_sliced_pre_roll_bakes_what_an_unsliced_one_bakes` left unchanged, a question for the architect (Notes); the source switch reads 66.5 s alone, over the 10 s line (60.6 s at its base form); `take` and `take_until` also clear `at_cap` | 8d9fe04d, then committed with this row |
 | 3: class B | dev | done; readings in [the log](logs/0106.md#phase-3-class-b). `RUN_BOUND` stays 120 s, its ten loaded runs a child and its resize moved to Phase 11 (amendment "Phase 3's two leftovers"); the stage sums on two reading-only fields, with `gpu_world/mod.rs` (the field) and `bake/stages.rs` (a doc line) outside the phase's files; `split_tests/thread/fade.rs` changed (outside the phase's files: called by a table row) | b2a1c70d, 446453ad, a06b3d2a, ee3accbd, 99da6459, 797b769d, then committed with this row |
-| 4: the gate script | dev | not started | |
+| 4: the gate script | dev | done; readings in [the log](logs/0106.md#phase-4-the-gate-script). Allow-list rows beyond the brief's list: 8 rows (12 sites) the plan classes fine or D, or D sites its tables did not name (Notes); `STOPPED_SENDS` and the HUD banner have no row (the script does not see them) | committed with this row |
 | 5: the soak tier, the reading | dev | not started | |
 | 6: the soak tier, the fixes | dev | not started | |
 | 7: the pre-roll stepped by count | dev | done; readings in [the log](logs/0106.md#phase-7-the-pre-roll-stepped-by-count). Taken before Phases 4 to 6; one quick tier ran beside runs 1 to 3 of the ten, not looped | committed with this row |
@@ -270,6 +270,8 @@ impl Frame {
 - Phase 7: "the fly-through's default golden (`gpu_golden`)" read as `primary_golden_shows_the_carve`; "the three other gate tests of `gpu_loading`" are two in the tree (the streamed load is soak-marked).
 - Phase 7: `gpu_loading.rs`'s doc comment of the pre-roll test does not name the flag (no other line of the test changed).
 - Phase 2: the soak test `a_reset_pixel_starts_from_its_record` (on `dig_run_with`, which now waits on the device each frame) fails at `with_record > 0`, at the tip and at the base form alike (one run each).
+- Phase 4: the allow-list holds rows beyond Phases 2 and 3's leftovers: `a_lap_takes_the_calls_inside_it` (class B, fine), `the_cycle_parts_sum_...` (`span`, a clock against itself), `gpu_frame.rs` `timed_device` (rule 4; the timers are the claim), and unbounded spins in `svet-audio/tests/stream.rs`, `svet-world/tests/persist.rs` and `svet-world/tests/stream.rs` (D; none in the plan's tables). No row for `STOPPED_SENDS` or the HUD banner (no token the rules read).
+- Phase 4: the script reads more than the rule text: declared modules as test code, soak-only helpers exempt, clock functions bound tree-wide, zero not a bound, `wait_bake_step` through declared modules (readings log).
 
 ### Close triggers
 
