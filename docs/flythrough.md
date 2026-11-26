@@ -470,7 +470,10 @@ does not wait for it, unless the queue traces digs), applies the held block in t
 two. Write lists apply in the order the bake thread made them, so the edit's frame applies
 every list made before the edit's with it, whatever the frame's byte cap. The teardown's
 `frames: bake thread dig wait:` lines, one while chunks in view wait for their tier and one
-after, read those frames: the wait's p50, p99 and max in ms; its parts' p50 and p99 (`rest`,
+after, read those frames: the wait's p50, p99 and max in ms; `less rest`, the p50 and p99 over
+the dig frames of each frame's wait less that frame's own `rest` (the wait here is the span
+between the send's instant and the take's return, which the parts sum to; the p50 of six
+frames is not the difference of two p50s); its parts' p50 and p99 (`rest`,
 the step in progress at the send; `pickup`, to the dig's step taking its message; `boxes`, the
 step to its edit's box taken; `step_rest`, the step's rest; `snapshot`, 0 unless the queue
 traces digs, then the books' snapshot with the dig trace; `handback`, to the render thread's

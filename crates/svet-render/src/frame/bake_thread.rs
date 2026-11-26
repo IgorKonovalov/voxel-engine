@@ -87,10 +87,20 @@ impl Frame {
     /// the send, the pick-up, the dig's step to the end of its `boxes` stage, the step's rest,
     /// the books' snapshot (0: the frame waits for the step's lists, not its books; with the
     /// dig trace when the queue traces digs, when it waits for both) and the hand-back; then the
-    /// frame's issue lap (its submits). The parts sum to the wait and the send.
+    /// frame's issue lap (its submits). The parts sum to the wait's span
+    /// ([`Frame::bake_frame_wait_span`]).
     pub fn bake_frame_wait_parts(&self) -> Option<([f64; 6], f64)> {
         let link = self.baked.thread.as_ref().filter(|l| l.waited)?;
         Some((link.parts?.ms, link.laps[1]))
+    }
+
+    /// The last live-queue frame's wait for an edit's step in ms as its parts' instants give it,
+    /// from the instant before the send to the take's return, with the bake thread on and when
+    /// that frame carried a box (a reading; the wait less its rest is this less the first part
+    /// of [`Frame::bake_frame_wait_parts`]).
+    pub fn bake_frame_wait_span(&self) -> Option<f64> {
+        let link = self.baked.thread.as_ref().filter(|l| l.waited)?;
+        Some(link.parts?.span)
     }
 
     /// The ms of each books' snapshot the running bake thread made after a step and the render

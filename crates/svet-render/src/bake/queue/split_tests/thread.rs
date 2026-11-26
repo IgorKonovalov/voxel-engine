@@ -4,8 +4,8 @@
 
 use super::*;
 use crate::bake::{
-    BakeSide, BooksHook, Hook, OUTBOX_BYTES, Op, THREAD_LIST_CAP, ThreadLink, carried_first,
-    render_frame, replay, replay_a_frame, seconds_since, stopwatch,
+    BakeSide, BooksHook, DigWaitParts, Hook, OUTBOX_BYTES, Op, StepTimes, THREAD_LIST_CAP,
+    ThreadLink, carried_first, render_frame, replay, replay_a_frame, seconds_since, stopwatch,
 };
 use std::sync::Mutex;
 use std::sync::mpsc;
@@ -921,12 +921,87 @@ fn a_dig_into_a_fading_chunk_shows_its_held_block() {
     );
 }
 
-/// Done when (1) of Plan 0099 Phase 3d, as Phase 3f restates it (its (3)). The slab drained,
-/// the step before the dig's held 50 ms by the hook, and the box sent while it is held: the
-/// edit's frame's wait by its parts (`DigWaitParts`) sums to the wait lap within 0.5 ms, the
-/// hold is in the first part (the rest of the step in progress at the send), and the `snapshot`
-/// part is 0 (the frame waits for the step's lists, not its books). With the queue tracing
-/// digs, the same edit's frame returns holding the dig's books.
+/// The clock's tick in ms: `Instant`'s resolution, a nanosecond.
+const TICK_MS: f64 = 1e-6;
+
+/// Done when (1) of Plan 0099 Phase 3g. The parts of a wait from made instants, no thread: each
+/// is the span between its two instants; a send after the thread was free reads rest 0 and the
+/// pick-up from the send; a `boxes` figure past the step's end stops at it; a traced step's
+/// books' end makes the snapshot part. In each case the parts sum to the span from the send to
+/// the take's return.
+#[test]
+fn the_waits_parts_are_the_spans_between_its_instants() {
+    use crate::bake::thread::Picked;
+    let base = stopwatch();
+    let at = |us: u64| base + std::time::Duration::from_micros(us);
+    let times = |free, took, start, boxes_ms, step_end, books_end| StepTimes {
+        picked: Picked { free, took },
+        start,
+        boxes_ms,
+        step_end,
+        books_end,
+    };
+    let near = |got: f64, want: f64| (got - want).abs() <= TICK_MS;
+    // (send, woke, times, the parts in ms, the span in ms)
+    let cases = [
+        (
+            "a step in progress at the send",
+            at(0),
+            at(20_125),
+            times(at(5_000), at(5_250), at(5_500), 2.0, at(20_000), at(20_000)),
+            [5.0, 0.25, 2.25, 12.5, 0.0, 0.125],
+            20.125,
+        ),
+        (
+            "the thread free before the send",
+            at(3_000),
+            at(10_200),
+            times(at(0), at(3_500), at(3_600), 1.0, at(10_000), at(10_000)),
+            [0.0, 0.5, 1.1, 5.4, 0.0, 0.2],
+            7.2,
+        ),
+        (
+            "a boxes figure past the step's end",
+            at(3_000),
+            at(10_200),
+            times(at(0), at(3_500), at(3_600), 50.0, at(10_000), at(10_000)),
+            [0.0, 0.5, 6.5, 0.0, 0.0, 0.2],
+            7.2,
+        ),
+        (
+            "a traced step's books",
+            at(3_000),
+            at(12_300),
+            times(at(0), at(3_500), at(3_600), 1.0, at(10_000), at(12_000)),
+            [0.0, 0.5, 1.1, 5.4, 2.0, 0.3],
+            9.3,
+        ),
+    ];
+    for (name, send, woke, t, want, span) in cases {
+        let p = DigWaitParts::of(send, woke, &t);
+        assert!(
+            p.ms.iter().zip(want).all(|(g, w)| near(*g, w)),
+            "{name}: parts {:?} against {want:?}",
+            p.ms
+        );
+        assert!(near(p.span, span), "{name}: span {} against {span}", p.span);
+        assert!(
+            near(p.sum(), p.span),
+            "{name}: the parts {:?} sum to {} against the span {}",
+            p.ms,
+            p.sum(),
+            p.span
+        );
+    }
+}
+
+/// Done when (2) of Plan 0099 Phase 3g (Phase 3d's (1) as Phase 3f restated it). The slab
+/// drained, the step before the dig's held by its hook on a gate the box's send releases (the
+/// queue's box signal reads a box sent, `BoxSignal::waits`; a guard of one second fails the
+/// test): the held step ends after the send, so the rest is over 0, and the edit's frame's wait
+/// by its parts (`DigWaitParts`) sums to the span it kept to the clock's tick. Untraced the
+/// snapshot part is 0 (the frame waits for the step's lists, not its books); with the queue
+/// tracing digs the same edit's frame returns holding the dig's books.
 #[test]
 fn the_waits_parts_sum_to_the_wait() {
     for trace in [false, true] {
@@ -937,52 +1012,56 @@ fn the_waits_parts_sum_to_the_wait() {
 /// [`the_waits_parts_sum_to_the_wait`] with the queue's dig trace off or on.
 fn waits_parts(trace: bool) {
     use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
-    const HOLD_MS: f64 = 50.0;
     let held = Arc::new(AtomicU64::new(u64::MAX));
     let h = held.clone();
-    let hook: Hook = Box::new(move |_, m| {
-        if m.frame == h.load(SeqCst) {
-            std::thread::sleep(std::time::Duration::from_secs_f64(HOLD_MS * 1e-3));
+    let hook: Hook = Box::new(move |q, m| {
+        if m.frame != h.load(SeqCst) {
+            return;
+        }
+        let signal = q
+            .box_signal
+            .as_ref()
+            .expect("the thread's queue has a box signal");
+        let t = stopwatch();
+        while !signal.waits() {
+            assert!(
+                seconds_since(t) < 1.0,
+                "the gate: no box sent within 1 s of the held step"
+            );
+            std::thread::yield_now();
         }
     });
     let mut t = ThreadRig::with_books(Some(hook), Box::new(|_| {}), |q| q.trace_digs = trace);
     drain(&mut t);
     held.store(t.rig.half.frame + 1, SeqCst);
-    let at = stopwatch();
     t.frame().expect("the held step's message goes out");
     assert!(
         within(|| t.link.peek(|m| m.is_none())),
         "the step took its message and is held"
     );
     t.carve([60, 20, 4], [67, 23, 7]);
-    let sent_after = seconds_since(at) * 1e3;
     t.frame().expect("the edit's frame returns with its list");
     let box_frame = t.rig.half.frame;
     let parts = t.link.parts.expect("the edit's frame's parts");
-    let wait = t.link.laps[5];
     assert!(t.link.waited, "the edit's frame waited");
     println!(
-        "trace {trace}: wait {wait:.3} ms, parts {:?} sum {:.3}, sent {sent_after:.3} ms into the hold, books of {} at {box_frame}",
+        "trace {trace}: span {:.6} ms, parts {:?} sum {:.6}, books of {} at {box_frame}",
+        parts.span,
         parts.ms,
         parts.sum(),
         t.link.books.frame
     );
     assert!(
-        (parts.sum() - wait).abs() < 0.5,
-        "the parts {:?} sum to {:.3} ms against the wait {wait:.3} ms",
+        parts.ms[0] > 0.0,
+        "the held step ended after the send, so the rest is over 0: {:?}",
+        parts.ms
+    );
+    assert!(
+        (parts.sum() - parts.span).abs() <= TICK_MS,
+        "the parts {:?} sum to {:.6} ms against the kept span {:.6} ms",
         parts.ms,
-        parts.sum()
-    );
-    assert!(
-        parts.ms[0] >= HOLD_MS - sent_after - 0.5 && parts.ms[0] <= HOLD_MS + 0.5,
-        "the hold's rest after the send ({:.3} ms sent at {sent_after:.3} ms) is the first part: {:?}",
-        HOLD_MS - sent_after,
-        parts.ms
-    );
-    assert!(
-        parts.ms[1..].iter().all(|p| *p < parts.ms[0]),
-        "no other part holds the hold: {:?}",
-        parts.ms
+        parts.sum(),
+        parts.span
     );
     if trace {
         assert!(

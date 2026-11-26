@@ -164,10 +164,12 @@ pub(crate) struct StepTimes {
 /// `boxes` stage, the step's rest, the books' snapshot (0 unless the queue traces digs
 /// ([`BakeQueue::trace_digs`]), when the frame waits for the dig's books and their trace), and
 /// the hand-back (from the step's return, or the snapshot's end, to the render thread holding
-/// the take).
+/// the take). `span` is the wait itself, from the send's instant to the take's return: the
+/// parts are spans between instants in order, so they sum to it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct DigWaitParts {
     pub(crate) ms: [f64; 6],
+    pub(crate) span: f64,
 }
 
 impl DigWaitParts {
@@ -189,6 +191,7 @@ impl DigWaitParts {
                 ms(t.step_end, t.books_end),
                 ms(t.books_end, woke),
             ],
+            span: ms(send, woke),
         }
     }
 

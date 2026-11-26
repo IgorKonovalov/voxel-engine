@@ -10,6 +10,9 @@ use svet_app::Gpu;
 use svet_render::wgpu;
 use svet_world::ChunkCoord;
 
+mod dig_lines;
+pub(crate) use dig_lines::{dig_call_lines, dig_wait_lines};
+
 /// Samples a step of the live queue's pre-roll draws: about one chunk's brick level at 4096, so
 /// the jobs it opens stay near the camera.
 pub(crate) const PRE_ROLL_SAMPLES: u64 = 2_000_000;
@@ -172,11 +175,12 @@ pub(crate) struct DigFrame {
     /// The bake call's ms on the render thread: lockstep's step, or the thread's frame call
     /// with its wait (`QueueStats::stages`' `total_ms`).
     pub(crate) call_ms: f64,
-    /// With the bake thread on, the wait and its parts in ms
+    /// With the bake thread on, the wait, its parts in ms
     /// ([`svet_render::Frame::bake_frame_wait_parts`]: rest, pick-up, boxes, the step's rest,
-    /// snapshot, hand-back) and the frame's issue lap; NaN in lockstep.
+    /// snapshot, hand-back), the span they sum to and the frame's issue lap; NaN in lockstep.
     pub(crate) wait: f64,
     pub(crate) parts: [f64; 6],
+    pub(crate) span: f64,
     pub(crate) issue_ms: f64,
     /// The frame's apply in ms, the bytes it applied over its cap and the submits it issued.
     pub(crate) apply_ms: f64,
@@ -193,12 +197,14 @@ impl DigFrame {
         let (parts, issue_ms) = frame
             .bake_frame_wait_parts()
             .unwrap_or(([f64::NAN; 6], f64::NAN));
+        let span = frame.bake_frame_wait_span().unwrap_or(f64::NAN);
         Self {
             thread,
             waiting,
             call_ms: st.stages.total_ms,
             wait: if thread { wait } else { f64::NAN },
             parts,
+            span,
             issue_ms,
             apply_ms,
             over,
@@ -1115,86 +1121,4 @@ fn p50_p99_max(v: impl Iterator<Item = f64>) -> [f64; 3] {
     let p50 = crate::report::percentile(&mut v, 50.0);
     let p99 = crate::report::percentile(&mut v, 99.0);
     [p50, p99, v.last().copied().unwrap_or(f64::NAN)]
-}
-
-/// The edit's frames by the queue's state (a reading, the teardown's `bake dig call:` lines):
-/// per state (while chunks in view wait for their tier, and after), the dig frames in the run's
-/// mode and their bake call's p50 / p99 / max in ms (lockstep's step, or the thread's frame
-/// call with its wait), beside the thread's wait.
-pub(crate) fn dig_call_lines(frames: &[DigFrame]) -> Vec<String> {
-    [(true, "while in view waits"), (false, "after")]
-        .iter()
-        .filter_map(|&(waiting, name)| {
-            let f: Vec<&DigFrame> = frames.iter().filter(|d| d.waiting == waiting).collect();
-            let first = f.first()?;
-            let call = p50_p99_max(f.iter().map(|d| d.call_ms));
-            let wait = p50_p99_max(f.iter().map(|d| d.wait));
-            Some(format!(
-                "bake dig call: {name}, {} dig frames ({}), call p50/p99/max {:.3}/{:.3}/{:.3} ms, wait p50/p99/max {:.3}/{:.3}/{:.3} ms",
-                f.len(),
-                if first.thread { "thread" } else { "lockstep" },
-                call[0],
-                call[1],
-                call[2],
-                wait[0],
-                wait[1],
-                wait[2],
-            ))
-        })
-        .collect()
-}
-
-/// The edit's frames with the bake thread on (a reading, the teardown's `bake thread dig wait:`
-/// lines, one per state while chunks in view wait for their tier and after): the dig frames, the
-/// wait for the dig's step p50 / p99 / max in ms and its parts' p50 / p99 (the rest of a step in
-/// progress, the pick-up, the step to its `boxes` stage's end, the step's rest, the snapshot,
-/// the hand-back), the frame's issue and apply laps' p50 / p99, the dig frames by the submits
-/// they issued (1, 2, 3 or more), and the frames that applied bytes over the frame's cap (the
-/// edit's list takes every list made before it) with those bytes' p50 and max.
-pub(crate) fn dig_wait_lines(frames: &[DigFrame]) -> Vec<String> {
-    const PARTS: [&str; 6] = [
-        "rest",
-        "pickup",
-        "boxes",
-        "step_rest",
-        "snapshot",
-        "handback",
-    ];
-    [(true, "while in view waits"), (false, "after")]
-        .iter()
-        .filter_map(|&(waiting, name)| {
-            let f: Vec<&DigFrame> = frames
-                .iter()
-                .filter(|d| d.thread && d.waiting == waiting)
-                .collect();
-            if f.is_empty() {
-                return None;
-            }
-            let wait = p50_p99_max(f.iter().map(|d| d.wait));
-            let pair = |v: [f64; 3]| format!("{:.3}/{:.3}", v[0], v[1]);
-            let parts: Vec<String> = PARTS
-                .iter()
-                .enumerate()
-                .map(|(k, n)| format!("{n} {}", pair(p50_p99_max(f.iter().map(|d| d.parts[k])))))
-                .collect();
-            let by = |lo: u64, hi: u64| f.iter().filter(|d| d.submits >= lo && d.submits <= hi).count();
-            let over = p50_p99_max(f.iter().filter(|d| d.over > 0).map(|d| d.over as f64));
-            Some(format!(
-                "bake thread dig wait: {name}, {} dig frames, wait p50 {:.3} p99 {:.3} max {:.3} ms, parts p50/p99 {} ms, issue {} apply {} ms, submits 1 {} 2 {} 3+ {}, over the cap {} frames p50 {:.0} max {:.0} bytes",
-                f.len(),
-                wait[0],
-                wait[1],
-                wait[2],
-                parts.join(" "),
-                pair(p50_p99_max(f.iter().map(|d| d.issue_ms))),
-                pair(p50_p99_max(f.iter().map(|d| d.apply_ms))),
-                by(1, 1),
-                by(2, 2),
-                by(3, u64::MAX),
-                f.iter().filter(|d| d.over > 0).count(),
-                if over[0].is_nan() { 0.0 } else { over[0] },
-                if over[2].is_nan() { 0.0 } else { over[2] },
-            ))
-        })
-        .collect()
 }
