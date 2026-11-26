@@ -56,6 +56,9 @@ pub struct OutdoorArgs {
     /// `--dig-hold on|rays|off`: what a dig shows until its re-bake lands
     /// (`Lighting::dig_hold`); unset, the renderer's default.
     pub(crate) dig_hold: Option<svet_render::DigHold>,
+    /// `--dig-estimate surface|depth`: the held record's estimate under `--dig-hold on`
+    /// (`Lighting::dig_estimate`); unset, the renderer's default.
+    pub(crate) dig_estimate: Option<svet_render::DigEstimate>,
     /// `--sky-normal face|smoothed`: the normal the baked sky term reads its visibilities by.
     pub(crate) sky_normal: svet_render::SkyNormal,
     /// `--sky-bounce B`: the baked sky term's bounce floor, 0 to 1.
@@ -329,6 +332,7 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
     flags.extend(key_face_flags());
     flags.extend(ray_lever_flags());
     flags.push(dig_hold_flag());
+    flags.push(dig_estimate_flag());
     flags.extend(ceiling_flags());
     vec![Section {
         title: "Outdoors and the sky",
@@ -367,6 +371,24 @@ fn dig_hold_flag() -> Flag<Parsing> {
         |p: &mut Parsing, v| {
             p.args.outdoor.dig_hold =
                 Some(v.named(svet_render::DigHold::from_name, "on, rays or off")?);
+            Ok(())
+        },
+    )
+}
+
+/// `--dig-estimate`: the held record's estimate under `--dig-hold on`
+/// (`Lighting::dig_estimate`).
+fn dig_estimate_flag() -> Flag<Parsing> {
+    Flag::value(
+        &["--dig-estimate"],
+        "surface|depth",
+        "the record a dig holds under --dig-hold on until its re-bake lands: surface, the \
+             surface's sky visibility times the root of a near openness, at least 0.02 of the \
+             open sky; depth, the same with no floor, so a dug face no ray of which leaves \
+             the hole holds 0 and rises to its light at the landing [surface]",
+        |p: &mut Parsing, v| {
+            p.args.outdoor.dig_estimate =
+                Some(v.named(svet_render::DigEstimate::from_name, "surface or depth")?);
             Ok(())
         },
     )

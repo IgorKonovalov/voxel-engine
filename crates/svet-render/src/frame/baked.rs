@@ -565,6 +565,7 @@ impl Frame {
             key_step: lighting.key_step,
             landing_fade: lighting.landing_fade,
             dig_store_hold: lighting.dig_hold == crate::DigHold::On,
+            dig_estimate: lighting.dig_estimate,
             // The frame's number for a first block's landing word (a pre-roll's step, which
             // draws a fixed sample count, writes 0).
             landed_word: lighting.source_fade.then(|| {

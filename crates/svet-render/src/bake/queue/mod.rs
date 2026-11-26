@@ -447,6 +447,9 @@ pub struct BakeQueue {
     /// `crate::DigHold::On`, set by the frame each step: a dig's touched bricks take held
     /// records at the edit (`bake::held`), whose visibilities fade to the job's at its landing.
     pub dig_store_hold: bool,
+    /// [`crate::Lighting::dig_estimate`], set by the frame each step: the held records'
+    /// estimate (`bake::held`).
+    pub dig_estimate: crate::DigEstimate,
     /// [`crate::Lighting::source_fade`] and the frame, set by the frame each step: `None` off
     /// (every block's [`LANDED_AT`] word 0); else the word a chunk's first block writes there,
     /// the frame plus one, or 0 for a block placed before the first frame (the pre-roll). A
@@ -664,6 +667,7 @@ impl BakeQueue {
             key_step: crate::frame::DEFAULT_KEY_STEP,
             landing_fade: false,
             dig_store_hold: true,
+            dig_estimate: crate::DigEstimate::Surface,
             trace_held: false,
             held_trace: Vec::new(),
             landed_word: None,

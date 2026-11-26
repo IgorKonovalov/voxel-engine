@@ -35,6 +35,12 @@ mod dig_depth {
         const STILL_FRAMES: usize = 24;
         /// The share of the exposure it may move over [`STILL_FRAMES`] and count as still.
         const STILL_SHARE: f32 = 0.01;
+        /// The frames stepped at each manual exposure after D+60 before its frame is read (the
+        /// check frame at D+60's exposure, then the settled frame `S` at D-1's).
+        const MANUAL_FRAMES: usize = 16;
+        /// The most the check frame's mean may differ from D+60's (display levels) for the read
+        /// to be valid.
+        const CHECK_LEVELS: f64 = 0.5;
 
         /// One read dig: its label, depth (voxels), box, the digs counted whole at its edit, the
         /// frames D-1, D+0 .. D+[`AFTER`] and D+[`SETTLED`], each frame's write (the pool's
@@ -50,6 +56,25 @@ mod dig_depth {
             frames: Vec<HoleFrame>,
             writes: Vec<String>,
             parts: Vec<(HeldPart, [Option<[f32; 2]>; 2])>,
+            /// After D+60: the check frame (D+60's exposure, manual) and `S` (D-1's, manual),
+            /// the frame the bars read against ([`Manual`]).
+            manual: Manual,
+            /// The queue at D-1: the blocks fading, and each chunk the dig's box touches with the
+            /// queue's sets that held it (lockstep: `fades` among them; thread: the books' sets).
+            fades: (u64, Vec<Touched>),
+        }
+
+        /// A chunk the dig's box touches and the queue's sets that held it at D-1.
+        type Touched = ([i32; 3], Vec<&'static str>);
+
+        /// The manual frames after D+60 and the exposure state about the switch: the adapted
+        /// level (log2) at D+60 and at `S`, and after the first frame back on auto its
+        /// `previous`, `current` and adapted level.
+        struct Manual {
+            check: HoleFrame,
+            settled: HoleFrame,
+            adapted: [f32; 2],
+            back: svet_render::ExposureState,
         }
 
         /// The eye's hold at a read dig's place: the frames stepped, whether the exposure stilled,
@@ -127,7 +152,7 @@ mod dig_depth {
             /// drain, edit growth, ring-1 stretch, the lamp's bounce on), the bake thread with
             /// `thread`; the queue drained (at most 30 000 frames) and 240 frames settled at
             /// `cam`.
-            fn new(about: Option<[i32; 3]>, cam: &Camera, thread: bool, radius: i64) -> Option<Self> {
+            fn new(about: Option<[i32; 3]>, cam: &Camera, thread: bool, radius: i64, estimate: svet_render::DigEstimate) -> Option<Self> {
                 let rig = match about {
                     Some(a) => support::terms::forest_rig_about(a)?,
                     None => support::terms::forest_rig()?.0,
@@ -149,6 +174,7 @@ mod dig_depth {
                 f.set_bake_ring1_stretch(svet_render::DEFAULT_RING1_STRETCH);
                 f.set_lighting(svet_render::Lighting {
                     lamp_bounce: p.lighting.lamp_bounce,
+                    dig_estimate: estimate,
                     ..f.lighting()
                 });
                 if thread {
@@ -173,9 +199,10 @@ mod dig_depth {
                 fl::settle(&mut me.rig, &mut me.s, cam, 240);
                 let _ = writeln!(
                     me.log,
-                    "dig depth: adapter {}, {}, radius {radius} voxels, drained after {n} frames, output {out:?} internal {internal:?}",
+                    "dig depth: adapter {}, {}, radius {radius} voxels, estimate {}, drained after {n} frames, output {out:?} internal {internal:?}",
                     me.rig.adapter,
-                    if thread { "bake thread" } else { "lockstep" }
+                    if thread { "bake thread" } else { "lockstep" },
+                    estimate.name()
                 );
                 Some(me)
             }
@@ -196,11 +223,31 @@ mod dig_depth {
                 n + tail
             }
 
-            /// The exposure the last frame's passes used (the state buffer's `previous`).
-            fn exposure(&self) -> f32 {
+            /// The exposure state buffer after the last frame.
+            fn state(&self) -> svet_render::ExposureState {
                 use svet_render::debug::read_buffer;
                 let b = read_buffer(&self.rig.device, &self.rig.queue, self.s.frame.exposure_state(), 0, 32);
-                svet_render::ExposureState::from_bytes(&b).previous
+                svet_render::ExposureState::from_bytes(&b)
+            }
+
+            /// The exposure the last frame's passes used (the state buffer's `previous`).
+            fn exposure(&self) -> f32 {
+                self.state().previous
+            }
+
+            /// Sets `Exposure::Manual(e)`, steps [`MANUAL_FRAMES`] frames at `cam` with the queue,
+            /// and returns the last one read.
+            fn manual_frame(&mut self, cam: &Camera, e: f32, label: &str) -> HoleFrame {
+                self.s.frame.set_lighting(svet_render::Lighting {
+                    exposure: svet_render::Exposure::Manual(e),
+                    ..self.s.frame.lighting()
+                });
+                for _ in 1..MANUAL_FRAMES {
+                    queue_step(&mut self.rig, &mut self.s.frame, cam);
+                    self.s.run(&self.rig, cam);
+                }
+                let q = queue_step(&mut self.rig, &mut self.s.frame, cam);
+                hole_frame(&self.rig, &mut self.s, cam, q, label.into(), self.out, true, None)
             }
 
             /// Steps at `cam` until the auto exposure is still ([`STILL_FRAMES`],
@@ -259,6 +306,22 @@ mod dig_depth {
                     let _ = writeln!(self.log, "{label}: the dig changed nothing");
                     return None;
                 };
+                // The fades as at D-1: the queue has not stepped since.
+                let fades = {
+                    use svet_world::CHUNK_EDGE;
+                    let e = i64::from(CHUNK_EDGE);
+                    let b = self.s.frame.bake_queue().expect("the live queue");
+                    let mut touched = Vec::new();
+                    for z in lo[2].div_euclid(e)..=hi[2].div_euclid(e) {
+                        for y in lo[1].div_euclid(e)..=hi[1].div_euclid(e) {
+                            for x in lo[0].div_euclid(e)..=hi[0].div_euclid(e) {
+                                let c = [x as i32, y as i32, z as i32];
+                                touched.push((c, b.tracks(svet_world::ChunkCoord(c))));
+                            }
+                        }
+                    }
+                    (q.fading, touched)
+                };
                 let pre = self.ring(lo, hi);
                 let mut held: Option<dl::RingRecords> = None;
                 let mut fresh_at = None;
@@ -300,7 +363,20 @@ mod dig_depth {
                         r[1] = record_of(&self.s.frame, p);
                     }
                 }
-                self.reads.push(DigRead { label: label.into(), depth, lo, hi, whole, hold, frames, writes, parts });
+                // The check frame at D+60's exposure, then `S` at D-1's, then auto again (the
+                // next read's hold stills it).
+                let auto = self.s.frame.lighting();
+                let a60 = self.state().adapted_log2;
+                let e60 = frames.last().expect("D+60").exposure;
+                let check = self.manual_frame(cam, e60, "check");
+                let settled = self.manual_frame(cam, frames[0].exposure, "S");
+                let a_s = self.state().adapted_log2;
+                self.s.frame.set_lighting(auto);
+                queue_step(&mut self.rig, &mut self.s.frame, cam);
+                self.s.run(&self.rig, cam);
+                let back = self.state();
+                let manual = Manual { check, settled, adapted: [a60, a_s], back };
+                self.reads.push(DigRead { label: label.into(), depth, lo, hi, whole, hold, frames, writes, parts, manual, fades });
                 Some(end)
             }
         }
@@ -405,9 +481,18 @@ mod dig_depth {
             let settled = r.frames.last().expect("the settled frame");
             let f: Vec<Figs> = r.frames.iter().map(|fr| figs(fr, settled, r.lo, r.hi, out)).collect();
             let _ = writeln!(t, "{site} {mode} {} depth {} voxels box {:?}..{:?} digs whole at the edit {}", r.label, r.depth, r.lo, r.hi, r.whole);
-            for (i, x) in f.iter().enumerate() {
+            // The frames against `S` (the bars' reference), then the check frame and `S`.
+            let m = &r.manual;
+            let fs: Vec<Figs> = r.frames.iter().map(|fr| figs(fr, &m.settled, r.lo, r.hi, out)).collect();
+            for (i, x) in fs.iter().enumerate() {
                 let _ = writeln!(t, "{}", figs_line(&r.frames[i].label, &r.writes[i], x, r.frames[i].exposure));
             }
+            let check = figs(&m.check, settled, r.lo, r.hi, out);
+            let _ = writeln!(t, "{} (against D+60)", figs_line("check", "manual", &check, m.check.exposure));
+            let sf = figs(&m.settled, &m.settled, r.lo, r.hi, out);
+            let _ = writeln!(t, "{}", figs_line("S", "manual", &sf, m.settled.exposure));
+            let bars = bars_line(r, &fs, &check, &sf, &f, site, mode);
+            let _ = writeln!(t, "{bars}");
             let s = f.last().expect("settled");
             let (pk, px) = f[1..f.len() - 1]
                 .iter()
@@ -448,7 +533,7 @@ mod dig_depth {
                 r.hold.last[1]
             );
             let _ = writeln!(t, "{line}");
-            let mut summary = line;
+            let mut summary = format!("{line}\n{bars}");
             if !r.parts.is_empty() {
                 // By face kind (floor up, wall sides, ceiling down) and base source.
                 let mut g: BTreeMap<(String, String), [f64; 10]> = BTreeMap::new();
@@ -534,6 +619,86 @@ mod dig_depth {
                 }
             }
             (t, summary)
+        }
+
+        /// The bars' line (Plan 0105, amended 2026-11-26): the frames from D+0 to the first on the
+        /// job's record against `S` (`fs`); the mean's and the p95's largest excess, over all
+        /// those frames and over those whose lighting pixels all read a record (record or stale
+        /// record, no cast); B1 (2 m and deeper: mean at most 4, p95 at most 8) or B2's first
+        /// clause (1 m: mean at most 4); B3, the lowest mean under `S`; the check frame against
+        /// D+60 (`check`, valid within [`CHECK_LEVELS`]); `S`'s mean beside D+60's; the
+        /// exposure at D-1, each window frame and D+60; the adapted level about the switch; the
+        /// fades at D-1. `f60` is the frames against D+60.
+        fn bars_line(r: &DigRead, fs: &[Figs], check: &Figs, sf: &Figs, f60: &[Figs], site: &str, mode: &str) -> String {
+            let after = fs.len() - 1; // the last is D+60
+            let land = (1..after).find(|&i| r.writes[i] == "job");
+            let end = land.unwrap_or(after - 1);
+            let win: Vec<usize> = (1..=end).collect();
+            let rec_only = |x: &Figs| x.cast == 0 && x.sources[1] + x.sources[2] == x.ln;
+            let max_of = |it: &mut dyn Iterator<Item = usize>, g: &dyn Fn(&Figs) -> f64| {
+                it.map(|i| (g(&fs[i]), i)).fold((f64::MIN, 0), |a, b| if b.0 > a.0 { b } else { a })
+            };
+            let (mx, mi) = max_of(&mut win.iter().copied(), &|x| x.excess);
+            let (px, _) = max_of(&mut win.iter().copied(), &|x| x.excess95);
+            let rec: Vec<usize> = win.iter().copied().filter(|&i| rec_only(&fs[i])).collect();
+            let (rmx, _) = max_of(&mut rec.iter().copied(), &|x| x.excess);
+            let (rpx, _) = max_of(&mut rec.iter().copied(), &|x| x.excess95);
+            let (lo, li) = win.iter().map(|&i| (fs[i].excess, i)).fold((f64::MAX, 0), |a, b| if b.0 < a.0 { b } else { a });
+            let verdict = |m: f64, p: f64| {
+                if r.depth >= 20 {
+                    format!("B1 {}", if m <= 4.0 && p <= 8.0 { "pass" } else { "MISS" })
+                } else {
+                    format!("B2 mean {}", if m <= 4.0 { "pass" } else { "MISS" })
+                }
+            };
+            let frames: Vec<String> = win
+                .iter()
+                .map(|&i| {
+                    format!(
+                        "{} {} {:+.1}/{:+.0} e {:.4e}{}",
+                        r.frames[i].label,
+                        r.writes[i],
+                        fs[i].excess,
+                        fs[i].excess95,
+                        r.frames[i].exposure,
+                        if rec_only(&fs[i]) { "" } else { " (not all record)" }
+                    )
+                })
+                .collect();
+            let peak60 = (1..after).map(|i| f60[i].excess).fold(f64::MIN, f64::max);
+            let m = &r.manual;
+            let fades: Vec<String> = r.fades.1.iter().map(|(c, s)| format!("{c:?} [{}]", s.join(" "))).collect();
+            format!(
+                "{site} {mode} {} depth {:.1} m against S: window D+0..{} ({}); mean max {mx:+.1} at {}, p95 max {px:+.0}: {}; record-only frames {} of {}: mean max {}, p95 max {}: {}; B3 lowest mean {lo:+.1} at {}; peak mean against D+60 {peak60:+.1}; check frame against D+60 {:+.2} ({}); S luma {:.1}, D+60 luma {:.1}; exposure D-1 {:.4e} S {:.4e} check {:.4e} D+60 {:.4e}; adapted log2 D+60 {:.4} S {:.4}, after the switch back previous {:.4e} current {:.4e} adapted {:.4}; fades at D-1 {}, touched chunks {}\n    frames against S (mean/p95, exposure): {}",
+                r.label,
+                r.depth as f64 / 10.0,
+                r.frames[end].label,
+                if land.is_some() { "the first frame on the job's record" } else { "NO LANDING by D+24" },
+                r.frames[mi].label,
+                verdict(mx, px),
+                rec.len(),
+                win.len(),
+                if rec.is_empty() { "-".into() } else { format!("{rmx:+.1}") },
+                if rec.is_empty() { "-".into() } else { format!("{rpx:+.0}") },
+                if rec.is_empty() { "-".into() } else { verdict(rmx, rpx) },
+                r.frames[li].label,
+                check.excess,
+                if check.excess.abs() <= CHECK_LEVELS { "valid" } else { "INVALID" },
+                sf.mean,
+                f60[after].mean,
+                r.frames[0].exposure,
+                m.settled.exposure,
+                m.check.exposure,
+                r.frames[after].exposure,
+                m.adapted[0],
+                m.adapted[1],
+                m.back.previous,
+                m.back.current,
+                m.back.adapted_log2,
+                r.fades.0,
+                fades.join(", "),
+                frames.join("; ")
+            )
         }
 
         /// The forest spawn's eye and heading (the shaft's axis), unit xy.
@@ -694,15 +859,18 @@ mod dig_depth {
         }
 
         /// Plan 0105 Phase 1: the dig's blink at depth on the forest of seed 1 at 15:00 at
-        /// the floor profile's sizes and queue. `SVET_DIG` is `SITE/MODE/RADIUS`: `down` (a
+        /// the floor profile's sizes and queue. `SVET_DIG` is `SITE/MODE/RADIUS/ARM`: `down` (a
         /// shaft one dig wide, dug looking down), `side` (the shaft's wall dug from its axis),
         /// `wide` (a pit of five digs a round), `slope` (30 degrees down) or `tunnel` (`--spawn
-        /// inside`); `lock` or `thread`; the dig's radius in voxels (5, the fly-through's). Per
+        /// inside`); `lock` or `thread`; the dig's radius in voxels (5, the fly-through's);
+        /// `Lighting::dig_estimate`, `surface` (the default) or `depth`. Per
         /// read dig the queue settled and the eye held until the auto exposure is still, then
-        /// the frames D-1 to D+24 and D+60 over the pixels whose hit lies in the dig's
-        /// box: luma and its excess over D+60, the sky source shares, the sky and key terms, the
-        /// stored and direct parts, the write the pool showed; in lockstep the held values'
-        /// parts beside the landed records. The text under
+        /// the frames D-1 to D+24 and D+60 under the auto exposure, then the check frame (manual
+        /// at D+60's exposure) and the settled frame `S` (manual at D-1's), each after
+        /// [`MANUAL_FRAMES`], over the pixels whose hit lies in the dig's box: luma and its
+        /// excess over `S` (and the peak over D+60), the sky source shares, the sky and key
+        /// terms, the stored and direct parts, the write the pool showed, the bars' line
+        /// ([`bars_line`]); in lockstep the held values' parts beside the landed records. The text under
         /// `live/p0105/<adapter>-<site>-<mode>-r<radius>.txt`.
         #[test]
         #[ignore = "reading"]
@@ -712,6 +880,8 @@ mod dig_depth {
             let mut part = |d: &str| it.next().filter(|s| !s.is_empty()).unwrap_or(d).to_string();
             let (site, mode) = (part("down"), part("lock"));
             let radius: i64 = part("5").parse().expect("SVET_DIG's radius");
+            let arm = part("surface");
+            let estimate = svet_render::DigEstimate::from_name(&arm).expect("SVET_DIG's arm: surface or depth");
             let thread = match mode.as_str() {
                 "thread" => true,
                 "lock" => false,
@@ -727,7 +897,7 @@ mod dig_depth {
                 (None, eye, h)
             };
             let start = if site == "tunnel" { look(eye, h, 0.0) } else { down(eye) };
-            let Some(mut s) = Session::new(about, &start, thread, radius) else {
+            let Some(mut s) = Session::new(about, &start, thread, radius, estimate) else {
                 return;
             };
             match site.as_str() {
@@ -749,7 +919,7 @@ mod dig_depth {
             println!("{summary}");
             let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../live/p0105");
             std::fs::create_dir_all(&dir).expect("the reading's directory");
-            std::fs::write(dir.join(format!("{}-{site}-{mode}-r{radius}.txt", s.rig.adapter.replace(' ', "_"))), text).expect("the table");
+            std::fs::write(dir.join(format!("{}-{site}-{mode}-r{radius}-{arm}.txt", s.rig.adapter.replace(' ', "_"))), text).expect("the table");
         }
     }
 }

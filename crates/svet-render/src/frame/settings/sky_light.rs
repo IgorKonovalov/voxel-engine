@@ -117,6 +117,25 @@ impl DigHold {
     }
 }
 
+/// The estimate a dig's held record takes under [`DigHold::On`] (`bake::held`, ADR-0082): a
+/// dug face's sky visibility is its base (the nearest record at or above the cell, else the
+/// chunk summary's, capped by the cell's own) times the square root of its near openness.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DigEstimate {
+    /// The value at least a floor above black (`HELD_FLOOR`), a cell with no face its base at
+    /// least the floor. The default.
+    #[default]
+    Surface,
+    /// No floor on any path: a face holds its base times the root of its openness, 0
+    /// included, and a cell with no face its base.
+    Depth,
+}
+
+named_enum!(DigEstimate {
+    Surface => "surface",
+    Depth => "depth",
+});
+
 /// Where on a cube face the key light's column horizon (`column_key_visibility`) is read
 /// (Plan 0100 Phase 1's spike, ADR-0084).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

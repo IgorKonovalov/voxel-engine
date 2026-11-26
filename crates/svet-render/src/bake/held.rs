@@ -11,10 +11,12 @@
 //! along `f` (the share of [`HELD_RINGS`] x [`HELD_AZ`] fixed cosine-weighted rays that leave
 //! [`HELD_REACH`] voxels without meeting an opaque voxel, from the empty voxel before each of up
 //! to [`HELD_FACES`] of the cell's dig faces of direction `f`, their mean; a ray that does not rise
-//! is closed, as the bake's are), at least [`HELD_FLOOR`].
+//! is closed, as the bake's are), at least [`HELD_FLOOR`] under [`DigEstimate::Surface`];
+//! under [`DigEstimate::Depth`] no value is raised to a floor, 0 included.
 
 use super::faces::{class_masks, mask_bit};
 use super::*;
+use crate::DigEstimate;
 
 /// Cells above a cell walked for the removed surface's record.
 pub(crate) const HELD_CELLS: i32 = 4;
@@ -262,8 +264,10 @@ fn radiance_source(own: Option<&[u32]>, f: usize) -> (RadianceFrom, Option<f32>)
 /// boxes and the opacity about them: a direction's value is the mean over the cell's faces of
 /// that direction, a face outside every box dilated by one voxel at the cell's old record's,
 /// a face inside one at the held estimate; `None` for a cell with no removed surface's record
-/// above it and no chunk summary under a sky. Each dig direction's parts are pushed to
-/// `trace` where given (a reading).
+/// above it and no chunk summary under a sky. `estimate` sets the floor: [`HELD_FLOOR`] under
+/// [`DigEstimate::Surface`] for a dig's face and for a cell with no face, none under
+/// [`DigEstimate::Depth`]. Each dig direction's parts are pushed to `trace` where given (a
+/// reading).
 #[allow(
     clippy::too_many_arguments,
     reason = "the edit's inputs and a reading's trace"
@@ -276,8 +280,13 @@ pub(crate) fn held_visibilities(
     faces: &ChunkFaces,
     touched: &[u16],
     cell: u32,
+    estimate: DigEstimate,
     mut trace: Option<&mut Vec<HeldPart>>,
 ) -> Vec<(u16, Vec<Option<[f32; 6]>>)> {
+    let floor = match estimate {
+        DigEstimate::Surface => HELD_FLOOR,
+        DigEstimate::Depth => 0.0,
+    };
     let record = record_words(cell);
     let per = 8 / cell as i32;
     let summary_up = words.get(&c).and_then(|b| {
@@ -345,7 +354,7 @@ pub(crate) fn held_visibilities(
                         .sum::<f32>()
                         / picks as f32;
                     let base = own_f.map_or(up, |o| o.min(up));
-                    let estimate = (base * open.sqrt()).max(HELD_FLOOR);
+                    let estimate = (base * open.sqrt()).max(floor);
                     sum += new.len() as f32 * estimate;
                     parts = Some((estimate, open, new.len(), old.len()));
                 }
@@ -377,7 +386,7 @@ pub(crate) fn held_visibilities(
             // pass's smoothed normal reads beside directions); a cell with none, the base.
             let held: Vec<f32> = vis.iter().copied().filter(|v| !v.is_nan()).collect();
             let fill = if held.is_empty() {
-                up.max(HELD_FLOOR)
+                up.max(floor)
             } else {
                 held.iter().sum::<f32>() / held.len() as f32
             };
@@ -506,6 +515,7 @@ mod tests {
             &faces,
             &touched,
             8,
+            DigEstimate::Surface,
             None,
         );
         let up = held_of(&held, floor)[5];
@@ -529,6 +539,7 @@ mod tests {
             &faces,
             &touched,
             8,
+            DigEstimate::Surface,
             None,
         );
         assert_eq!(held_of(&roofed, floor)[5], HELD_FLOOR);
@@ -551,6 +562,54 @@ mod tests {
         assert!(!record_sky_stale(r));
     }
 
+    /// Under `Depth` no floor: a floor face at the centre of a shaft 10 voxels wide (x and y in
+    /// 11..21) and 40 deep (z in 24..64, the ground's top at 64), base 0.9 (its own record and
+    /// the summary), sees every ray close inside the near reach (the inner ring runs 6.5
+    /// voxels sideways in 16, the wall is at most 5.5 away): it holds `HELD_FLOOR` under
+    /// `Surface` and exactly 0 under `Depth`, and so does every direction it fills.
+    #[test]
+    fn a_shaft_floor_holds_the_floor_under_surface_and_zero_under_depth() {
+        const SHAFT: [[[i32; 3]; 2]; 1] = [[[11, 11, 24], [20, 20, 63]]];
+        let shaft = || {
+            Opaque::from_bricks([-3, -3, -3], [10, 10, 10], |g| {
+                let mut m = [0u64; 8];
+                for z in 0..8 {
+                    for y in 0..8 {
+                        for x in 0..8 {
+                            let v = [g[0] * 8 + x, g[1] * 8 + y, g[2] * 8 + z];
+                            let hole = (11..21).contains(&v[0])
+                                && (11..21).contains(&v[1])
+                                && (24..64).contains(&v[2]);
+                            if v[2] < 64 && !hole {
+                                m[z as usize] |= 1 << (x + 8 * y);
+                            }
+                        }
+                    }
+                }
+                m
+            })
+        };
+        let words = surface(&[[2, 2, 2]]);
+        let (faces, [floor, _]) = faces();
+        let held = |estimate| {
+            held_visibilities(
+                &mut shaft(),
+                &words,
+                &SHAFT,
+                [0, 0, 0],
+                &faces,
+                &[floor],
+                8,
+                estimate,
+                None,
+            )
+        };
+        let surface = held_of(&held(DigEstimate::Surface), floor);
+        let depth = held_of(&held(DigEstimate::Depth), floor);
+        assert_eq!(surface, [HELD_FLOOR; 6], "under surface");
+        assert_eq!(depth, [0.0; 6], "under depth");
+    }
+
     #[test]
     fn the_held_record_is_replaced_by_the_jobs_at_the_landing() {
         let words = surface(&[[2, 2, 3], [0, 2, 3]]);
@@ -563,6 +622,7 @@ mod tests {
             &faces,
             &[floor, wall],
             8,
+            DigEstimate::Surface,
             None,
         );
         let mut from = words[&[0, 0, 0]].clone();

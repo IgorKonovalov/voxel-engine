@@ -1050,6 +1050,10 @@ impl Args {
                 .outdoor
                 .dig_hold
                 .unwrap_or(crate::default_lighting().dig_hold),
+            dig_estimate: self
+                .outdoor
+                .dig_estimate
+                .unwrap_or(crate::default_lighting().dig_estimate),
             penumbra: self.outdoor.penumbra.unwrap_or(crate::DEFAULT_PENUMBRA),
             key_far: self.outdoor.key_far,
             key_far_mix: self.outdoor.key_far_mix,

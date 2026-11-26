@@ -474,6 +474,7 @@ impl RenderSettings {
         ("lighting.landing_fade", Live),
         ("lighting.source_fade", Live),
         ("lighting.dig_hold", Live),
+        ("lighting.dig_estimate", Live),
         ("lighting.light_history_far", Live),
         ("lighting.far_light_wide", Live),
         ("lighting.penumbra", Live),
@@ -923,8 +924,8 @@ fn flip(b: &mut bool) {
 fn lighting_test_value(l: &mut Lighting, name: &str) -> bool {
     use crate::exposure::Exposure;
     use crate::frame::{
-        DigHold, EntityLight, HistoryKill, KeyFar, KeyFarMix, LightWeights, Penumbra, ShadowWalk,
-        SkyNormal, StoreRead, ToneMap, YoungFilter,
+        DigEstimate, DigHold, EntityLight, HistoryKill, KeyFar, KeyFarMix, LightWeights, Penumbra,
+        ShadowWalk, SkyNormal, StoreRead, ToneMap, YoungFilter,
     };
     match name {
         "exposure" => {
@@ -944,6 +945,11 @@ fn lighting_test_value(l: &mut Lighting, name: &str) -> bool {
         "landing_fade" => flip(&mut l.landing_fade),
         "source_fade" => flip(&mut l.source_fade),
         "dig_hold" => other(&mut l.dig_hold, DigHold::On, DigHold::Rays),
+        "dig_estimate" => other(
+            &mut l.dig_estimate,
+            DigEstimate::Surface,
+            DigEstimate::Depth,
+        ),
         "light_history_far" => flip(&mut l.light_history_far),
         "far_light_wide" => flip(&mut l.far_light_wide),
         "penumbra" => other(&mut l.penumbra, Penumbra::Disc, Penumbra::Approach),

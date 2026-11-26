@@ -71,6 +71,7 @@ const INERT: &[(&str, Why)] = &[
     ("lighting.source_fade", Why::Queue),
     ("lighting.column_wait", Why::Queue),
     ("lighting.dig_hold", Why::Queue),
+    ("lighting.dig_estimate", Why::Queue),
     (
         "lighting.key_cap",
         Why::Absent("a key ray past its test value's 1536 voxels: the world is 128 long"),

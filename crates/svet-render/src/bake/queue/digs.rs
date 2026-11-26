@@ -20,7 +20,8 @@ impl BakeQueue {
     /// neighbours' mean, so no dug face reads no value while its job waits; the job then fades
     /// from it. Under [`BakeQueue::dig_store_hold`] each touched brick's cells hold the held
     /// visibilities instead ([`held_visibilities`]: the removed surface's times a near openness
-    /// read against the world), which the light pass reads as a record.
+    /// read against the world, under [`BakeQueue::dig_estimate`]), which the light pass reads
+    /// as a record.
     pub(in crate::bake) fn take_boxes(
         &mut self,
         run: &BakeRun<'_>,
@@ -182,6 +183,7 @@ impl BakeQueue {
             .clamp(1, 16);
         let per = dug.len().div_ceil(threads).max(1);
         let (cell, hold, traced) = (self.settings.cell, self.dig_store_hold, self.trace_held);
+        let estimate = self.dig_estimate;
         std::thread::scope(|scope| {
             let handles: Vec<_> = dug
                 .chunks(per)
@@ -202,6 +204,7 @@ impl BakeQueue {
                                         &faces,
                                         near,
                                         cell,
+                                        estimate,
                                         traced.then_some(&mut trace),
                                     )
                                 } else {
