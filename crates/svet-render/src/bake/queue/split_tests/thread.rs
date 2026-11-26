@@ -121,27 +121,32 @@ impl ThreadRig {
         self.link.wait_step();
     }
 
-    /// One frame, then waits up to a second for the bake thread to have stepped `steps` times.
+    /// One frame, then the wait for its step ([`ThreadLink::wait_step`]): the bake thread has
+    /// stepped `steps` times.
     fn frame_stepped(&mut self, steps: u64) {
         self.frame().expect("the step runs");
-        assert!(
-            within(|| self.link.steps() >= steps),
-            "step {steps} within a second"
-        );
+        self.link.wait_step();
+        assert!(self.link.steps() >= steps, "step {steps} stepped");
     }
 
-    /// Takes the outbox with no message sent, waiting up to a second for the books of message
-    /// `frame` or a later one (the step's results already taken: none comes with them).
+    /// Takes the outbox with no message sent until it holds the books of message `frame` or a
+    /// later one (the step's results already taken: none comes with them). Each take follows
+    /// the wait for the step ([`ThreadLink::wait_step`]), which returns with the thread idle,
+    /// at the outbox's cap (the take makes room) or ended; a take that finds nothing found the
+    /// thread idle or ended, so no more books come.
     fn books_of(&mut self, frame: u64) {
-        let at = stopwatch();
-        while self.link.books.frame < frame && seconds_since(at) < 1.0 {
+        while self.link.books.frame < frame {
+            self.link.wait_step();
+            let before = self.link.snapshot_ms.len();
             let taken = self.link.take();
             assert!(taken.steps.is_empty(), "no message sent, no step");
-            std::thread::yield_now();
+            if self.link.snapshot_ms.len() == before && self.link.books.frame < frame {
+                break;
+            }
         }
         assert!(
             self.link.books.frame >= frame,
-            "the books of message {frame} within a second (hold {})",
+            "the books of message {frame} with the bake thread idle (hold {})",
             self.link.books.frame
         );
     }
@@ -172,16 +177,24 @@ fn within(pred: impl Fn() -> bool) -> bool {
     pred()
 }
 
-/// A hook that holds every step from message `from` on until the sender is dropped.
-fn hold_from(from: u64) -> (Hook, mpsc::Sender<()>) {
+/// The sends after which the "stopped" loops give up: the steps must have stopped rising (200
+/// flat sends) by then. A count, not a clock: each send waits for its step, so the loops read
+/// the same count on every run (203 sends, Plan 0106's readings log), a twentieth of this.
+const STOPPED_SENDS: usize = 4000;
+
+/// A hook that holds every step from message `from` on until the sender is dropped, telling
+/// the test on the receiver each time it holds.
+fn hold_from(from: u64) -> (Hook, mpsc::Sender<()>, mpsc::Receiver<()>) {
     let (tx, rx) = mpsc::channel::<()>();
+    let (reached_tx, reached) = mpsc::channel::<()>();
     let rx = Mutex::new(rx);
     let hook: Hook = Box::new(move |_, m| {
         if m.frame >= from {
+            let _ = reached_tx.send(());
             let _ = rx.lock().expect("one step at a time").recv();
         }
     });
-    (hook, tx)
+    (hook, tx, reached)
 }
 
 /// Done when (1) of Plan 0099 Phase 3 (Phase 3a). The bake half held by a hook from its second
@@ -189,24 +202,30 @@ fn hold_from(from: u64) -> (Hook, mpsc::Sender<()>) {
 /// holds no more than the distinct chunks the frames sent.
 #[test]
 fn the_render_side_returns_with_the_bake_side_stalled() {
-    let (hook, gate) = hold_from(2);
+    let (hook, gate, reached) = hold_from(2);
     let mut t = ThreadRig::new(Some(hook), OUTBOX_BYTES);
     t.frame_stepped(1);
     t.frame().expect("the step runs");
+    reached.recv().expect("the second step is held");
     assert!(
-        within(|| t.link.peek(|m| m.is_none())),
+        t.link.peek(|m| m.is_none()),
         "the second step took its message and is held"
     );
     // What step 1 made lands now; nothing after it while the step is held.
     t.frame().expect("the frame returns");
     let applied = t.applied.len();
-    let at = stopwatch();
+    let steps = t.link.steps();
     for f in 0..100 {
         let c = ChunkCoord([f % 2, 0, 0]);
         t.rig.mirror.changed.push(c);
         t.frame().expect("the frame returns");
     }
-    assert!(seconds_since(at) < 2.0, "100 frames within 2 s");
+    // The gate is read, not a clock: the 100 frames returned and the step is still held.
+    assert_eq!(
+        t.link.steps(),
+        steps,
+        "100 frames returned with the second step still held"
+    );
     assert_eq!(
         t.applied.len(),
         applied,
@@ -255,20 +274,22 @@ fn the_outbox_is_bounded_and_the_bake_side_waits() {
     };
     let mut last = u64::MAX;
     let mut flat = 0;
-    let at = stopwatch();
     // Each send waits for its step: with the thread idle a send makes one step, so a send that
     // makes none found the thread waiting at the cap. Flat over 200 such sends.
+    let mut sends = 0;
     while flat < 200 {
         assert!(
-            seconds_since(at) < 1.8,
-            "the steps stop rising within 1.8 s"
+            sends < STOPPED_SENDS,
+            "the steps stop rising within {STOPPED_SENDS} sends"
         );
+        sends += 1;
         send(&mut t);
         t.link.wait_step();
         let s = t.link.steps();
         flat = if s == last { flat + 1 } else { 0 };
         last = s;
     }
+    println!("flat after {sends} sends, {last} steps");
     assert!(
         t.link.outbox_bytes() <= CAP,
         "{} B over the cap",
@@ -300,18 +321,17 @@ fn dropping_the_queue_joins_the_bake_thread() {
     let hook: Hook = Box::new(move |_, _| {
         let _ = &flag;
     });
-    let at = stopwatch();
     let mut t = ThreadRig::new(Some(hook), OUTBOX_BYTES);
     for s in 1..=3 {
         t.frame_stepped(s);
     }
     t.frame().expect("a message waits or steps");
+    // The drop's return is the claim: it joined, the bake half dropped with the thread.
     drop(t);
     assert!(
         !alive.load(std::sync::atomic::Ordering::Acquire),
         "joined: the bake half dropped with the thread"
     );
-    assert!(seconds_since(at) < 1.0);
 }
 
 /// Done when (3) of Plan 0099 Phase 3 (Phase 3a), its second part. A panic on the bake thread
@@ -320,19 +340,14 @@ fn dropping_the_queue_joins_the_bake_thread() {
 #[test]
 fn a_panic_on_the_bake_thread_is_the_next_steps_error() {
     let hook: Hook = Box::new(|_, m| assert!(m.frame < 3, "a broken step"));
-    let at = stopwatch();
     let mut t = ThreadRig::new(Some(hook), OUTBOX_BYTES);
     t.frame_stepped(1);
     t.frame_stepped(2);
     t.frame().expect("message 3 goes out");
-    let mut read = None;
-    while read.is_none() && seconds_since(at) < 1.0 {
-        if let Err(e) = t.frame() {
-            read = Some(e);
-        }
-    }
+    // The wait returns once the panic ended the thread: the next frame's call is its error.
+    t.link.wait_step();
+    let read = t.frame().err();
     assert_eq!(read, Some(BakeError::Thread("a broken step".into())));
-    assert!(seconds_since(at) < 1.0);
 }
 
 /// Done when (12) of Plan 0099 Phase 3a, with the thread on. `set_bake_digs(5.0, false)`
@@ -483,7 +498,12 @@ fn first_opening(post: bool) -> Opening {
                 let before = sender.sent();
                 let ack = ack.clone();
                 let release = std::thread::spawn(move || {
+                    let at = stopwatch();
                     assert!(within(|| sender.sent() > before), "the box is sent");
+                    println!(
+                        "box sent: {:.3} ms of its 1 s guard",
+                        seconds_since(at) * 1e3
+                    );
                     ack.send(()).expect("the hook waits");
                 });
                 applied_before_box = t.applied.len();
@@ -742,20 +762,31 @@ fn a_frame_issues_one_submit_and_carries_the_rest_in_order() {
     }
 }
 
+/// The hook [`hold_armed`] makes, the frame it holds from, its gate and its word.
+type Armed = (
+    Hook,
+    Arc<std::sync::atomic::AtomicU64>,
+    mpsc::Sender<()>,
+    mpsc::Receiver<()>,
+);
+
 /// A hook that holds every step whose message's frame is `from` or later until the sender is
-/// dropped; `from` is set at run time (`u64::MAX`: none held).
-fn hold_armed() -> (Hook, Arc<std::sync::atomic::AtomicU64>, mpsc::Sender<()>) {
+/// dropped, telling the test on the receiver each time it holds; `from` is set at run time
+/// (`u64::MAX`: none held).
+fn hold_armed() -> Armed {
     use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
     let from = Arc::new(AtomicU64::new(u64::MAX));
     let (tx, rx) = mpsc::channel::<()>();
+    let (reached_tx, reached) = mpsc::channel::<()>();
     let rx = Mutex::new(rx);
     let f = from.clone();
     let hook: Hook = Box::new(move |_, m| {
         if m.frame >= f.load(SeqCst) {
+            let _ = reached_tx.send(());
             let _ = rx.lock().expect("one step at a time").recv();
         }
     });
-    (hook, from, tx)
+    (hook, from, tx, reached)
 }
 
 /// Frames until the queue's books read idle with no list waiting (at most 400).
@@ -792,7 +823,7 @@ fn block_and_table(t: &ThreadRig, from: usize, to: usize, c: [i32; 3]) -> bool {
 }
 
 /// Done when (1) of Plan 0099 Phase 3b (ADR-0083's one wait). The slab drained, then every
-/// step held by a hook: 100 frames with no box return within 2 s and apply nothing (Phase 3's
+/// step held by a hook: 100 frames with no box return while it is held and apply nothing (Phase 3's
 /// (1) beside it). A box across chunks 0 and 1 is then carved and the hook let go from a second
 /// thread 100 ms on: the box's frame returns only after that, with the results of the step that
 /// read its message taken, both chunks' held blocks and table words applied in that frame (the
@@ -800,23 +831,29 @@ fn block_and_table(t: &ThreadRig, from: usize, to: usize, c: [i32; 3]) -> bool {
 #[test]
 fn the_edits_frame_waits_for_its_list_and_no_other_frame_does() {
     use std::sync::atomic::Ordering::SeqCst;
-    let (hook, from, gate) = hold_armed();
+    let (hook, from, gate, reached) = hold_armed();
     let mut t = ThreadRig::new(Some(hook), OUTBOX_BYTES);
     drain(&mut t);
     from.store(t.rig.half.frame + 1, SeqCst);
     t.frame().expect("the held step's message goes out");
+    reached.recv().expect("the step is held");
     assert!(
-        within(|| t.link.peek(|m| m.is_none())),
+        t.link.peek(|m| m.is_none()),
         "the step took its message and is held"
     );
     t.frame().expect("the frame returns");
     let applied = t.applied.len();
-    let at = stopwatch();
+    let steps = t.link.steps();
     for f in 0..100 {
         t.rig.mirror.changed.push(ChunkCoord([f % 2, 0, 0]));
         t.frame().expect("the frame returns");
     }
-    assert!(seconds_since(at) < 2.0, "100 frames within 2 s");
+    // The gate is read, not a clock: the 100 frames returned and the step is still held.
+    assert_eq!(
+        t.link.steps(),
+        steps,
+        "100 frames returned with the step still held"
+    );
     assert_eq!(t.applied.len(), applied, "nothing applied while held");
     let (before, issued) = (t.applied.len(), t.rig.half.issued.len());
     t.carve([60, 20, 4], [67, 23, 7]);
@@ -954,10 +991,12 @@ fn waits_parts(trace: bool) {
     use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
     let held = Arc::new(AtomicU64::new(u64::MAX));
     let h = held.clone();
+    let (reached_tx, reached) = mpsc::channel::<()>();
     let hook: Hook = Box::new(move |q, m| {
         if m.frame != h.load(SeqCst) {
             return;
         }
+        let _ = reached_tx.send(());
         let signal = q
             .box_signal
             .as_ref()
@@ -970,13 +1009,18 @@ fn waits_parts(trace: bool) {
             );
             std::thread::yield_now();
         }
+        println!(
+            "box gate: {:.3} ms of its 1 s guard",
+            seconds_since(t) * 1e3
+        );
     });
     let mut t = ThreadRig::with_books(Some(hook), Box::new(|_| {}), |q| q.trace_digs = trace);
     drain(&mut t);
     held.store(t.rig.half.frame + 1, SeqCst);
     t.frame().expect("the held step's message goes out");
+    reached.recv().expect("the step is held");
     assert!(
-        within(|| t.link.peek(|m| m.is_none())),
+        t.link.peek(|m| m.is_none()),
         "the step took its message and is held"
     );
     t.carve([60, 20, 4], [67, 23, 7]);
@@ -1015,7 +1059,7 @@ fn waits_parts(trace: bool) {
 }
 
 /// Done when (2) of Plan 0099 Phase 3b. A panic in the step that takes the box is the box
-/// frame's error, returned within 2 s, not a hang. With the outbox at its cap when the box is
+/// frame's error, returned, not a hang. With the outbox at its cap when the box is
 /// sent (the render side sending and not taking until the bake side stops stepping), the box
 /// frame returns with the dig's held block and table word applied.
 #[test]
@@ -1029,9 +1073,8 @@ fn a_wait_ends_on_a_panic_and_a_full_outbox_does_not_hold_it() {
     drain(&mut t);
     from.store(t.rig.half.frame + 1, SeqCst);
     t.carve([0, 20, 4], [3, 23, 7]);
-    let at = stopwatch();
+    // The frame's return is the claim: the wait ends on the panic.
     let got = t.frame();
-    assert!(seconds_since(at) < 2.0);
     assert_eq!(
         got.err(),
         Some(BakeError::Thread("the dig's step breaks".into()))
@@ -1042,10 +1085,14 @@ fn a_wait_ends_on_a_panic_and_a_full_outbox_does_not_hold_it() {
     drain(&mut t);
     let mut last = u64::MAX;
     let mut flat = 0;
-    let at = stopwatch();
     // Each send waits for its step: a send that makes none found the thread at the cap.
+    let mut sends = 0;
     while flat < 200 {
-        assert!(seconds_since(at) < 1.8, "the steps stop within 1.8 s");
+        assert!(
+            sends < STOPPED_SENDS,
+            "the steps stop within {STOPPED_SENDS} sends"
+        );
+        sends += 1;
         let msg = t.rig.message();
         t.link.send(msg, Vec::new());
         t.link.wait_step();
@@ -1053,12 +1100,12 @@ fn a_wait_ends_on_a_panic_and_a_full_outbox_does_not_hold_it() {
         flat = if s == last { flat + 1 } else { 0 };
         last = s;
     }
+    println!("flat after {sends} sends, {last} steps");
     assert!(t.link.outbox_bytes() > CAP / 2, "the outbox is at its cap");
     let before = t.applied.len();
     t.carve([0, 20, 4], [3, 23, 7]);
-    let at = stopwatch();
+    // The frame's return is the claim: a full outbox does not hold the wait.
     t.frame().expect("the edit's frame returns");
-    assert!(seconds_since(at) < 2.0);
     assert!(
         t.link.lists_frame >= t.rig.half.frame,
         "the box's step taken"

@@ -15,17 +15,20 @@ struct Entered {
 
 /// A hook that counts every step it enters ([`Entered`]) and holds the step of message `held`
 /// (none while `u64::MAX`) until the queue's box signal reads a box sent and not taken
-/// (`BoxSignal::waits`); a guard of one second fails the test.
-fn gated() -> (Hook, Arc<AtomicU64>, Entered) {
+/// (`BoxSignal::waits`), telling the test on the receiver when it holds; a guard of one second
+/// fails the test.
+fn gated() -> (Hook, Arc<AtomicU64>, Entered, mpsc::Receiver<()>) {
     let held = Arc::new(AtomicU64::new(u64::MAX));
     let entered = Entered::default();
     let (h, e) = (held.clone(), entered.clone());
+    let (reached_tx, reached) = mpsc::channel::<()>();
     let hook: Hook = Box::new(move |q, m| {
         e.steps.fetch_add(1, SeqCst);
         e.newest.fetch_max(m.frame, SeqCst);
         if m.frame != h.load(SeqCst) {
             return;
         }
+        let _ = reached_tx.send(());
         let signal = q
             .box_signal
             .as_ref()
@@ -38,19 +41,24 @@ fn gated() -> (Hook, Arc<AtomicU64>, Entered) {
             );
             std::thread::yield_now();
         }
+        println!(
+            "box gate: {:.3} ms of its 1 s guard",
+            seconds_since(t) * 1e3
+        );
     });
-    (hook, held, entered)
+    (hook, held, entered, reached)
 }
 
-/// One frame, then waits up to a second for its message's step to have run: the message (or
-/// the one it was merged into) entered and every entered step's entries in the outbox. Frames
-/// so paced step once each, at their own frame numbers.
+/// One frame, then the wait for its message's step ([`ThreadLink::wait_step`]): the message
+/// (or the one it was merged into) entered and every entered step's entries in the outbox.
+/// Frames so paced step once each, at their own frame numbers.
 fn frame_settled(t: &mut ThreadRig, e: &Entered) {
     t.frame().expect("the frame returns");
     let frame = t.rig.half.frame;
+    t.link.wait_step();
     assert!(
-        within(|| e.newest.load(SeqCst) >= frame && t.link.steps() == e.steps.load(SeqCst)),
-        "frame {frame}'s step within a second"
+        e.newest.load(SeqCst) >= frame && t.link.steps() == e.steps.load(SeqCst),
+        "frame {frame}'s step stepped"
     );
 }
 
@@ -63,7 +71,7 @@ fn frame_settled(t: &mut ThreadRig, e: &Entered) {
 /// the dig's box being sent.
 pub(super) fn a_dig_into_a_fading_chunk_shows_its_held_block() {
     const A: [i32; 3] = [0, 0, 0];
-    let (hook, held, entered) = gated();
+    let (hook, held, entered, reached) = gated();
     let mut t = ThreadRig::new(Some(hook), OUTBOX_BYTES);
     t.pool = Some(Vec::new());
     drain(&mut t);
@@ -81,8 +89,9 @@ pub(super) fn a_dig_into_a_fading_chunk_shows_its_held_block() {
     // The next step (S) shows the fade and is held; the dig's step (D) reads the box after it.
     held.store(t.rig.half.frame + 1, SeqCst);
     t.frame().expect("the held step's message goes out");
+    reached.recv().expect("the step is held");
     assert!(
-        within(|| t.link.peek(|m| m.is_none())),
+        t.link.peek(|m| m.is_none()),
         "the step took its message and is held"
     );
     t.frame().expect("the frame returns");

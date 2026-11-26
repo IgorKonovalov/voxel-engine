@@ -386,7 +386,7 @@ pub(crate) fn panic_text(p: &(dyn std::any::Any + Send)) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bake::{seconds_since, stopwatch};
+    use crate::bake::stopwatch;
 
     struct Entry(usize);
     impl Weighed for Entry {
@@ -395,24 +395,14 @@ mod tests {
         }
     }
 
-    /// Waits up to a second for `pred`.
-    fn within(pred: impl Fn() -> bool) -> bool {
-        let t = stopwatch();
-        while seconds_since(t) < 1.0 {
-            if pred() {
-                return true;
-            }
-            std::thread::yield_now();
-        }
-        pred()
-    }
-
     /// The render thread's calls return while the step is held, and the messages sent
     /// meanwhile wait as one, merged in order.
     #[test]
     fn the_render_calls_return_while_a_step_is_held() {
         let (gate_tx, gate_rx) = std::sync::mpsc::channel::<()>();
+        let (held_tx, held_rx) = std::sync::mpsc::channel::<()>();
         let gate = Mutex::new(gate_rx);
+        let held = Mutex::new(held_tx);
         let t = BakeThread::start(
             Vec::<Vec<u32>>::new(),
             1 << 20,
@@ -421,6 +411,7 @@ mod tests {
                 a
             },
             move |seen, m, _, _| {
+                let _ = held.lock().expect("one step at a time").send(());
                 let _ = gate.lock().expect("one step at a time").recv();
                 seen.push(m);
                 vec![Entry(1)]
@@ -428,11 +419,8 @@ mod tests {
         )
         .expect("spawned");
         t.send(vec![0]);
-        assert!(
-            within(|| !t.waiting()),
-            "the step took message 0 and is held"
-        );
-        let at = stopwatch();
+        held_rx.recv().expect("the step took message 0 and is held");
+        assert!(!t.waiting(), "the step took message 0 and is held");
         for f in 1..=100 {
             t.send(vec![f]);
             assert!(
@@ -440,10 +428,15 @@ mod tests {
                 "nothing is made while the step is held"
             );
         }
-        assert!(seconds_since(at) < 0.5);
+        // The gate is read, not a clock: the calls have returned and the step is still held.
+        assert!(
+            t.steps() == 0 && t.waiting(),
+            "the 100 calls returned while step 0 is held, their messages waiting as one"
+        );
         gate_tx.send(()).expect("open");
         gate_tx.send(()).expect("open");
-        assert!(within(|| t.steps() == 2));
+        t.wait_step();
+        assert!(t.steps() == 2);
         let seen = t.stop().expect("no panic");
         assert_eq!(seen, vec![vec![0], (1..=100).collect::<Vec<_>>()]);
     }
@@ -587,7 +580,8 @@ mod tests {
         )
         .expect("spawned");
         t.send(0);
-        assert!(within(|| t.steps() == 1));
+        t.wait_step();
+        assert!(t.steps() == 1);
         t.send(0);
         drop(t);
         assert!(
@@ -607,12 +601,9 @@ mod tests {
         .expect("spawned");
         assert_eq!(t.failed(), None);
         t.send(3);
-        let at = stopwatch();
-        let mut read = None;
-        while read.is_none() && seconds_since(at) < 1.0 {
-            read = t.failed();
-            std::thread::yield_now();
-        }
+        // The wait returns once the panic ended the thread.
+        t.wait_step();
+        let read = t.failed();
         assert_eq!(read.as_deref(), Some("message 3 breaks the step"));
         assert_eq!(t.failed(), None, "read once; the thread is joined");
         assert!(t.stop().is_err());
