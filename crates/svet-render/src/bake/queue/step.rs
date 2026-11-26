@@ -80,7 +80,8 @@ impl BakeQueue {
         self.stats.stages.ms = self.laps.ms;
         self.stats.stages.render_ms = self.laps.render_ms();
         self.stats.stages.bytes = self.laps.bytes();
-        self.stats.stages.total_ms = stopwatch().duration_since(t0.at).as_secs_f64() * 1e3;
+        // The step's span ends at the apply's lap, so the stages sum to it.
+        self.stats.stages.total_ms = self.laps.at.duration_since(t0.at).as_secs_f64() * 1e3;
     }
 
     /// The bake half of [`BakeQueue::step`]: every stage but the apply.
@@ -634,7 +635,8 @@ impl BakeQueue {
             ms: self.laps.ms,
             render_ms: self.laps.render_ms(),
             bytes: self.laps.bytes(),
-            total_ms: stopwatch().duration_since(t0.at).as_secs_f64() * 1e3,
+            // The span to the last lap's own read: the stages sum to it.
+            total_ms: self.laps.at.duration_since(t0.at).as_secs_f64() * 1e3,
             opened: opened_step,
         };
     }
