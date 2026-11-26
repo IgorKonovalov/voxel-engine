@@ -1,5 +1,6 @@
 //! The queue's step: one frame's run over every stage.
 
+use super::lister::POOLED_LEVEL;
 use super::rule::zero_block;
 use super::*;
 use crate::bake::job_loop::JobCtx;
@@ -9,40 +10,119 @@ impl BakeQueue {
     /// jobs while the open ones hold less than two slices, one submit within the slice, and the
     /// fades a frame on. `None` from the submit when nothing was dispatched. `t0` is when the
     /// frame's call began: the time to here is the step's setup stage ([`StepStages`]).
+    ///
+    /// The bake half's writes go into write lists ([`ListMaker`]), which the render half
+    /// (`render`, ADR-0083) applies at the step's end, in lockstep the same frame.
+    ///
+    /// The step reads nothing of the frame but `msg` (ADR-0083): its arrivals and settings go
+    /// into the books first, then its mirror notes into the bake half's `shadow`.
     pub(crate) fn step(
         &mut self,
-        run: &BakeRun<'_>,
+        shadow: &mut Shadow,
+        world: &World,
         store: &mut Store,
-        view: &QueueView<'_>,
-        t0: Instant,
+        msg: FrameMessage,
+        half: &mut dyn RenderHalf,
     ) -> Result<QueueStats, BakeError> {
+        let FrameMessage {
+            frame,
+            start: t0,
+            view,
+            notes,
+            sky,
+            key,
+            settings,
+            arrivals,
+            landed,
+        } = msg;
+        for (c, w) in landed {
+            store.landed(c, w);
+        }
+        self.take_message(frame, settings, arrivals, world.materials());
+        shadow.take(&notes);
+        self.changes_in = notes.changed;
+        let run = &BakeRun {
+            mirror: shadow,
+            world,
+            sky,
+            key,
+        };
+        let view = &view;
         self.laps = Laps::new(t0);
         // Summary time spent outside a step (a one-shot bake, a dig's ring) is not this step's.
         store.take_summary_ms();
+        store.out = Some(ListMaker::new(half.cap(), self.frame));
+        let books = self.step_books(run, half, store, view, t0);
+        let lists = store.out.take().map(|mut m| m.finish()).unwrap_or_default();
+        self.apply_lists(half, store, lists, t0);
+        books.map(|()| self.stats)
+    }
+
+    /// The render half's apply (lockstep): the step's lists into the pool, a first block's
+    /// landing word the frame's, and the store's copy told what was written.
+    fn apply_lists(
+        &mut self,
+        half: &mut dyn RenderHalf,
+        store: &mut Store,
+        lists: Vec<WriteList>,
+        t0: StepStart,
+    ) {
+        // The landing word is the frame plus one ([`BakeQueue::landed_word`]); with the switch
+        // off or in the pre-roll no write carries a mark.
+        let frame = self
+            .landed_word
+            .filter(|w| *w != 0)
+            .map_or(0, |w| u64::from(w) - 1);
+        for (c, w) in half.apply(lists, frame) {
+            store.landed(c, w);
+        }
+        self.laps.lap(S_APPLY);
+        self.stats.stages.ms = self.laps.ms;
+        self.stats.stages.render_ms = self.laps.render_ms();
+        self.stats.stages.bytes = self.laps.bytes();
+        self.stats.stages.total_ms = stopwatch().duration_since(t0.at).as_secs_f64() * 1e3;
+    }
+
+    /// The bake half of [`BakeQueue::step`]: every stage but the apply.
+    fn step_books(
+        &mut self,
+        run: &BakeRun<'_>,
+        half: &mut dyn RenderHalf,
+        store: &mut Store,
+        view: &QueueView,
+        t0: StepStart,
+    ) -> Result<(), BakeError> {
         self.laps.lap(S_SETUP);
         let (changes, unheld) = self.follow_window(run, store, view);
         let changed = changes.as_ref().is_none_or(|c| !c.is_empty());
         // The column tops are read again this step, after the mirror's sync: the memo of the
         // last step's opening would answer the rule from before an edit (a dig to the sky).
         self.columns_lowest.clear();
-        self.relist_zeroed(run.gpu, store, changes.as_deref());
+        self.relist_zeroed(run.mirror, store, changes.as_deref());
         let world = run.world.store();
-        self.sealed
-            .prune(run.gpu.mirrored_chunks(), |c| world.contains(ChunkCoord(c)));
-        self.forget_unheld(run.gpu, changes, &unheld);
+        self.sealed.prune(run.mirror.mirrored_chunks(), |c| {
+            world.contains(ChunkCoord(c))
+        });
+        self.forget_unheld(run.mirror, changes, &unheld);
         self.catch_up(run, view, changed);
         self.laps.lap(S_TOUCHED);
-        self.take_boxes(run, store)?;
+        // An edit's writes are one list, never carried (ADR-0083).
+        if let Some(m) = store.out.as_mut() {
+            m.editing = true;
+        }
+        let boxes = self.take_boxes(run, store);
+        if let Some(m) = store.out.as_mut() {
+            m.editing = false;
+        }
+        boxes?;
         self.laps.lap(S_BOXES);
         let (cap, opened_step) = self.open_step(run, store, view)?;
-        self.lp.refresh_tables(run);
-        let bind = run.pipeline.bind();
-        run.queue
-            .write_buffer(run.params_buffer, 0, bytemuck::bytes_of(&run.params));
+        half.refresh_tables(&self.lp.open_tables());
+        half.write_params();
         self.laps.lap(S_REFRESH);
-        self.submit(run, bind, store, view, cap);
+        self.submit(run, half, store, view, cap);
         self.close_step(run, store, view, t0, opened_step);
-        Ok(self.stats)
+        Ok(())
     }
 
     /// The step's window stages: the eye's cell, the store's window, and the blocks of the chunks
@@ -53,21 +133,23 @@ impl BakeQueue {
         &mut self,
         run: &BakeRun<'_>,
         store: &mut Store,
-        view: &QueueView<'_>,
+        view: &QueueView,
     ) -> (Option<Vec<ChunkCoord>>, Vec<[i32; 3]>) {
         self.steps += 1;
+        // A job that joins the loop in this step is stamped with the newest message's frame.
+        self.lp.stamp = self.frame;
         let eye = view.eye.map(|v| (v / 64.0).floor() as i32);
         if eye != self.eye {
             self.eye_moves += 1;
         }
         self.eye = eye;
         self.retier(store, view, eye);
-        let gpu = run.gpu;
+        let gpu = run.mirror;
         self.stats.scanned = 0;
         self.stats.reach_checks = 0;
         self.stats.rebuilt = 0;
         let window = gpu.window();
-        let dropped = store.rewindow(run.queue, window);
+        let dropped = store.rewindow(window);
         self.rewindowed(dropped);
         self.laps.lap(S_REWINDOW);
         let seen = (Some(window), gpu.mirrored_chunks());
@@ -78,7 +160,8 @@ impl BakeQueue {
         // read again.
         // The list repeats a chunk once per event (queued, uploaded, dropped); everything below
         // reads each changed chunk once.
-        let changes = gpu.take_changes().map(|mut ch| {
+        // The frame's message carries the mirror's change list (`BakeQueue::changes_in`).
+        let changes = self.changes_in.take().map(|mut ch| {
             self.stats.scanned += ch.len() as u64;
             let mut seen = ChunkSet::with_capacity_and_hasher(ch.len(), Default::default());
             ch.retain(|c| seen.insert(c.0));
@@ -119,7 +202,7 @@ impl BakeQueue {
             self.quiet_until = self.steps;
         }
         for c in gone {
-            store.remove(run.queue, ChunkCoord(c));
+            store.remove(ChunkCoord(c));
             self.zeroed.remove(&c);
             self.block_count.remove(&c);
         }
@@ -130,7 +213,7 @@ impl BakeQueue {
     /// The step's forget, reach-drop and touched stages over the mirror's changes.
     fn forget_unheld(
         &mut self,
-        gpu: &GpuWorld,
+        gpu: &Shadow,
         changes: Option<Vec<ChunkCoord>>,
         unheld: &[[i32; 3]],
     ) {
@@ -211,15 +294,13 @@ impl BakeQueue {
         &mut self,
         run: &BakeRun<'_>,
         store: &mut Store,
-        view: &QueueView<'_>,
+        view: &QueueView,
     ) -> Result<(u64, bool), BakeError> {
-        let dig = !self.digs.is_empty() || !self.dig_open.is_empty();
         self.refresh_waiting(store, view, false);
         let cap = view.samples.unwrap_or_else(|| {
             let slice = self.step_slice(view.interval_s);
             self.stats.slice_ms = slice;
-            let ms = slice + if dig { self.edit_ms } else { 0.0 };
-            ((ms * 1e6 / self.stats.ns_per_sample.max(0.1)) as u64).clamp(16_384, SUBMIT_SAMPLES)
+            self.priced_cap(slice)
         });
         self.withdraw_passed(run, store, view);
         self.laps.lap(S_WITHDRAW);
@@ -228,13 +309,22 @@ impl BakeQueue {
         self.open_keys(run, store, view, cap)?;
         self.open_digs(run, store, cap)?;
         self.laps.lap(S_DIGS);
+        // With the bake thread on, what the listing pool finished is pushed every step, ahead
+        // of the gate that reads it ([`BakeQueue::take_listed`]).
+        self.take_listed(store, view.eye.map(|v| (v / 64.0).floor() as i32))?;
+        self.laps.lap(S_LIST);
+        let pooled = view.samples.is_none() && self.lists_off_the_loop();
+        let level = if pooled { POOLED_LEVEL * cap } else { 2 * cap };
         let mut opened_step = false;
-        if self.lp.samples_left() < 2 * cap && self.steps >= self.quiet_until {
+        if self.projection() < level && self.steps >= self.quiet_until {
             opened_step = true;
             self.stats.openings += 1;
-            let opened = self.lp.chunks().count();
+            let (opened, sent) = (self.lp.chunks().count(), self.listing_seq);
             self.open(run, store, view, cap)?;
-            if self.lp.chunks().count() == opened && self.lp.idle() {
+            // An opening that sent to the listing pool, or a pool that holds a candidate, is
+            // not quiet: its jobs join the loop at a later step's take.
+            let pool_busy = self.listing_seq != sent || !self.listing.is_empty();
+            if self.lp.chunks().count() == opened && self.lp.idle() && !pool_busy {
                 // Nothing was ready: the candidates are sorted again a few frames on.
                 self.quiet_until = self.steps + QUEUE_QUIET;
             }
@@ -245,43 +335,73 @@ impl BakeQueue {
         Ok((cap, opened_step))
     }
 
+    /// The submit's sample cap for `slice`: grown by [`BakeQueue::edit_ms`] while a dig waits or
+    /// its jobs are in the loop, and priced by the class of the job the submit plans first. A
+    /// ring-1 dig waiting or in a job prices it by ring 1's figure, else a dig job by the
+    /// dig's ([`DigCost::cap`]), else the general price ([`SampleCost::cap`]).
+    pub(super) fn priced_cap(&self, slice: f64) -> u64 {
+        let dig = !self.digs.is_empty() || !self.dig_open.is_empty();
+        let ms = slice + if dig { self.edit_ms } else { 0.0 };
+        let class = if self
+            .digs
+            .values()
+            .chain(self.dig_open.values())
+            .any(|d| d.near)
+        {
+            JobClass::Ring1
+        } else if !self.dig_open.is_empty() {
+            JobClass::Dig
+        } else {
+            JobClass::Other
+        };
+        self.dig_cost.cap(class, &self.cost, ms)
+    }
+
+    /// The chunks of the ring-1 dig jobs in the loop ([`BakeQueue::open_digs`]).
+    pub(super) fn ring1_chunks(&self) -> ChunkSet {
+        self.dig_open
+            .iter()
+            .filter(|(_, d)| d.near)
+            .map(|(c, _)| *c)
+            .collect()
+    }
+
     /// The step's poll, collect, place and submit stages, and the stats they read: the submits
     /// read back go to the sink, and one new submit goes out within `cap` samples.
     fn submit(
         &mut self,
         run: &BakeRun<'_>,
-        bind: &wgpu::BindGroup,
+        half: &mut dyn RenderHalf,
         store: &mut Store,
-        view: &QueueView<'_>,
+        view: &QueueView,
         cap: u64,
     ) {
         // Nothing waits on the GPU in a sliced step: the submits read back are those whose
-        // results are mapped by now, and a new one goes out while fewer than IN_FLIGHT are
-        // unread. A step without a slice (the pre-roll) waits for its oldest submit once
-        // IN_FLIGHT are out, so the CPU lists and plans while the GPU draws.
+        // results are mapped by now, and a new one goes out while fewer than the bound are
+        // unread ([`BakeQueue::in_flight_bound`]). A step without a slice (the pre-roll) waits
+        // for its oldest submit once the bound is out, so the CPU lists and plans while the GPU
+        // draws.
+        let bound = self.in_flight_bound();
         let unread = if view.samples.is_some() {
-            IN_FLIGHT - 1
+            bound - 1
         } else {
-            IN_FLIGHT
+            bound
         };
-        let _ = run.device.poll(wgpu::PollType::Poll);
+        let pooled = view.samples.is_none() && self.lists_off_the_loop();
+        half.poll();
         self.laps.lap(S_POLL);
         // The sink's own time, the blocks' placement, taken out of the collect's and the
         // submit's laps.
         let place_ms = std::cell::Cell::new(0.0f64);
+        // Of it, the `wgpu` calls' (the store's writes).
+        let place_render = std::cell::Cell::new(0.0f64);
         let ruled = std::mem::take(&mut self.ruled);
         // The ring-1 dig jobs ([`BakeQueue::open_digs`]): opened into the slots the read back
         // frees, and planned ahead of every other job.
-        let ring1: ChunkSet = self
-            .dig_open
-            .iter()
-            .filter(|(_, d)| d.near)
-            .map(|(c, _)| *c)
-            .collect();
+        let ring1 = self.ring1_chunks();
         let (cell, clamp) = (self.settings.cell, self.settings.clamp);
         let mut placement = Placement {
-            gpu: run.gpu,
-            queue: run.queue,
+            gpu: run.mirror,
             stale: &mut self.stale,
             fades: &mut self.fades,
             stats: &mut self.stats,
@@ -301,25 +421,30 @@ impl BakeQueue {
             ages_first: &mut self.ages_first,
             ages_full: &mut self.ages_full,
             steps: self.steps,
+            frame: self.frame,
             record: record_words(self.settings.cell),
             landing_fade: self.landing_fade,
             dig_store_hold: self.dig_store_hold,
             landed_word: self.landed_word,
         };
-        let mut sink = |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>| {
-            let t = stopwatch();
-            placement.place(store, coord, first, block);
-            place_ms.set(place_ms.get() + seconds_since(t) * 1e3);
-        };
+        let mut sink =
+            |store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>, stamp| {
+                let (t, c) = (stopwatch(), calls().ms);
+                placement.place(store, coord, first, block, stamp);
+                place_ms.set(place_ms.get() + seconds_since(t) * 1e3);
+                place_render.set(place_render.get() + calls().ms - c);
+            };
         // The rule's zero records land through the same placement as a job's block.
         let sky = run.sky & BAKE_SKY_ON != 0;
         let key = run.key.map(|(d, _)| d);
+        let now = self.lp.stamp;
         for (coord, first, faces, tier) in ruled {
             sink(
                 store,
                 coord,
                 first,
                 zero_block(coord, &faces, cell, clamp, sky, key, tier),
+                now,
             );
         }
         let settings = BakeSettings {
@@ -332,17 +457,18 @@ impl BakeQueue {
         };
         let mut d = self
             .lp
-            .collect(run, store, &settings, &mut sink, &mut |_| {}, IN_FLIGHT);
-        // Each lap's placement moves from its stage to the placement's.
-        let mut placed = 0.0;
+            .collect(run, half, store, &settings, &mut sink, &mut |_| {}, bound);
+        // Each lap's placement moves from its stage to the placement's, its `wgpu` calls with
+        // it.
+        let (mut placed, mut placed_render) = (0.0, 0.0);
         let mut lap = |laps: &mut Laps, stage: usize| {
             laps.lap(stage);
             let p = place_ms.get() - placed;
+            let r = place_render.get() - placed_render;
             placed = place_ms.get();
+            placed_render = place_render.get();
             // The placement ran inside the lap; the clamp only absorbs rounding.
-            let p = p.min(laps.ms[stage]);
-            laps.ms[stage] -= p;
-            laps.ms[S_PLACE] += p;
+            laps.shift(stage, S_PLACE, p, r);
         };
         lap(&mut self.laps, S_COLLECT);
         if !ring1.is_empty() {
@@ -362,6 +488,7 @@ impl BakeQueue {
                     break;
                 };
                 let job = self.lp.pending.remove(k).expect("found above");
+                self.lp.new_tables.push((slot, job.coord));
                 self.lp.open.push(ctx.open(job, slot));
             }
             self.lp.promote(|c| ring1.contains(&c.0));
@@ -370,46 +497,81 @@ impl BakeQueue {
             // its block to the sink, as a pending job with nothing to draw ends at its opening.
             self.lp.close_ended(run, store, &settings, &mut sink);
         }
-        let room = self.lp.in_flight() < IN_FLIGHT;
+        let (cap, stretched) = ring1_cap(&self.lp, self.ring1_stretch, cap, &ring1);
+        // The projection the draw meets ([`BakeQueue::projection`]), for the pooled opening's
+        // reading.
+        let projected = pooled.then(|| {
+            self.lp.samples_left() + super::lister::estimate_of(&self.listing, &self.fill)
+        });
+        let room = self.lp.in_flight() < bound;
         let in_flight_full = !room && !self.lp.idle();
         let sent = room
             && self
                 .lp
-                .dispatch(run, bind, store, &settings, cap, &mut sink, &mut |_| {});
+                .dispatch(run, half, store, &settings, cap, &mut sink, &mut |_| {});
         lap(&mut self.laps, S_SUBMIT);
         let submitted = if sent { self.lp.last_samples } else { 0 };
-        if unread < IN_FLIGHT {
+        if unread < bound {
             // With nothing left to send, the pre-roll waits out what is in flight.
             let left = if sent { unread } else { 0 };
             let w = self
                 .lp
-                .collect(run, store, &settings, &mut sink, &mut |_| {}, left);
-            d.samples += w.samples;
-            d.seconds += w.seconds;
-            if let Some(ms) = w.gpu_ms {
-                *d.gpu_ms.get_or_insert(0.0) += ms;
-            }
-            d.class_samples = [0, 1].map(|k| d.class_samples[k] + w.class_samples[k]);
-            d.class_ms = [0, 1].map(|k| d.class_ms[k] + w.class_ms[k]);
+                .collect(run, half, store, &settings, &mut sink, &mut |_| {}, left);
+            d.add(&w);
             lap(&mut self.laps, S_COLLECT);
         }
+        self.read_stats(&d, cap, submitted, in_flight_full);
+        self.stats.submits = u64::from(sent);
+        // A step that sent nothing with a submit slot free: out of rounds, every table slot
+        // held, or nothing to do.
+        self.stats.idle_steps += u64::from(!sent && !in_flight_full);
+        self.stats.open_at_draw = if sent { self.lp.open_jobs() as u64 } else { 0 };
+        self.stats.stretched = stretched;
+        self.stats.projected = projected
+            .filter(|_| sent)
+            .map_or(0.0, |p| p as f64 / cap.max(1) as f64);
+    }
+
+    /// The submit stage's stats, and the price of a submit fed with what was read back: the
+    /// samples drawn, kept or not, against the dispatches' time.
+    pub(super) fn read_stats(
+        &mut self,
+        d: &SubmitDone,
+        cap: u64,
+        submitted: u64,
+        in_flight_full: bool,
+    ) {
         // The slice is sized by the GPU's own time for the submits read back, a frame or two
         // late; without timestamps it stays at the first guess, a fixed count.
         self.stats.cap = cap;
         self.stats.submitted = submitted;
         self.stats.plan_stops = self.lp.plan_stops;
+        self.stats.slotless_stops = self.lp.slotless_stops;
+        self.stats.steps = self.steps;
+        self.stats.read_back = [self.lp.report.samples, self.lp.report.wasted];
         self.stats.in_flight_full += u64::from(in_flight_full);
         self.stats.samples = d.samples;
         self.stats.ms = d.gpu_ms.unwrap_or(d.seconds * 1e3);
+        self.stats.read_submits = d.timed;
         self.stats.total_samples += d.samples;
         let st = &mut self.stats;
         st.class_samples = [0, 1].map(|k| st.class_samples[k] + d.class_samples[k]);
         st.class_ms = [0, 1].map(|k| st.class_ms[k] + d.class_ms[k]);
+        self.stats.drawn = d.drawn;
+        self.stats.ray_len = if d.rays > 0 {
+            d.ray_len / d.rays as f64
+        } else {
+            0.0
+        };
         if let Some(ms) = d.gpu_ms
-            && d.samples >= 4096
+            && d.drawn >= 4096
         {
-            let ns = ms * 1e6 / d.samples as f64;
-            self.stats.ns_per_sample = 0.8 * self.stats.ns_per_sample + 0.2 * ns;
+            self.cost.read(d.timed, d.drawn, ms);
+            self.dig_cost.read(d.drawn, d.dig_drawn, ms);
+            self.stats.ns_per_sample = self.cost.mean_ns;
+            (self.stats.fixed_ms, self.stats.cost_ns) = self.cost.price();
+            self.stats.ring1_ns = self.dig_cost.ring1_ns.unwrap_or(0.0);
+            self.stats.dig_ns = self.dig_cost.dig_ns.unwrap_or(0.0);
         }
     }
 
@@ -419,8 +581,8 @@ impl BakeQueue {
         &mut self,
         run: &BakeRun<'_>,
         store: &mut Store,
-        view: &QueueView<'_>,
-        t0: Instant,
+        view: &QueueView,
+        t0: StepStart,
         opened_step: bool,
     ) {
         let record = record_words(self.settings.cell);
@@ -440,8 +602,8 @@ impl BakeQueue {
                 self.stats.passed_samples += drawn;
             }
         }
-        self.advance_fades(run.queue, store, record);
-        self.land_waiting(run.gpu, store);
+        self.advance_fades(store, record);
+        self.land_waiting(run.mirror, store);
         if self.stats.rule_missed.landed_at.is_none() {
             if !self.view_waiting.is_empty() {
                 self.waiting_armed = true;
@@ -460,16 +622,19 @@ impl BakeQueue {
         self.laps.lap(S_FADES);
         // The summaries' and parents' time ran inside the placement, the fades, the evictions
         // and the window's move: it moves to its own stage, from those in that order.
-        let mut summaries = store.take_summary_ms();
+        let (mut summaries, mut summaries_render) = store.take_summary_ms();
         for stage in [S_PLACE, S_FADES, S_GONE, S_REWINDOW] {
-            let p = summaries.min(self.laps.ms[stage]);
-            self.laps.ms[stage] -= p;
-            self.laps.ms[S_SUMMARIES] += p;
-            summaries -= p;
+            let (m, r) = self
+                .laps
+                .shift(stage, S_SUMMARIES, summaries, summaries_render);
+            summaries -= m;
+            summaries_render -= r;
         }
         self.stats.stages = StepStages {
             ms: self.laps.ms,
-            total_ms: stopwatch().duration_since(t0).as_secs_f64() * 1e3,
+            render_ms: self.laps.render_ms(),
+            bytes: self.laps.bytes(),
+            total_ms: stopwatch().duration_since(t0.at).as_secs_f64() * 1e3,
             opened: opened_step,
         };
     }
@@ -478,9 +643,9 @@ impl BakeQueue {
 /// What the step's sink writes of the queue while the job loop is borrowed: a read-back block's
 /// placement in the store, its fade, and the queue's books on its chunk.
 struct Placement<'a> {
-    gpu: &'a GpuWorld,
-    queue: &'a wgpu::Queue,
-    stale: &'a mut std::collections::HashSet<[i32; 3]>,
+    gpu: &'a Shadow,
+    /// [`BakeQueue::stale`].
+    stale: &'a mut std::collections::HashMap<[i32; 3], u64>,
     fades: &'a mut BTreeMap<[i32; 3], Fade>,
     stats: &'a mut QueueStats,
     job_coarse: &'a mut std::collections::HashMap<[i32; 3], bool>,
@@ -500,6 +665,8 @@ struct Placement<'a> {
     ages_first: &'a mut Vec<u32>,
     ages_full: &'a mut Vec<u32>,
     steps: u64,
+    /// [`BakeQueue::frame`]: a fade's start on its clock.
+    frame: u64,
     record: usize,
     /// [`BakeQueue::landing_fade`].
     landing_fade: bool,
@@ -511,9 +678,22 @@ struct Placement<'a> {
 }
 
 impl Placement<'_> {
+    /// Whether a first block's landing word is the apply frame's: the switch on and not the
+    /// pre-roll (whose word is 0).
+    fn marks_landing(&self) -> bool {
+        self.landed_word.is_some_and(|w| w != 0)
+    }
+
     /// Places chunk `coord`'s block read back at `first`, or releases it when the chunk went
-    /// stale or left the mirror.
-    fn place(&mut self, store: &mut Store, coord: ChunkCoord, first: u64, block: Vec<u32>) {
+    /// stale after its job's `stamp` (a change in a later frame message) or left the mirror.
+    fn place(
+        &mut self,
+        store: &mut Store,
+        coord: ChunkCoord,
+        first: u64,
+        block: Vec<u32>,
+        stamp: u64,
+    ) {
         let coarse = self.job_coarse.remove(&coord.0).unwrap_or(false);
         let count = self.job_count.remove(&coord.0);
         self.job_eye.remove(&coord.0);
@@ -521,7 +701,8 @@ impl Placement<'_> {
         let from_provisional = self.job_provisional.remove(&coord.0);
         let dug = self.dig_open.remove(&coord.0);
         let keyed = self.keys_open.remove(&coord.0);
-        if self.stale.remove(&coord.0) || !self.gpu.is_mirrored(coord) {
+        let stale = self.stale.remove(&coord.0).is_some_and(|at| at > stamp);
+        if stale || !self.gpu.is_mirrored(coord) {
             store.release(first, block.len() as u64);
             // The pool reads its candidacy again: a job opened and ended between two of its
             // reads is in neither job set it compares, and a chunk with no block is a
@@ -612,7 +793,7 @@ impl Placement<'_> {
                 self.stats.landings[LANDED_UNFADED] += 1;
                 store.release(f, from.len() as u64);
                 self.fades.remove(&coord.0);
-                store.put(self.queue, coord, first, block);
+                store.put(coord, first, block);
             }
             None => match store.light.chain(coord.0, store.missing) {
                 // A first block under a fallback mode fades from the chain's value, read
@@ -621,22 +802,32 @@ impl Placement<'_> {
                     self.stats.landings[LANDED_FALLBACK] += 1;
                     let mut from = fallback_block(&block, &chain, self.record, self.landing_fade);
                     count_landing(&mut self.stats.landing_cells, &from, &block, self.record);
-                    store.put(self.queue, coord, first, block);
-                    store.show(self.queue, coord, first, &mut from);
+                    // The block and what it shows land in one frame, their landing word that
+                    // frame's.
+                    store.begin_unit();
+                    store.mark_landing = self.marks_landing();
+                    store.put(coord, first, block);
+                    store.show(coord, first, &mut from);
+                    store.mark_landing = false;
+                    store.end_unit();
                     self.fades.insert(
                         coord.0,
                         Fade {
                             first,
                             from,
+                            start: self.frame,
                             frame: 0,
                             frames: FADE,
                             vis: self.landing_fade,
+                            dig: false,
                         },
                     );
                 }
                 None => {
                     self.stats.landings[LANDED_BARE] += 1;
-                    store.put(self.queue, coord, first, block);
+                    store.mark_landing = self.marks_landing();
+                    store.put(coord, first, block);
+                    store.mark_landing = false;
                 }
             },
         }
@@ -673,16 +864,20 @@ impl Placement<'_> {
         self.stats.landings[LANDED_REFADED] += 1;
         count_landing(&mut self.stats.landing_cells, &from, &block, self.record);
         store.release(first, block.len() as u64);
-        store.put(self.queue, coord, f, block);
-        store.show(self.queue, coord, f, &mut from);
+        store.begin_unit();
+        store.put(coord, f, block);
+        store.show(coord, f, &mut from);
+        store.end_unit();
         self.fades.insert(
             coord.0,
             Fade {
                 first: f,
                 from,
+                start: self.frame,
                 frame: 0,
                 frames: if dug { DIG_FADE } else { FADE },
                 vis: self.landing_fade || (dug && self.dig_store_hold),
+                dig: dug,
             },
         );
     }
@@ -693,6 +888,24 @@ impl Placement<'_> {
 /// held one (a refinement, a key re-bake, a dig), else `word` (a first block over the
 /// missing-light chain or a bare one: the frame plus one, 0 in the pre-roll); 0 with the switch
 /// off.
+/// The submit's cap with the step's ring-1 dig jobs (`ring1`) open and ahead in `lp`: the
+/// samples those open jobs have left to plan where they are over `cap` and at most `stretch`
+/// ([`BakeQueue::ring1_stretch`]) times it, so ring 1 is planned whole and no other job takes a
+/// round; else `cap`. True where it stretched.
+pub(super) fn ring1_cap(lp: &JobLoop, stretch: f64, cap: u64, ring1: &ChunkSet) -> (u64, bool) {
+    if ring1.is_empty() {
+        return (cap, false);
+    }
+    let left = lp.open_samples_left(|c| ring1.contains(c));
+    let stretch = stretch.clamp(*RING1_STRETCH_RANGE.start(), *RING1_STRETCH_RANGE.end());
+    let bound = (cap as f64 * stretch).floor() as u64;
+    if left > cap && left <= bound {
+        (left, true)
+    } else {
+        (cap, false)
+    }
+}
+
 pub(super) fn landed_word(old: Option<&[u32]>, word: Option<u32>) -> u32 {
     let Some(w) = word else {
         return 0;

@@ -19,6 +19,7 @@ use crate::{
 use svet_world::ChunkCoord;
 
 mod apply;
+mod bake_thread;
 mod baked;
 mod compose;
 mod dispatch;
@@ -323,11 +324,11 @@ impl Frame {
     /// A store holding a piece also keeps the box for [`Frame::rebake_digs`]; under the live
     /// queue the box goes to the queue instead, which re-bakes its rings over its slices.
     pub fn invalidate(&mut self, min: [i32; 3], max: [i32; 3]) {
-        if self.baked.store.piece().is_some() && self.baked.queue.is_none() {
+        if self.baked.store.piece().is_some() && !self.queue_running() {
             self.baked.dig_boxes.push([min, max]);
         }
-        if let Some(q) = self.baked.queue.as_mut() {
-            q.invalidate(min, max);
+        if self.queue_running() {
+            self.baked.inbox.push_box(min, max);
         }
         let h = self.history();
         if h.edits.len() == MAX_EDITS {
@@ -721,8 +722,8 @@ impl Frame {
             + self.exposure.bytes()
             + self.sky.bytes()
             + self.up.fsr.as_ref().map_or(0, Fsr2::bytes)
-            + if self.baked.store.pool().size() > crate::bake::MINIMAL_POOL_BYTES {
-                self.baked.store.pool().size()
+            + if self.baked.store.capacity() > crate::bake::MINIMAL_POOL_BYTES {
+                self.baked.store.capacity()
             } else {
                 0
             }

@@ -54,7 +54,8 @@ pub struct Q {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub gpu: GpuWorld,
-    pub world: World,
+    /// Shared, so a rig can hand it to the bake thread (`Frame::share_bake_world`).
+    pub world: std::sync::Arc<World>,
     pub frame: Frame,
     pub cfg: MirrorConfig,
     pub camera: Camera,
@@ -157,16 +158,16 @@ pub fn rig(world: World, setup: &Setup) -> Option<Q> {
     if setup.slice_ms < SMALLEST_SLICE_MS {
         // The smallest slice holds jobs in the loop over several steps; the drain value would
         // replace it while chunks in view wait (ADR-0080 rule 3), so such a rig runs without one.
-        frame.bake_queue_mut().expect("the queue started").drain = None;
+        frame.set_bake_queue(|q| q.drain = None);
     }
     if let Some(order) = setup.order {
-        frame.bake_queue_mut().expect("the queue started").order = order;
+        frame.set_bake_queue(move |q| q.order = order);
     }
     Some(Q {
         device,
         queue,
         gpu,
-        world,
+        world: std::sync::Arc::new(world),
         frame,
         cfg,
         camera: camera_at(setup.eye),
@@ -193,14 +194,10 @@ impl Q {
                 .sync_now(&self.world, &self.device, &self.queue)
                 .expect("the mirror fits");
         }
-        let resident = self.resident;
-        let resident_fn = move |c: ChunkCoord| resident.is_some_and(|f| f(c));
         let view = QueueView {
             eye,
             forward: self.camera.basis().0.to_array(),
-            resident: resident
-                .is_some()
-                .then_some(&resident_fn as &dyn Fn(ChunkCoord) -> bool),
+            resident: self.resident.map(svet_render::Residency::of_rule),
             samples: self.samples,
             // A fixed 60 Hz frame: a per-second budget sizes the slice repeatably.
             interval_s: 1.0 / 60.0,
@@ -240,7 +237,7 @@ impl Q {
         self.step_with(true)
     }
 
-    pub fn q(&self) -> &svet_render::BakeQueue {
+    pub fn q(&self) -> svet_render::QueueRead<'_> {
         self.frame.bake_queue().expect("the queue started")
     }
 
@@ -417,7 +414,7 @@ impl Q {
         let used = store.stats(0, 0, 0).bytes / 4;
         assert_eq!(
             used + store.free_words() + self.q().job_words(),
-            store.pool().size() / 4,
+            store.capacity() / 4,
             "every pool word is the header's, a block's, a job's or free"
         );
     }
@@ -432,4 +429,54 @@ impl Q {
         }
         panic!("chunk {x} never opened");
     }
+}
+
+/// The second sky word of a brick record (`VIS_WORD + 1`) and its flags: the baked visibility
+/// and the ring's stale mark (ADR-0070).
+const SKY_WORD: usize = 8;
+const VIS_BAKED: u32 = 1 << 16;
+const SKY_STALE: u32 = 1 << 17;
+
+/// Whether a brick record is marked stale: a dig's ring whose re-bake has not landed.
+pub fn ring_marked(r: &[u32]) -> bool {
+    r[SKY_WORD] & SKY_STALE != 0
+}
+
+/// Whether a dig's step has placed its block over the ring-1 records `pre` (read in the pool
+/// after the edit, before any step read its box): `cur` holds the step's provisional record for
+/// every brick of `pre` it keeps, and lacks one it drops. The step keeps a touched brick's record with every direction it held
+/// none for filled, all six in the mask (`fill_directions`, a record that holds light); a baked
+/// sky visibility it marks stale and then writes its held cells over (`apply_held`: the two sky
+/// words baked without the stale mark, the two key words cleared, all six directions in the
+/// mask). So each record that held light has all six directions, each baked visibility is
+/// stale or held, and one brick differs from its old record or is dropped (else the dig's
+/// block is not told from the old; a record already stale from an earlier dig's open ring is
+/// told by the held cells written over it).
+pub fn dig_held<K: Ord>(pre: &BTreeMap<K, Vec<u32>>, cur: &BTreeMap<K, Vec<u32>>) -> bool {
+    let all = |r: &[u32]| r[6] >> 16 == 0x3F;
+    let held_shape = |r: &[u32]| {
+        r[SKY_WORD] & VIS_BAKED != 0 && r[SKY_WORD + 1] == 0 && r[SKY_WORD + 2] == 0 && all(r)
+    };
+    let mut told = false;
+    for (slot, p) in pre {
+        // A brick the carve left with no face leaves the block the step lays out.
+        let Some(c) = cur.get(slot) else {
+            told = true;
+            continue;
+        };
+        if p[6] >> 16 != 0 && !all(c) {
+            return false;
+        }
+        if p[SKY_WORD] & VIS_BAKED != 0 && !(ring_marked(c) || held_shape(c)) {
+            return false;
+        }
+        told |= c != p;
+    }
+    told
+}
+
+/// Whether ring 1's re-bake has landed over the dig's block `held` (the ring-1 records the
+/// edit's step placed): no record is marked stale and the records differ from the step's.
+pub fn ring1_landed<K: Ord>(held: &BTreeMap<K, Vec<u32>>, cur: &BTreeMap<K, Vec<u32>>) -> bool {
+    cur != held && !cur.values().any(|r| ring_marked(r))
 }

@@ -73,6 +73,11 @@ impl Sealed {
         self.verdicts.get(&c).is_some_and(|v| v.0)
     }
 
+    /// The chunks the workers sealed, in no order.
+    pub(crate) fn held(&self) -> impl Iterator<Item = [i32; 3]> + '_ {
+        self.verdicts.iter().filter(|(_, v)| v.0).map(|(c, _)| *c)
+    }
+
     /// Chunks held sealed.
     pub(crate) fn count(&self) -> u64 {
         self.count

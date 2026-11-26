@@ -40,10 +40,7 @@ fn buried_rig(rule: bool) -> Option<support::queue::Q> {
     }
     let mut q = rig(world, &Setup::at([224.0, 224.0, 400.0]))?;
     q.frame.set_sky(Some(sun_sky(40.0)));
-    q.frame
-        .bake_queue_mut()
-        .expect("the queue started")
-        .zero_rule = rule;
+    q.frame.set_bake_queue(move |q| q.zero_rule = rule);
     Some(q)
 }
 
@@ -204,10 +201,7 @@ fn tall_cave_rig(rule: bool, roof: bool) -> Option<support::queue::Q> {
     }
     let mut q = rig(world, &Setup::at([224.0, 224.0, 400.0]))?;
     q.frame.set_sky(Some(sun_sky(40.0)));
-    q.frame
-        .bake_queue_mut()
-        .expect("the queue started")
-        .zero_rule = rule;
+    q.frame.set_bake_queue(move |q| q.zero_rule = rule);
     Some(q)
 }
 
@@ -318,10 +312,7 @@ fn a_key_ray_that_leaves_the_windows_side_above_every_top_stays_lit() {
         svet_render::sky::Body::sun([0.0, -e.cos(), e.sin()]),
         svet_render::sky::Body::moon([0.0, 0.0, -1.0]),
     )));
-    q.frame
-        .bake_queue_mut()
-        .expect("the queue started")
-        .zero_rule = false;
+    q.frame.set_bake_queue(move |q| q.zero_rule = false);
     q.settle();
     let block = q
         .target(SLAB_FLOOR)

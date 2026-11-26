@@ -76,7 +76,7 @@ impl BakeQueue {
     /// camera's chunk `eye`: when they change, every block whose band changed is touched (its
     /// candidacy read again) and every pending job above its new band's count is withdrawn, its
     /// chunk listed again.
-    pub(super) fn retier(&mut self, store: &mut Store, view: &QueueView<'_>, eye: [i32; 3]) {
+    pub(super) fn retier(&mut self, store: &mut Store, view: &QueueView, eye: [i32; 3]) {
         let bands = view.focal_px.map(|focal_px| Bands {
             focal_px,
             lo: self.far_normal[0],
@@ -139,7 +139,7 @@ impl BakeQueue {
 
     /// Removes from [`BakeQueue::view_waiting`] each chunk that waits for nothing now: its record at
     /// its band's count, out of the mirror's full chunks, or known to hold no face.
-    pub(super) fn land_waiting(&mut self, gpu: &GpuWorld, store: &Store) {
+    pub(super) fn land_waiting(&mut self, gpu: &Shadow, store: &Store) {
         if self.view_waiting.is_empty() {
             self.stats.drain_waiting = 0;
             return;
@@ -164,7 +164,7 @@ impl BakeQueue {
     /// shell) or the pool changed since the last read and [`WAITING_EVERY`] steps have passed.
     /// A read walks the pool and the jobs once, scoring each by its angle term alone
     /// ([`angle_term`]), into the set's kept allocation.
-    pub(super) fn refresh_waiting(&mut self, store: &Store, view: &QueueView<'_>, force: bool) {
+    pub(super) fn refresh_waiting(&mut self, store: &Store, view: &QueueView, force: bool) {
         let eye = view.eye.map(|v| (v / 64.0).floor() as i32);
         let key = (
             eye,
@@ -231,7 +231,7 @@ impl BakeQueue {
 
     /// Whether chunk `c` waits for no record: not mirrored full, faceless, sealed, or holding
     /// a block at its band's count.
-    pub(super) fn landed(&self, gpu: &GpuWorld, store: &Store, c: [i32; 3]) -> bool {
+    pub(super) fn landed(&self, gpu: &Shadow, store: &Store, c: [i32; 3]) -> bool {
         let cc = ChunkCoord(c);
         !gpu.is_mirrored(cc)
             || gpu.is_lod(cc)

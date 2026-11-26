@@ -1369,13 +1369,17 @@ fn caught_up_queue(
         let mut enc = device.create_command_encoder(&Default::default());
         gpu.sync(world, queue, &mut enc).expect("the mirror fits");
         queue.submit([enc.finish()]);
-        // Every chunk the world holds is resident full, and one outside the extent too (the
-        // world's edge: nothing to wait for there).
-        let resident = |c: ChunkCoord| world.store().contains(c) || !extent.contains(c);
+        // Every chunk the world holds now is resident full, and one outside the extent too (the
+        // world's edge: nothing to wait for there): a snapshot taken each step, as a chunk may
+        // arrive between steps.
+        let held: std::collections::HashSet<ChunkCoord> =
+            world.store().coords().into_iter().collect();
+        let resident =
+            svet_render::Residency::of_rule(move |c| held.contains(&c) || !extent.contains(c));
         let view = svet_render::QueueView {
             eye,
             forward: [0.0, 1.0, 0.0],
-            resident: Some(&resident),
+            resident: Some(resident),
             samples: None,
             interval_s: 1.0 / 60.0,
             hold: None,

@@ -549,7 +549,7 @@ impl Frame {
                 Res::Buf(split_list),
                 Res::Buf(&t.split_args),
                 Res::Tex(&t.transmit),
-                Res::Buf(self.baked.store.pool()),
+                Res::Buf(&self.baked.pool),
             ],
         );
         let half = t.half_pos.is_some();
@@ -573,7 +573,7 @@ impl Frame {
                 Res::Tex(t.lit_info(c)),
                 Res::Tex(&t.irradiance),
                 Res::Tex(&t.direct),
-                Res::Buf(self.baked.store.pool()),
+                Res::Buf(&self.baked.pool),
                 Res::Tex(&t.vis),
             ],
         );
@@ -592,7 +592,7 @@ impl Frame {
                 Res::Tex(&t.moments[c]),
                 Res::Buf(&self.state.edits),
                 Res::Tex(&t.strata),
-                Res::Buf(self.baked.store.pool()),
+                Res::Buf(&self.baked.pool),
                 Res::Buf(&self.baked.counters),
                 Res::Tex(&t.direct),
                 Res::Tex(&t.direct_accum[q]),
@@ -1054,14 +1054,23 @@ impl Frame {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         around.1 = None;
+        if let Some(link) = &self.baked.thread {
+            self.baked
+                .snapshot_reach
+                .note(&link.books, p.views[0].origin);
+        }
         if let Exposure::Auto(a) = &self.state.lighting.exposure {
             u.set_auto(a, self.sky.sky.is_some());
             u.set_highlight(a, self.state.lighting.tone_map);
             // The floor's term (ADR-0081): walked and smoothed only where it can move the
             // ceiling, the anchor in force and `F_floor` over 0.
             if u.anchor > 0.0 && u.sky_share > 0.0 && a.sky_anchor_floor > 0.0 {
-                let answer = crate::bake::sky_over_floor(&self.baked.store, p.views[0].origin)
-                    .map(|(f, _)| f);
+                let eye = p.views[0].origin;
+                let answer = match &self.baked.thread {
+                    Some(link) => link.books.sky_over_floor(eye),
+                    None => crate::bake::sky_over_floor(&self.baked.store, eye),
+                }
+                .map(|(f, _)| f);
                 around.1 = around.0.step(answer, self.dt, a.sky_around_tau);
             } else {
                 around.0.reset();

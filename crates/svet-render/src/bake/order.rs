@@ -352,7 +352,7 @@ pub(super) fn cand_of(
     class: u8,
     coarse: bool,
     eye: [i32; 3],
-    view: &QueueView<'_>,
+    view: &QueueView,
     order: QueueOrder,
     near: i32,
 ) -> Cand {

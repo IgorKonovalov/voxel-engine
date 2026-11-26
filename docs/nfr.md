@@ -168,6 +168,31 @@ drain is over twice the shortest is out; Plan 0096's readings log, Phase 9): the
 and 25.1), the RENOIR kept 6.0. The window's readings (the owner's Plan 0096 Phase 8 at 2530 x
 1378, not against these lines) are in [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md).
 
+**The bake step off the render thread** (Plan 0099, ADR-0083; pinned at its Phase 6b,
+2026-11-26, release `flythrough` at `cde2e966`, headless, `--source outdoor` from the first world
+frame, the forest at 15:00 and the hills at 17:00; the bake thread on (`--bake-thread on`), 16
+table rows, depth 3, the default order; RTX 3080 Laptop at Floor 1920 x 1080 (drain slice 1.5
+ms), RADV RENOIR at Portable 1280 x 720 (6.0 ms); exclusive perf lock per run, quiet (the
+1-minute load at the lock 0.6 to 1.5); two runs a scene on the RTX, one on the RENOIR (its
+forest twice: the second, of 10 000 frames, read the residency to its end); every row
+in `docs/plans/logs/0099.md`, Phases 4d and 6b). These rows supersede the table above's RTX
+standing for the in-view landing, the step and the frame while draining. The lines are the
+plan's, unmoved; a miss is disclosed with what holds it.
+
+| line | RTX 3080 Laptop, Floor | RADV RENOIR, Portable | standing |
+|---|---|---|---|
+| The render thread's bake share while in view waits (regime B): p50 at most 1.0 ms, p99 at most 4.0 | forest 0.784 / 1.247 and 0.758 / 1.215, hills 0.797 / 1.287 and 0.791 / 1.290 | forest 0.303 / 0.587 and 0.322 / 0.527, hills 0.312 / 0.537 | met on both |
+| The frame's wall p50 while in view waits: Floor at most 16.6 ms; Portable not over the step-on-the-render-thread base (Phase 1: 33.68 ms forest) by more than 2 % | forest 8.28 and 8.35 ms, hills 9.94 and 9.92 | forest 24.15 and 23.94 ms, hills 28.40 | met on both |
+| The submits fed at least 0.85 of the granted drain slice while in view waits | forest **0.611 and 0.599**: submits a frame 0.714 and 0.686 (a bake step takes 10.45 and 11.06 ms p50 from one pick-up to the next against a frame of 8.27 and 8.34), drawn a submit 0.856 and 0.874; hills **0.589 and 0.582**: submits a frame 0.842 and 0.879, drawn a submit 0.700 and 0.662 | forest 1.000 and 0.999, hills 0.996 | **RTX missed**, by both factors at once: the bake step is longer than the frame (no wait in it: 0 ms p50), and with every one of the 16 rows held a submit carries what sixteen jobs' live faces give in one pass (a hills chunk's fewer faces fill less of it). No single lever reaches 0.85; the backlog's entry on the feed names the one cheap change, unbuilt |
+| In view landed after the first world frame: RTX at most 10 s, RENOIR at most 30 s | forest **17.9 and 19.0 s**, hills 6.5 and 6.6 | forest 12.7 and 12.7 s, hills 11.5 | **RTX forest missed**, held by the order: the in-view chunks with no block land at 7.5 and 8.1 s, then 31 coarse blocks in view wait 10.4 and 10.9 s more behind the chunks with none (ADR-0048's tiered order, kept by Plan 0099's ruling after Phase 4d). RTX hills and the RENOIR met |
+| The whole residency empty after the first world frame: RTX at most 60 s, RENOIR at most 180 s | forest 26.2 and 29.1 s, hills 23.2 and 23.5 | forest 124.9 s, hills 92.6 | met on both |
+| The bake thread's outbox (at most 8 MiB) and its shadow of the books (a guess of 0.5 MB) at their peak | not read | not read | **not read**: no line at `cde2e966` prints either. The outbox is bounded by construction (the bake thread waits once it holds 8 MiB); the books' snapshot's bytes are counted (`Books::bytes`) but not printed |
+
+The figures beside these lines (the per-second budget, the `taskset` arm, the RENOIR dig's
+withdrawn samples, and the readings not taken) are in
+[`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md). The dig's frame, an edit's wait and
+ring 1 on the bake thread are section 4's ("An edit's light"), pinned at Plan 0099's Phase 6d.
+
 **Disclosed at the close review (2026-11-23):** the record by rule (ADR-0080 rule 1)
 answered 236 of the 3 540 buried chunks of the RTX's forest (233 to 241 of 3 526 on the hills)
 and 1 to 12 of 1 019 on the RENOIR (6 of 1 066), because the opening applies it only to a
@@ -221,6 +246,30 @@ Every reading against these budgets, with its machine and commit, is in
   6.4 MB, if every touched brick is non-uniform) fits in the streaming line of §2.
   Readings in `docs/nfr/04-edits.md`.
 - **Results** are returned synchronously with the edit, per material, exact.
+- **An edit's light (Plan 0099, ADR-0083; pinned at its Phase 6d, 2026-11-26, the bake thread on
+  (`--bake-thread on`), 16 table rows, depth 3; RTX 3080 Laptop at Floor 1920 x 1080, RADV
+  RENOIR at Portable 1280 x 720; exclusive perf lock per run, quiet at the lock; readings in
+  [`docs/nfr/04-edits.md`](nfr/04-edits.md)):**
+  - *The edit's wait* (the render thread's wait on a dig's frame for the step that read its
+    box, less the rest of a step in progress at the send, per dig frame) **at most lockstep's
+    bake call on the same dig frames**: RTX forest while in view waits 14.5 and 21.8 ms p50
+    against lockstep's 24.3 and 23.6, after 5.8 and 6.3 against 7.7 and 12.7: **met**. RENOIR
+    forest after 4.5 and 4.2 against 5.6 and 5.3: met; while in view waits 10.6 and 12.6
+    against 10.9 and 9.3: **not resolved** between equal and missed (the line prints a run's
+    p50, so the pooled p50 is bracketed: 10.6 to 12.6 against 9.3 to 10.9), disclosed.
+  - *Ring 1* applied within lockstep's ms on the same dig plus two of lockstep's frames on it
+    (the dig rig): **met** on every dig, by 69 to 83 ms at the p50 (RTX waiting A and B,
+    RENOIR drained B). **Disclosed:** a dig that finds every table row with rounds in flight
+    lands ring 1 one round trip later (3 of 12 RTX waiting B digs, 133 to 144 ms against 78 to
+    118); how often at the window's pace is not read.
+  - *A dig's frame and the light at the dig* (a reading, no line; the fly-through's
+    `dig settled:` rows, RTX forest): the longest frame from a dig while the queue is deep
+    about 44 ms with the thread on and 45 off (the frames around it 8.4 against 21.9), about
+    20 against 32 once drained; rings 1 and 2 landed about 170 ms after the dig on, 230 off,
+    and 95 against 127 drained. RENOIR: 48 against 43 ms, 28 against 34; 255 against 249 ms,
+    177 against 161. The owner at the window: "dig is good as well", with a flash at depth
+    routed to the backlog ("A dig flashes with light") and, the same with the thread off by
+    his word, to Plan 0105.
 - **Stamp cost (proposals, Plan 0008):** a 16³ prefab stamp (the shelled box `Prefab::vault`)
   into solid rock costs under 100 µs, and a 64³ all-written prefab under 5 ms, both including
   the `EditResult` tally. Brick prefabs (Plan 0083, ADR-0066): `prefab64_mixed` 3.86 ms, 1.4 %
@@ -588,6 +637,7 @@ Every reading against these budgets, with its machine and commit, is in
   **Reading (Plan 0102 Phase 4, 2026-11-24, the base `be97152a` and the tip `860c0ae6`, back to back in one hold of the exclusive perf lock, dev reference on lavapipe, 6G cap, 4 build jobs, 2 test threads (three lanes open), each run's binaries built before the lock):** base 1363 run, 1363 passed, 242 skipped, **894.3 s** (load 1.51 at the start, 3.12 at the end: loaded); tip 1358 run, 1358 passed, 233 skipped, **868.3 s** (load 3.12 to 2.97: loaded). The removal of the engine's own upscaler saves **26.0 s** of wall, under the plan's 30 s expectation; serial time 29.8 to 28.9 min. Per binary, base to tip: `gpu_upscale` 8 tests 43.6 s to none; `gpu_golden` 16 tests 128.6 s to 15, 116.3 s; `gpu_fsr2` 9 tests 81.7 s to 9, 77.5 s; `svet-render::gpu_frame` 6 tests 24.1 s to 12, 46.9 s (the four inventory tests and the scale-1.5 sizes test moved in). A new frame builds 13 compute pipelines (15 at the base); the two removed pipelines' creation read, cold, at the base (Plan 0102 Phase 1, `pipeline_times`, exclusive perf lock, loaded): `upscale` 28.1 ms and `sharpen` 1.8 ms on lavapipe (of 6602.5 ms for the frame's set), 124.0 and 11.1 ms on the RTX 3080 Laptop (of 40 913 ms cold, 5.8 and 1.5 ms warm), which is what a first frame no longer pays. The fix pass and the close ran no gate again (no gate test's code changed after `860c0ae6`); a quiet re-read of the saving is in the backlog. Logs `live/p4-gate-*.log` in the lane, [Plan 0102's readings log](plans/logs/0102.md), Phase 4.
   **Reading (the gate-time chore, 2026-11-24, branch `chore-gate-time` from main `193cae15`, dev reference on lavapipe, exclusive perf lock, 16G cap, the gate's binaries built before the lock, each run started at a load under 2; the CPU capped at its 3.3 GHz base clock since the AC drop of 2026-11-23, so about 1.42 times slower than full clock):** before, `193cae15` with the lavapipe group at one thread: **2145.0 s**, 1361 of 1361 passed, load 1.83 at the start and 3.05 at the end; the wall is the group's serial sum (334 GPU tests, 2141.2 s), most of a GPU test being single-threaded pipeline compilation. After, `909a2552` with the group at two threads (the owner's go of 2026-11-22) and eight tests' independent arms overlapped on threads (no assertion changed): **1133.2 s, under the 19 min line**, 1361 of 1361 passed, load 1.98 at the start and 4.14 at the end. No test changed tier. The 2153 s of Plan 0098's close is the clock cap, not the plan (the shared tests' ratios against Plan 0096's run of 2026-11-23 match the cap). The attribution, the thread sweep (three threads: 889.7 s), the shortened tests, the ten tests still over the line and the sole mark: [`docs/nfr/07-startup-and-build.md`](nfr/07-startup-and-build.md).
   **Reading (Plan 0100 Phase 9, 2026-11-25, the lane's tip `c5316ca7`, dev reference on lavapipe, exclusive perf lock, 16G cap, the gate's binaries built before the lock, two lanes open; the dev's run, not repeated at the close by the owner's rule):** 1385 tests, all passed, 239 skipped, **1419.6 s at load 29.9 at the lock and 7.3 at the end: loaded, indicative, over the 19 min line and not a reading against it.** Thirteen slow; the tests over 10 s are none of the plan's (the largest 10.0 to 10.3 s). The plan adds four tests to the gate, one on the GPU (`gpu_sun`'s `the_approach_penumbra_under_the_column_scores_the_cover_ray_alone`, 8.8 s in that run). A quiet re-read is owed (`docs/backlog.md`, "Plan 0100's leftovers").
+  **Reading (Plan 0099 Phase 6c, 2026-11-26, the merged tree `fed59ead` (main `c87bf7a6` in it; only documents changed after it), dev reference on lavapipe, 16G cap, the binaries archived before the locks, two lanes open; the dev's run in four parts, not repeated at the close by the owner's rule):** 1417 tests, all passed: the CPU part outside the lock 1081 (nextest 23.1 s) and three holds of the exclusive perf lock for the `gpu_*` binaries, 108, 100 and 128 tests (264.9, 303.7 and 408.3 s), **the nextest walls summed 1000.0 s, under the 19 min line; 1232 s with the CPU part's build and the three extractions. Loaded at every hold (2.1 to 15.9), and a sum of parts is not the one-run wall the line names: indicative.** `node scripts/test-times.mjs` names 49 tests over the 10 s line across the three holds at that load (10, 16 and 23), none of them a test the plan added. The plan's two soak-marked tests ran once by name (13.0 and 47.9 s).
   **Reading (CI after Plan 0072, 2026-11-13, GitHub-hosted runners):** run 43377881019 on 9c256bb (cold cache, the profile change): Linux 26 min 29 s, Windows 33 min 9 s; gate on Linux 844 passed, 78 skipped, 437.6 s. Run 43395622401 on 393ed45 (warm): **Linux 15 min 6 s, Windows 18 min 47 s**, over Plan 0072's under-10 and under-15 min proposals. **Accepted by the owner 2026-11-13 ("record this time as accepted, let it be")**: these walls are the CI line; no further cut is owed.
   **Reading (CI run 41332396750 on 929d1b3, 2026-11-01, the Linux arm, lavapipe, 745 tests,
   the `ci` profile before the re-cut):** 5386 s wall for the test step, 354 min of serial

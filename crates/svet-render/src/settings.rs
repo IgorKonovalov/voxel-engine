@@ -83,6 +83,10 @@ pub struct BakeKnobs {
     pub edit_ms: f64,
     /// Whether a dig that touched lit bricks re-bakes the chunks within the light radius.
     pub dig_reach: bool,
+    /// The ring-1 stretch, 1.0 to 2.0 ([`crate::Frame::set_bake_ring1_stretch`]): how far over
+    /// its priced cap a submit goes to send a dig's ring 1 whole; 1.0 is the cap alone. 1.5 in
+    /// every profile ([`crate::DEFAULT_RING1_STRETCH`]).
+    pub ring1_stretch: f64,
     /// The sample tiers a brick direction by band, near, mid and far (ADR-0080;
     /// [`crate::Frame::set_bake_tiers`]).
     pub tiers: [u32; 3],
@@ -102,6 +106,7 @@ impl Default for BakeKnobs {
             reach: ReachMode::default(),
             edit_ms: crate::bake::DEFAULT_BAKE_EDIT_MS,
             dig_reach: true,
+            ring1_stretch: crate::bake::DEFAULT_RING1_STRETCH,
             tiers: crate::bake::DEFAULT_TIERS,
             drain: Some(crate::bake::DEFAULT_DRAIN),
         }
@@ -223,6 +228,9 @@ pub struct RenderSettings {
     pub missing_light: MissingLight,
     /// The live queue's knobs; `Live`.
     pub bake: BakeKnobs,
+    /// Whether the live queue's sliced steps run on the bake thread, off being lockstep
+    /// (ADR-0083; [`crate::Frame::set_bake_thread`]); `Live`, off in every profile.
+    pub bake_thread: bool,
     /// The mirror's, the streamer's and the entity pool's creation values; `Rebuild`.
     pub build: BuildSettings,
     /// The output size the profile is stated at. The engine never applies it: the consumer
@@ -322,6 +330,7 @@ impl RenderSettings {
             probe_axis: None,
             missing_light: MissingLight::default(),
             bake: BakeKnobs::default(),
+            bake_thread: false,
             build: BuildSettings {
                 mirror_budget_bytes: FLOOR_MIRROR_BYTES,
                 sync_budget_bytes: 2 << 20,
@@ -509,8 +518,10 @@ impl RenderSettings {
         ("bake.reach", Live),
         ("bake.edit_ms", Live),
         ("bake.dig_reach", Live),
+        ("bake.ring1_stretch", Live),
         ("bake.tiers", Live),
         ("bake.drain", Live),
+        ("bake_thread", Live),
         ("build.mirror_budget_bytes", Rebuild),
         ("build.record_chunks", Rebuild),
         ("build.light_samples", Rebuild),
@@ -549,8 +560,10 @@ impl RenderSettings {
         ("set_bake_full_first", &["bake.full_first"]),
         ("set_bake_reach", &["bake.reach"]),
         ("set_bake_digs", &["bake.edit_ms", "bake.dig_reach"]),
+        ("set_bake_ring1_stretch", &["bake.ring1_stretch"]),
         ("set_bake_tiers", &["bake.tiers"]),
         ("set_bake_drain", &["bake.drain"]),
+        ("set_bake_thread", &["bake_thread"]),
         ("set_entity_mirror", &["build.entity_pool_bytes"]),
         ("set_field_surface", &["build.field_surface"]),
         ("set_sync_budget_time", &["build.sync_budget_time"]),
@@ -560,6 +573,21 @@ impl RenderSettings {
     /// Each `pub fn set_*` of the crate that is not a setting, and why.
     pub const NOT_SETTINGS: &'static [(&'static str, &'static str)] = &[
         ("set_dt", "a per-frame input: the frame's step in seconds"),
+        (
+            "set_bake_queue",
+            "the route a caller's write to the live queue's books takes (a rig's order or rule \
+             switch); the bake knobs that are settings have setters of their own",
+        ),
+        (
+            "set_bake_depth",
+            "a reading's knob: the bake thread's submits in flight, picked by reading \
+             (Plan 0099 Phase 4c); lockstep holds two whatever it is",
+        ),
+        (
+            "set_bake_slots",
+            "a reading's knob: the bake thread's table slots, picked by reading (Plan 0099 \
+             Phase 4c2); lockstep keeps 16 whatever it is",
+        ),
         (
             "set_pipeline_cache",
             "a test hook: the pipeline cache the test devices build through",
@@ -771,6 +799,7 @@ impl RenderSettings {
             "bake.reach" => other(&mut s.bake.reach, ReachMode::Full, ReachMode::Partial),
             "bake.edit_ms" => s.bake.edit_ms += 1.0,
             "bake.dig_reach" => flip(&mut s.bake.dig_reach),
+            "bake.ring1_stretch" => s.bake.ring1_stretch += 0.5,
             "bake.tiers" => s.bake.tiers[1] /= 2,
             "bake.drain" => {
                 s.bake.drain = if s.bake.drain.is_some() {
@@ -817,6 +846,7 @@ impl RenderSettings {
                 }
             }
             "mark_colours" => s.mark_colours.swap(0, 1),
+            "bake_thread" => flip(&mut s.bake_thread),
             _ => return None,
         }
         Some(s)

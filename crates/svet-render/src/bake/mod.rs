@@ -59,8 +59,10 @@ mod around;
 mod budget;
 mod faces;
 mod held;
+mod issue;
 mod job;
 mod job_loop;
+mod link;
 mod order;
 mod pipeline;
 mod pre_roll;
@@ -70,12 +72,16 @@ mod seal;
 mod stages;
 mod store;
 mod summary;
+mod thread;
+mod writes;
 
 pub use self::around::*;
 pub use self::budget::*;
 pub use self::faces::*;
+pub(crate) use self::issue::*;
 pub use self::job::*;
 pub(crate) use self::job_loop::*;
+pub(crate) use self::link::*;
 pub use self::order::*;
 pub use self::pipeline::*;
 pub use self::pre_roll::*;
@@ -85,6 +91,7 @@ pub(crate) use self::seal::{SharedShells, Shell, Verdict};
 pub use self::stages::*;
 pub use self::store::*;
 pub use self::summary::*;
+pub(crate) use self::writes::*;
 
 /// One face after its bake.
 #[derive(Clone, Debug)]
@@ -150,6 +157,8 @@ pub enum BakeError {
     PoolFull { needed: u64, capacity: u64 },
     /// The light-sample buffer refused a chunk in the bake's reach.
     LightsRefused(u64),
+    /// The bake thread ended by a panic (ADR-0083): its message. The live queue ends with it.
+    Thread(String),
 }
 
 impl std::fmt::Display for BakeError {
@@ -161,6 +170,7 @@ impl std::fmt::Display for BakeError {
             Self::LightsRefused(n) => {
                 write!(f, "the light-sample buffer refused {n} chunks in reach")
             }
+            Self::Thread(m) => write!(f, "the bake thread panicked: {m}"),
         }
     }
 }

@@ -428,11 +428,81 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--queue-order score\|distance` | The live queue's order |
 | `--queue-weights A,R\|A,tier` | The score's angle and refine weights |
 | `--queue-withdraw on\|off` | Withdraw the jobs of chunks the camera passed |
+| `--bake-thread on\|off` | Run the live queue's sliced steps on the bake thread (ADR-0083; the pre-roll and the one-shot bakes stay lockstep); the banner's queue row and the HUD's queue row read `bake thread on` or `off`; a profile does not set it, every profile's being `off` [on in a window, off under `--headless`] |
+| `--bake-depth N` | The submits the bake thread's steps hold unread at most, 1 to 8 (a reading's knob; lockstep, the pre-roll and the one-shot bakes hold two whatever it is) [3] |
+| `--bake-slots N` | The live queue's table slots the bake thread's steps open jobs into, 16 to 64 (a reading's knob; lockstep and the pre-roll keep 16 whatever it is) [16] |
 | `--queue-census` | Read the queue's view census at every opening, its listing once |
 | `--queue-rule-reading` | Count the jobs opened for chunks the zero rule would answer (a reading) |
 | `--edit-ms MS` | The slice's growth while a dig waits, 0 to 100 ms [3] |
+| `--bake-ring1-stretch X` | A dig's ring 1 goes whole in a submit within X times the priced cap, 1.0 to 2.0; the HUD and the banner name it when not the default (`stretch 1.0`) [1.5] |
 | `--dig-reach on\|off` | A dig re-bakes the chunks within the light radius [on] |
 | `--read-missing` | Read the store's no-value count while a dig waits |
+
+The queue step's time splits in two (ADR-0083): `render`, its time in `wgpu` calls (the
+writes, the candidate tables, the encode, the submit, the poll, the mapped read and unmap),
+which stays on the render thread, and `movable`, the rest. The HUD's queue row reads `step
+1.25 ms (render 0.40, movable 0.85)` (p50s over the last second); the `bake queue step:` line
+prints `render` and `movable` p50/p99 with their means and the stages' mean, the bytes
+written a step p50/p99 by buffer (`pool`, `table`, `summary`, `job`), and each stage's mean
+with its render share in brackets; the `frames:` summary's `queue step` lines carry the same
+split by regime.
+
+The `bake queue:` line's `N ns a sample (price F ms a dispatch + P ns)` is the mean cost a
+sample of the submits read back and the price the next submit's sample cap is sized by: a
+dispatch's fixed part `F` and the cost `P` of each sample beyond it, so a slice that grows (a
+dig's `--edit-ms`) or shrinks (the drain's end) draws what it buys. With no spread of submit
+sizes read yet the price is the mean (`F` 0).
+
+With the bake thread on, the `bake queue slice:` line ends with `projected at the draw p50 X
+caps` (the loop's samples left and the listing pool's estimates over the cap at each submit,
+`NaN` in lockstep), `fill world W masks M` (the samples the pool's returned listings pushed
+over their bounds, for chunks listed from the world and from prepared masks; 1 until 16 of a
+kind returned) and `pool guard G` (the openings stopped by the pool's limit of 64 candidates).
+Its `out of rounds N (K with no table slot free)` counts the submits whose plan ran out of
+rounds, and of them those planned with every table slot held (16 in lockstep, `--bake-slots`
+on the bake thread); `steps with every submit slot unread B of S` the steps that could send no
+submit for the bound in flight, of the steps taken; `steps neither blocked nor sent I` the steps
+that sent no submit with a submit slot free (out of rounds, every table slot held, or nothing to
+do), since the queue started; `jobs open at the draw p50 J max M` the jobs open after each
+submit since the last line (`NaN` where none was sent);
+its last field, `wasted samples W of D drawn`, the samples read back into nothing (rounds past
+a face's stop, a withdrawn job's, a map that failed) of all the loop read back.
+With the bake thread on, a frame issues at most one submit and carries any later one to the
+next frame; the teardown's `frames: bake round trip:` line reads the submits issued and read,
+their round trip in frames from the issue to the frame whose message carried the read-back
+(p50, p99, max), the frames that carried a submit and the issuer's peak readback buffers.
+The one exception is an edit's frame: it waits for the results of the step that read its box
+(its ops and lists; the books' snapshot after that step follows as its own entry and the frame
+does not wait for it, unless the queue traces digs), applies the held block in that frame, and issues the dig's submit behind any carried one, so it may issue
+two. Write lists apply in the order the bake thread made them, so the edit's frame applies
+every list made before the edit's with it, whatever the frame's byte cap. The teardown's
+`frames: bake thread dig wait:` lines, one while chunks in view wait for their tier and one
+after, read those frames: the wait's p50, p99 and max in ms; `less rest`, the p50 and p99 over
+the dig frames of each frame's wait less that frame's own `rest` (the wait here is the span
+between the send's instant and the take's return, which the parts sum to; the p50 of six
+frames is not the difference of two p50s); its parts' p50 and p99 (`rest`,
+the step in progress at the send; `pickup`, to the dig's step taking its message; `boxes`, the
+step to its edit's box taken; `step_rest`, the step's rest; `snapshot`, 0 unless the queue
+traces digs, then the books' snapshot with the dig trace; `handback`, to the render thread's
+take); the
+frame's issue and apply laps; the dig frames by the submits they issued (1, 2, 3 or more); and
+the frames that applied bytes over the cap with those bytes' p50 and max. The `bake thread
+render laps:` line's `wait` lap is the same wait. In either mode the `frames: bake dig call:`
+lines read the dig frames by the same two states, the bake call's p50, p99 and max in ms
+(lockstep's step, or the thread's frame call with its wait) beside the wait. The teardown's
+`frames: bake thread snapshot:` line ends with the books' snapshots the bake thread made
+after its steps: their count and ms p50, p99 and max (each step's, on the bake thread, outside
+its stage table).
+The teardown's `frames: queue fed:` line reads the frames while chunks in view wait for their
+tier (the steps' `drain` state, as the `queue split` line files them): `fed F`, the samples the
+frames' steps planned into submits over the caps granted, summed over those frames (a frame that
+took no step counts the newest cap), with its two factors, `submits a frame` (the submits the
+steps planned over the frames) and `drawn a submit` (the samples a submit planned over the mean
+cap); either mode. With the bake thread on, the `frames: bake thread cycle:` line reads the bake
+thread's steps whose cycles ended in those frames, p50 and mean in ms: `wait`, from the thread
+free to the message taken; `step`, the step; `snapshot`, the books' snapshot after it;
+`hand-over`, the step's results and the books put in the outbox; and `sum`, their total, the
+time from one step's pick-up to the next's, beside the frames' wall over the same frames.
 
 ### Audio
 

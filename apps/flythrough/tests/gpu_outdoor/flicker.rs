@@ -622,7 +622,7 @@ mod flicker {
         fn flicker_dig_streamed() {
             use std::cell::RefCell;
             use svet_render::{GpuWorld, MirrorConfig, QueueView, Window};
-            use svet_world::{ChunkCoord, PersistConfig, StreamConfig, Streamer, Tier, World};
+            use svet_world::{PersistConfig, StreamConfig, Streamer, World};
             let residency = flythrough::RESIDENCY;
             let budget = svet_render::DEFAULT_BUDGET_BYTES;
             let Some((device, queue, adapter)) = support::reading_device(budget) else {
@@ -663,7 +663,7 @@ mod flicker {
                 queue,
                 gpu,
                 adapter,
-                world,
+                world: std::sync::Arc::new(world),
             };
             let p = eye.0.map(|v| v as f32 + 0.5);
             let d = facing.map(|v| v as f32);
@@ -681,11 +681,10 @@ mod flicker {
                     .sync(&rig.world, &rig.queue, &mut enc)
                     .expect("the mirror fits");
                 rig.queue.submit([enc.finish()]);
-                let resident_fn = |c: ChunkCoord| st.tier(c) == Some(Tier::Full);
                 let view = QueueView {
                     eye: cam.position.to_array(),
                     forward: cam.basis().0.to_array(),
-                    resident: Some(&resident_fn),
+                    resident: Some(svet_render::Residency::of_chunks(st.full_chunks())),
                     samples: None,
                     interval_s: 1.0 / 60.0,
                     hold: Some(residency.r_full + rig.gpu.light_radius() + 1),
@@ -803,6 +802,8 @@ mod flicker {
                     "band" => look.far_normal = [2.0, 6.0],
                     "approach" => l.penumbra = svet_render::Penumbra::Approach,
                     "pin" => pin = true,
+                    // The dig timeline's: the bake's candidates at 0 (`dig_line::line_run`).
+                    "cand0" => {}
                     t if t.starts_with("hold=") => {
                         l.dig_hold = svet_render::DigHold::from_name(&t[5..]).expect("a hold");
                     }
@@ -1483,7 +1484,7 @@ mod flicker {
                 let frame = std::time::Duration::from_micros(16_667);
                 std::thread::sleep(frame.saturating_sub(tf.elapsed()));
             }
-            let st = s.frame.bake_queue().map(svet_render::BakeQueue::stats);
+            let st = s.frame.bake_queue().map(|q| q.stats());
             println!(
                 "castle: the queue drained {} after {n} frames, {:.1} s; missing every 100 frames {missing:?}; digs {:?}, digs baked {:?}",
                 s.frame.bake_queue().is_some_and(|q| q.empty()),
@@ -1561,7 +1562,7 @@ mod flicker {
                 queue,
                 gpu,
                 adapter,
-                world,
+                world: std::sync::Arc::new(world),
             })
         }
 

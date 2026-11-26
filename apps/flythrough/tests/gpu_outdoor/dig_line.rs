@@ -7,7 +7,7 @@ mod dig_line {
         use super::super::support;
         use std::collections::{BTreeMap, BTreeSet};
         use std::fmt::Write as _;
-        use support::defects::{HoleFrame, Stepper, dig_along, hole_frame, queue_step};
+        use support::defects::{HoleFrame, Stepper, dig_along, dig_along_timed, hole_frame, queue_step};
         use support::terms::Rig;
         use svet_render::Camera;
 
@@ -17,6 +17,8 @@ mod dig_line {
 
         /// Frames between the digs of sequence B (the owner's several in a row).
         const B_GAP: usize = 8;
+        /// Frames from sequence `C`'s first dig to its second.
+        const C_GAP: usize = 64;
 
         /// Where sequence B's five digs aim, voxels on the ground about the view's centre's hit;
         /// the sixth digs into the first.
@@ -28,6 +30,27 @@ mod dig_line {
             pub frames: Vec<HoleFrame>,
             pub traces: Vec<svet_render::DigTrace>,
             pub digs: Vec<(usize, [i64; 3], [i64; 3])>,
+            /// Each dig's edit wall, ms ([`dig_along_timed`]).
+            pub edit_ms: Vec<f64>,
+            /// Per frame: the wait for an edit's step in ms and the submits the frame issued
+            /// ([`svet_render::Frame::bake_frame_issue`]).
+            pub issue: Vec<(f64, u64)>,
+            /// Per frame: the apply in ms and the bytes applied over the frame's cap
+            /// ([`svet_render::Frame::bake_frame_apply`]).
+            pub apply: Vec<(f64, usize)>,
+            /// Per frame: its start and end in ms from the run's clock (the queue's step to the
+            /// end of the frame's reads and render).
+            pub times: Vec<(f64, f64)>,
+            /// Per frame: an edit's frame's wait by its parts and its issue lap
+            /// ([`svet_render::Frame::bake_frame_wait_parts`]), `None` on other frames.
+            pub parts: Vec<Option<([f64; 6], f64)>>,
+            /// Per frame from the first dig on, the newest dig's ring as the pool holds it: whether
+            /// its ring-1 records have held the dig's block ([`support::queue::dig_held`] against
+            /// the pool read after the edit, before a step), and whether ring 1's re-bake has
+            /// landed over that block ([`support::queue::ring1_landed`]).
+            pub pool: Vec<Option<(bool, bool)>>,
+            /// Whether the queue's steps ran on the bake thread.
+            pub thread: bool,
             pub out: [u32; 2],
             pub eye: [f32; 3],
             pub head: String,
@@ -55,7 +78,16 @@ mod dig_line {
         /// and at most 101; else the queue is stepped at most `drain` frames until none waits
         /// and settled 240. Sequence `A`: three digs down one ray, the third one frame after
         /// the second; `B`: five at [`B_AIMS`] [`B_GAP`] frames apart, then a sixth into the
-        /// first. After the last, frames until no dig is left plus 16 and [`fl::DIG_TAIL`].
+        /// first; `C`: `B`'s first, then its fourth alone [`C_GAP`] frames later. After the last,
+        /// frames until no dig is left plus 16 and [`fl::DIG_TAIL`]. `wait`: the stepper's
+        /// device-wait mode ([`Stepper::wait`]), the fly-through's pace; `stretch`: the queue's
+        /// ring-1 stretch ([`svet_render::Frame::set_bake_ring1_stretch`]); `thread`: the queue's
+        /// sliced steps on the bake thread ([`svet_render::Frame::set_bake_thread`], its books
+        /// carrying the dig trace), else lockstep.
+        #[allow(
+            clippy::too_many_arguments,
+            reason = "the run's scene, state, sequence, arm, drain, stills, pace, stretch and mode are independent"
+        )]
         pub(in super::super) fn line_run(
             scene: &str,
             waiting: bool,
@@ -63,6 +95,9 @@ mod dig_line {
             arm: &str,
             drain: u32,
             png: Option<&std::path::Path>,
+            wait: bool,
+            stretch: f64,
+            thread: bool,
         ) -> Option<(LineRun, Rig)> {
             let portable = scene == "portable";
             let facing = spawn_facing();
@@ -92,6 +127,7 @@ mod dig_line {
             f.set_bake_tiers(svet_render::DEFAULT_TIERS);
             f.set_bake_drain(Some(svet_render::DEFAULT_DRAIN));
             f.set_bake_digs(svet_render::DEFAULT_BAKE_EDIT_MS, true);
+            f.set_bake_ring1_stretch(stretch);
             if portable {
                 let p = svet_render::RenderSettings::profile(svet_render::Profile::Portable);
                 f.set_bake_budget(p.bake.budget);
@@ -104,7 +140,18 @@ mod dig_line {
             }
             let out = sizes[1];
             fl::dig_arm(&mut f, arm);
+            if arm.split(',').any(|t| t == "cand0") {
+                // The rig-only arm of Plan 0099 Phase 2e (5): the bake draws no emitter
+                // candidate, so a sample's time is its rays' and its fixed part's.
+                f.set_bake_queue(|q| q.settings.candidates = 0);
+            }
+            if thread {
+                f.share_bake_world(rig.world.clone());
+                f.set_bake_thread(&rig.queue, true);
+                f.set_bake_queue(|q| q.trace_digs = true);
+            }
             let mut s = Stepper::new(&rig, f);
+            s.wait = wait;
             let mut n = 0;
             let head = loop {
                 let q = queue_step(&mut rig, &mut s.frame, &cam);
@@ -117,17 +164,19 @@ mod dig_line {
                 };
                 if done || n >= drain {
                     break format!(
-                        "line {scene} {} {seq} {arm}: adapter {}, after {n} frames in view waiting {}, coarse {}, depth {}, jobs {}",
+                        "line {scene} {} {seq} {arm}{}{}: adapter {}, after {n} frames in view waiting {}, coarse {}, depth {}, jobs {}",
                         if waiting { "waiting" } else { "drained" },
+                        if wait { " device-wait" } else { "" },
+                        if thread { " thread" } else { " lockstep" },
                         rig.adapter,
                         q.drain_waiting,
                         q.coarse,
                         q.depth,
                         q.jobs
                     ) + &format!(
-                        "; baked {} coarse opened {} keys baked {} withdrawn {} retiered {} reach {} partial {} provisional {} waiting reach {} lights {} unbaked {}; samples read {} total {} in {:.3} ms, ns a sample {:.3}, slice {:.2} ms, draining {}",
+                        "; baked {} coarse opened {} keys baked {} withdrawn {} retiered {} reach {} partial {} provisional {} waiting reach {} lights {} unbaked {}; samples read {} total {} in {:.3} ms, ns a sample {:.3} (price {:.3} ms + {:.3} ns), slice {:.2} ms, draining {}",
                         q.baked, q.coarse_opened, q.keys_baked, q.withdrawn, q.retiered, q.reach, q.partial,
-                        q.provisional, q.waiting_reach, q.waiting_lights, q.unbaked, q.samples, q.total_samples, q.ms, q.ns_per_sample, q.slice_ms, q.draining
+                        q.provisional, q.waiting_reach, q.waiting_lights, q.unbaked, q.samples, q.total_samples, q.ms, q.ns_per_sample, q.fixed_ms, q.cost_ns, q.slice_ms, q.draining
                     );
                 }
             };
@@ -141,50 +190,121 @@ mod dig_line {
             let fwd = cam.basis().0.to_array();
             let t = support::defects::march(&rig.world, eye, fwd, 400.0).expect("the view hits ground");
             let centre = [0, 1, 2].map(|k| eye[k] + fwd[k] * t);
-            let (mut frames, mut traces, mut digs) = (Vec::new(), Vec::new(), Vec::new());
-            let read = |rig: &mut Rig, s: &mut Stepper, frames: &mut Vec<HoleFrame>, traces: &mut Vec<svet_render::DigTrace>, label: String| {
+            let (mut frames, mut traces, mut digs, mut edit_ms) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+            let (mut issue, mut pool, mut apply) = (Vec::new(), Vec::new(), Vec::new());
+            let (mut times, mut parts) = (Vec::new(), Vec::new());
+            #[allow(clippy::disallowed_methods, reason = "a reading times the frames' wall")]
+            let clock = std::time::Instant::now;
+            let origin = clock();
+            let ms = move || clock().duration_since(origin).as_secs_f64() * 1e3;
+            let mut read = |rig: &mut Rig, s: &mut Stepper, frames: &mut Vec<HoleFrame>, traces: &mut Vec<svet_render::DigTrace>, label: String, ring: Option<&mut Ring>| {
+                let t0 = ms();
                 let q = queue_step(rig, &mut s.frame, &cam);
+                issue.push(s.frame.bake_frame_issue());
+                apply.push(s.frame.bake_frame_apply());
+                parts.push(s.frame.bake_frame_wait_parts());
+                pool.push(ring.map(|ring| {
+                    let cur = pool_ring(&s.frame, rig, ring.lo, ring.hi);
+                    if ring.held.is_none() && support::queue::dig_held(&ring.pre, &cur) {
+                        ring.held = Some(cur.clone());
+                    }
+                    let fresh = ring.held.as_ref().is_some_and(|h| support::queue::ring1_landed(h, &cur));
+                    (ring.held.is_some(), fresh)
+                }));
                 traces.push(s.frame.bake_queue().expect("the live queue").dig_trace());
                 let path = png.map(|d| d.join(format!("{:03}-{label}.png", frames.len())));
                 frames.push(hole_frame(rig, s, &cam, q, label, out, false, path.as_deref()));
+                times.push((t0, ms()));
                 q
             };
             for k in [2, 1] {
-                read(&mut rig, &mut s, &mut frames, &mut traces, format!("N-{k}"));
+                read(&mut rig, &mut s, &mut frames, &mut traces, format!("N-{k}"), None);
             }
-            let aims: Vec<(Camera, usize)> = match seq {
-                "A" => vec![(cam, usize::MAX), (cam, 1), (cam, usize::MAX)],
-                _ => B_AIMS
-                    .iter()
-                    .chain(std::iter::once(&B_AIMS[0]))
-                    .enumerate()
-                    .map(|(i, a)| {
-                        let c = aimed(&cam, [centre[0] + a[0], centre[1] + a[1], centre[2]]);
-                        (c, if i < B_AIMS.len() { B_GAP } else { usize::MAX })
-                    })
-                    .collect(),
-            };
+            let aims = aims_of(seq, &cam, centre);
             for (d, (aim, gap)) in aims.iter().enumerate() {
-                let Some(dug) = dig_along(&mut rig, &mut s.frame, aim) else {
+                let Some((dug, ms)) = dig_along_timed(&mut rig, &mut s.frame, aim) else {
                     println!("{head}: dig {} changed nothing", d + 1);
                     continue;
                 };
                 digs.push((frames.len(), dug.0, dug.1));
+                edit_ms.push(ms);
+                // The ring as the pool holds it before any step has read the box.
+                let mut ring = Ring { lo: dug.0, hi: dug.1, pre: pool_ring(&s.frame, &rig, dug.0, dug.1), held: None };
                 let mut tail = None;
                 for k in 0..1200usize {
-                    let q = read(&mut rig, &mut s, &mut frames, &mut traces, format!("D{}+{k}", d + 1));
+                    let q = read(&mut rig, &mut s, &mut frames, &mut traces, format!("D{}+{k}", d + 1), Some(&mut ring));
                     if k + 1 == *gap {
                         break;
                     }
                     if q.digs == 0 && k > 0 && tail.is_none() {
                         tail = Some(k + 16 + fl::DIG_TAIL);
                     }
-                    if tail == Some(k) {
+                    // A dig with a gap waits it out (sequence `C`'s 64 frames outlast the tail).
+                    if tail == Some(k) && *gap == usize::MAX {
                         break;
                     }
                 }
             }
-            Some((LineRun { frames, traces, digs, out, eye, head }, rig))
+            Some((LineRun { frames, traces, digs, edit_ms, issue, apply, times, parts, pool, thread, out, eye, head }, rig))
+        }
+
+        /// Each dig's aim and the frames to the next ([`line_run`]'s sequences).
+        fn aims_of(seq: &str, cam: &Camera, centre: [f32; 3]) -> Vec<(Camera, usize)> {
+            match seq {
+                "A" => vec![(*cam, usize::MAX), (*cam, 1), (*cam, usize::MAX)],
+                // B's dig 1, then B's dig 4 alone 64 frames later (Plan 0099 Phase 2e).
+                "C" => [(B_AIMS[0], C_GAP), (B_AIMS[3], usize::MAX)]
+                    .iter()
+                    .map(|(a, gap)| (aimed(cam, [centre[0] + a[0], centre[1] + a[1], centre[2]]), *gap))
+                    .collect(),
+                _ => B_AIMS
+                    .iter()
+                    .chain(std::iter::once(&B_AIMS[0]))
+                    .enumerate()
+                    .map(|(i, a)| {
+                        let c = aimed(cam, [centre[0] + a[0], centre[1] + a[1], centre[2]]);
+                        (c, if i < B_AIMS.len() { B_GAP } else { usize::MAX })
+                    })
+                    .collect(),
+            }
+        }
+
+        /// A dig's ring-1 records as the pool held them after the edit, before a step read its box,
+        /// and as it held them in the first frame that held the dig's block.
+        struct Ring {
+            lo: [i64; 3],
+            hi: [i64; 3],
+            pre: RingRecords,
+            held: Option<RingRecords>,
+        }
+
+        /// Brick records by chunk and slot.
+        type RingRecords = BTreeMap<([i32; 3], usize), Vec<u32>>;
+
+        /// The ring-1 records of the box `lo ..= hi` (every brick within a voxel of it) as the
+        /// pool holds them now, by chunk and slot, from the blocks the frame reads
+        /// (`Frame::read_store_block`: each at the place the pool's chunk table names, read back).
+        fn pool_ring(f: &svet_render::Frame, rig: &Rig, lo: [i64; 3], hi: [i64; 3]) -> RingRecords {
+            let mut out = BTreeMap::new();
+            let a = lo.map(|v| (v - 1).div_euclid(64) as i32);
+            let b = hi.map(|v| (v + 1).div_euclid(64) as i32);
+            for z in a[2]..=b[2] {
+                for y in a[1]..=b[1] {
+                    for x in a[0]..=b[0] {
+                        let Some(w) = f.read_store_block(&rig.device, &rig.queue, svet_world::ChunkCoord([x, y, z])) else {
+                            continue;
+                        };
+                        for (slot, r) in records(&w) {
+                            let b = [slot % 8, slot / 8 % 8, slot / 64].map(|v| v as i32 * 8);
+                            let b = [x * 64 + b[0], y * 64 + b[1], z * 64 + b[2]];
+                            if near_box(b, lo, hi, 1) {
+                                out.insert(([x, y, z], slot), r);
+                            }
+                        }
+                    }
+                }
+            }
+            out
         }
 
         /// Whether the brick whose lowest voxel is `b` lies within `pad` voxels of the box.
@@ -194,7 +314,9 @@ mod dig_line {
 
         /// The timeline's text: a row a frame (the queue's cap and the submit's samples, the
         /// samples in flight on ring 1's bricks, ring 2's and other jobs', the free slots,
-        /// pending, open and unread, the step's and the passes' ms) and under it a row per
+        /// pending, open and unread, the read-back's samples kept and drawn, its ms and mean
+        /// ray length, the prices: the general one and the dig's by class, the step's and the
+        /// passes' ms) and under it a row per
         /// watched chunk (where it is and what holds it); then per dig the frame its ring 1 and
         /// its ring 2 land, ring 1's samples and the samples thrown away with stale jobs.
         #[allow(clippy::too_many_lines, reason = "a reading's report, one pass over the frames")]
@@ -233,10 +355,12 @@ mod dig_line {
                 pool_full = Some(pf);
                 let _ = writeln!(
                     out,
-                    "{fi:4} {:8} cap {:7} sent {:7} | flight r1 {:6} r2 {:6} other {:7} | free {:2} pend {:3} open {:2} unread {} withdrawn {} pool+{pool} | step {:6.3} ms light {:6.3} temporal {:6.3} gpu {:6.2} | waiting {} depth {} digs {}",
+                    "{fi:4} {:8} cap {:7} sent {:7} | flight r1 {:6} r2 {:6} other {:7} | free {:2} pend {:3} open {:2} unread {} withdrawn {} pool+{pool} | read {:7} drawn {:7} in {} at {:.4} ms, ray {:.2}, ns {:.1} price {:.3} ms + {:.2} ns r1 {:.2} dig {:.2} | step {:6.3} ms light {:6.3} temporal {:6.3} gpu {:6.2} | waiting {} depth {} digs {} stretched {} | wait {:.3} ms submits {}",
                     f.label, f.q.cap, f.q.submitted, fl[0], fl[1], fl[2], t.free_slots, t.pending, t.open,
-                    t.in_flight, t.withdrawn, f.q.stages.total_ms, f.light_ms, f.temporal_ms, f.gpu_ms,
-                    f.q.drain_waiting, f.q.depth, f.q.digs
+                    t.in_flight, t.withdrawn, f.q.samples, f.q.drawn, f.q.read_submits, f.q.ms, f.q.ray_len, f.q.ns_per_sample, f.q.fixed_ms, f.q.cost_ns, f.q.ring1_ns, f.q.dig_ns, f.q.stages.total_ms, f.light_ms, f.temporal_ms, f.gpu_ms,
+                    f.q.drain_waiting, f.q.depth, f.q.digs, u8::from(f.q.stretched),
+                    run.issue.get(fi).map_or(0.0, |i| i.0),
+                    run.issue.get(fi).map_or(0, |i| i.1)
                 );
                 let jobs: BTreeMap<[i32; 3], &svet_render::DigTraceJob> = t.jobs.iter().map(|j| (j.coord, j)).collect();
                 let mut seen = BTreeSet::new();
@@ -362,6 +486,49 @@ mod dig_line {
                     })
                     .collect();
                 let _ = writeln!(out, "  cost D+0..8 (step / light / temporal / gpu ms): {}", cost.join(" "));
+                // The pool's reads of this dig's ring, its frames to the next dig.
+                let end = run.digs.get(di + 1).map_or(run.frames.len(), |d| d.0);
+                let first_pool = |want: fn((bool, bool)) -> bool| {
+                    (d0..end).find(|&i| run.pool.get(i).copied().flatten().is_some_and(want)).map(|i| i - d0)
+                };
+                let held = first_pool(|p| p.0);
+                let fresh = first_pool(|p| p.1);
+                let step_at = |i: usize| run.frames[i].q.steps;
+                let took = |i: usize| i > 0 && i < run.frames.len() && step_at(i) > step_at(i - 1);
+                // A fade of 4 frames from ring 1's records applied: frames that took a step.
+                let fade = fresh.map(|r| (d0 + r..d0 + r + 4).filter(|&i| took(i)).count());
+                let unread = d0 > 0 && run.frames[d0].q.in_flight_full > run.frames[d0 - 1].q.in_flight_full;
+                let (wait, submits) = run.issue.get(d0).copied().unwrap_or((f64::NAN, 0));
+                let (apply_ms, over) = run.apply.get(d0).copied().unwrap_or((f64::NAN, 0));
+                let _ = writeln!(
+                    out,
+                    "  pool {}: held record D+{} ring-1 records fresh D+{}; D+0 wait {wait:.3} ms submits {submits}, every slot unread {}, fade steps {}/4; D+0 apply {apply_ms:.3} ms over the cap {over} bytes",
+                    if run.thread { "thread" } else { "lockstep" },
+                    held.map_or("-".into(), |x| x.to_string()),
+                    fresh.map_or("-".into(), |x| x.to_string()),
+                    u8::from(unread),
+                    fade.map_or("-".into(), |n| n.to_string()),
+                );
+                // The dig in ms: from the edit's frame's start to the end of the frame that held
+                // the block and of the one whose ring-1 records were fresh; the mean frame over
+                // the edit's frame to ring 1's; the wait's parts and the frame's laps.
+                let at = |r: Option<usize>| {
+                    r.and_then(|r| run.times.get(d0 + r)).map(|t| t.1 - run.times[d0].0)
+                };
+                let shown = |v: Option<f64>| v.map_or("-".into(), |v| format!("{v:.2}"));
+                let mean = fresh.and_then(|r| at(Some(r)).map(|v| v / (r + 1) as f64));
+                let (p, issue_lap) = run.parts.get(d0).copied().flatten().map_or(([f64::NAN; 6], f64::NAN), |p| p);
+                let _ = writeln!(
+                    out,
+                    "  ms {}: held at {} ring 1 at {} mean frame {}; parts rest {:.3} pickup {:.3} boxes {:.3} step_rest {:.3} snapshot {:.3} handback {:.3} sum {:.3}; issue {issue_lap:.3} apply {apply_ms:.3} submits {submits}; call {:.3}",
+                    if run.thread { "thread" } else { "lockstep" },
+                    shown(at(held)),
+                    shown(at(fresh)),
+                    shown(mean),
+                    p[0], p[1], p[2], p[3], p[4], p[5],
+                    p.iter().sum::<f64>(),
+                    run.frames[d0].q.stages.total_ms,
+                );
                 // The dig frame's step by stage, the stages over 0.5 ms.
                 let st = &run.frames[d0].q.stages;
                 let laps: Vec<String> = svet_render::debug::STEP_STAGES
@@ -371,6 +538,22 @@ mod dig_line {
                     .map(|(n, ms)| format!("{n} {ms:.2}"))
                     .collect();
                 let _ = writeln!(out, "  D+0 stages over 0.5 ms (opened {}): {}", st.opened, laps.join(", "));
+                let lap = |name: &str| {
+                    let k = svet_render::debug::STEP_STAGES.iter().position(|n| *n == name).expect("a stage");
+                    st.ms[k]
+                };
+                let _ = writeln!(
+                    out,
+                    "  D+0 step {:.3} ms render {:.3} movable {:.3} boxes {:.3} digs {:.3} bytes {} {:?}; edit wall {:.3} ms",
+                    st.total_ms,
+                    st.render(),
+                    st.movable(),
+                    lap("boxes"),
+                    lap("digs"),
+                    st.bytes_total(),
+                    st.bytes,
+                    run.edit_ms.get(di).copied().unwrap_or(f64::NAN)
+                );
             }
             let rest = &run.frames[..run.digs.first().map_or(run.frames.len(), |d| d.0)];
             let mean = |k: fn(&HoleFrame) -> f64| rest.iter().map(k).sum::<f64>() / rest.len().max(1) as f64;
@@ -386,11 +569,15 @@ mod dig_line {
             out
         }
 
-        /// Plan 0098 Phase 16 step 1's timeline: `SVET_LINE` is `SCENE/STATE/SEQ/ARM/DRAIN`
-        /// (`above` or `portable`, `drained` or `waiting`, `A` or `B`, `support::defects`'
-        /// dig arm tokens, the most frames the queue drains); the text under
-        /// `live/p16/<adapter>-<scene>-<state>-<seq>-<arm>.txt`, the frames' PNGs beside it with
-        /// `SVET_LINE_PNG` set.
+        /// Plan 0098 Phase 16 step 1's timeline: `SVET_LINE` is
+        /// `SCENE/STATE/SEQ/ARM/DRAIN/PACE/STRETCH/MODE` (`above` or `portable`, `drained` or
+        /// `waiting`, `A`, `B` or `C`, `support::defects`' dig arm tokens, the most frames the
+        /// queue drains, `wait` for the stepper's device-wait mode or `free`, the ring-1 stretch,
+        /// [`svet_render::DEFAULT_RING1_STRETCH`] by default, named `-sX` in the file's name
+        /// otherwise, and `thread` for the bake thread or `lock`, lockstep, by default, named
+        /// `-thread`); the text under
+        /// `live/p16/<adapter>-<scene>-<state>-<seq>-<arm>[-wait][-sX][-thread].txt`, the frames'
+        /// PNGs beside it with `SVET_LINE_PNG` set.
         #[test]
         #[ignore = "reading"]
         fn dig_timeline() {
@@ -399,21 +586,39 @@ mod dig_line {
             let mut part = |d: &str| it.next().filter(|s| !s.is_empty()).unwrap_or(d).to_string();
             let (scene, state, seq, arm) = (part("above"), part("drained"), part("A"), part("default"));
             let drain: u32 = part("30000").parse().expect("SVET_LINE's drain");
+            let wait = match part("wait").as_str() {
+                "wait" => true,
+                "free" => false,
+                p => panic!("SVET_LINE's pace {p}: wait or free"),
+            };
+            let stretch: f64 = part("1.5").parse().expect("SVET_LINE's stretch");
+            let thread = match part("lock").as_str() {
+                "thread" => true,
+                "lock" => false,
+                m => panic!("SVET_LINE's mode {m}: thread or lock"),
+            };
             let adapter = std::env::var("SVET_TEST_ADAPTER").unwrap_or_else(|_| "lavapipe".into());
-            let name = format!("{adapter}-{scene}-{state}-{seq}-{}", arm.replace([',', '='], "-"));
+            let name = format!(
+                "{adapter}-{scene}-{state}-{seq}-{}{}{}",
+                arm.replace([',', '='], "-"),
+                if wait { "-wait" } else { "" },
+                if stretch == svet_render::DEFAULT_RING1_STRETCH { String::new() } else { format!("-s{stretch}") }
+            ) + if thread { "-thread" } else { "" };
             let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../live/p16");
             let png = std::env::var("SVET_LINE_PNG").is_ok().then(|| dir.join(&name));
             if let Some(p) = &png {
                 std::fs::create_dir_all(p).expect("the stills' directory");
             }
             std::fs::create_dir_all(&dir).expect("the reading's directory");
-            let Some((run, _rig)) = line_run(&scene, state == "waiting", &seq, &arm, drain, png.as_deref()) else {
+            let Some((run, _rig)) = line_run(&scene, state == "waiting", &seq, &arm, drain, png.as_deref(), wait, stretch, thread) else {
                 return;
             };
             let text = line_text(&run);
             let summary: String = text
                 .lines()
-                .filter(|l| l.starts_with("line ") || l.starts_with("dig ") || l.starts_with("  cost") || l.starts_with("before"))
+                .filter(|l| {
+                    l.starts_with("line ") || l.starts_with("dig ") || l.starts_with("  cost") || l.starts_with("  pool") || l.starts_with("  ms ") || l.starts_with("  D+0 step") || l.starts_with("before")
+                })
                 .collect::<Vec<_>>()
                 .join("\n");
             println!("{summary}\neye {:?} out {:?}", run.eye, run.out);
@@ -697,7 +902,7 @@ mod dig_line {
         /// the test support opens, with its claims' figures.
         pub(crate) fn claims(seq: &str, waiting: bool, arm: &str) -> Option<Claims> {
             let drain = if waiting { 600 } else { 1 };
-            let (line, _rig) = line_run("above", waiting, seq, arm, drain, None)?;
+            let (line, _rig) = line_run("above", waiting, seq, arm, drain, None, false, svet_render::DEFAULT_RING1_STRETCH, false)?;
             let land = ring1_landings(&line);
             let hold = !arm.split(',').any(|t| t == "hold=off");
             let LineRun { frames, digs, out, eye, head, .. } = line;
