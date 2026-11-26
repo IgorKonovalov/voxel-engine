@@ -1313,7 +1313,7 @@ into the manifest, the final shoot) are Phases 5b and 6a's. Its Done when stands
 | 3: the image gate, fragments, CI | dev | done; readings in [the log](logs/0093.md) | `5b3fdd71` |
 | 4: candidates and contact sheets | dev | done; sheets under `target/shots/candidates/`; readings in [the log](logs/0093.md) | committed with this row |
 | 5: the owner picks | human | done 2026-11-26: seven picks, three re-shoots, no drop (F1, verbatim) | recorded by the architect |
-| 5b: the re-shoot round (dig, walkers, castle) | dev | not started | |
+| 5b: the re-shoot round (dig, walkers, castle) | dev | done but walkers 4 (settled start fails near the crystals); no sun reaches the nave; the default body is the spider; page and readings in [the log](logs/0093.md) | committed with this row |
 | 5c: the owner confirms the three | human | not started | |
 | 6a: the merged tree, the noise sets, the final shoot | dev | not started; waits on 5c, Plans 0105 and 0106 in main | |
 | 6: the rewrite | dev | not started | |
