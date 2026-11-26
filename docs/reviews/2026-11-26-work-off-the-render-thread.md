@@ -346,3 +346,13 @@ The roadmap's order does not move: 0101 and 0105, 0093, then 0091. Step 1's lane
 5. **The dig's frame (about 44 ms):** (a) **leave the wait, recommended:** it is the
    picture's guarantee; the cut is the dig step's length, with Plan 0105 and the feed's
    follow-on. (b) Reopen question 8 of Plan 0099.
+
+**The owner's answers (2026-11-26): "all recommended".** 1 (a): drafted the same day as
+[Plan 0107](../plans/0107-the-mirrors-slot-image-packed-on-the-stream-workers.md), Phase 1 the
+re-read, the lane after Plans 0101 and 0105 merge. 2 (a): drafted as
+[Plan 0108](../plans/0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md),
+the pre-roll reading beside Plan 0093, the cold-pipeline split before the next tester archive.
+3 (a): the two rules, and a third (no job system or thread pool dependency without an ADR),
+are in the architect's best practices; the thread count's sum in one place is Plan 0107's
+Phase 7. 4 (a): the backlog, as written. 5 (a): the wait stays. Both plans are drafts and
+await his go.

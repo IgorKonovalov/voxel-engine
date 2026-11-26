@@ -7,7 +7,7 @@ The engine was `voxel-engine`, with crates `vxe-*`, variables `VXE_*` and the WI
 `vxe:logic`, until Plan 0087 renamed it `svet` (v0.73.0); records from before keep those names,
 and `vxe-<x>` reads as `svet-<x>`.
 
-**Next free number: 0106** (0105 the dig's flash at depth, approved 2026-11-26; 0104 the wobble anchored to the owner's eye, closed 2026-11-26; 0101 the record by rule at every opening, approved 2026-11-24; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
+**Next free number: 0109** (0107 the mirror's slot image packed on the stream workers and 0108 the start-up readings, drafted 2026-11-26 from the review of work off the render thread; 0106 is taken by a test-reliability plan on a branch not yet in main; 0105 the dig's flash at depth, approved 2026-11-26; 0104 the wobble anchored to the owner's eye, closed 2026-11-26; 0101 the record by rule at every opening, approved 2026-11-24; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
 the sky around the camera; 0098 the calm light by default, closed 2026-11-24; 0099 the bake
 step off the main thread, closed 2026-11-26; 0100 a sun fixed in the world, closed 2026-11-25; ADRs are a separate sequence, see `../adrs/README.md` for its next
 free number). Plan 0095, the motion wobble (a calm key light in motion), closed 2026-11-21,
@@ -47,6 +47,8 @@ what is left under the defaults is in the backlog.
 | [0101](0101-the-record-by-rule-at-every-opening-an-audit-on-the-real-scenes-first-then-the-three-exclusions-lifted.md) | The record by rule at every opening: an audit first, then the exclusions lifted | approved 11-24 | ADR-0085 (proposed). After 0100 P2 and 0099's close. |
 | [0103](0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md) | A pipeline cache for the renderer: the driver's cache through wgpu in an engine envelope, bytes the consumer keeps | draft, parked 11-24 | ADR-0087 (proposed). Parked: the driver's cache already warms a second start (logs/0103.md). |
 | [0105](0105-the-digs-flash-at-depth-a-held-estimate-that-follows-the-holes-own-light.md) | The dig's flash at depth: a held estimate that follows the hole's own light | approved 11-26 | After 0099. P1 reads the blink at depth; the fix is a setting until the window. |
+| [0107](0107-the-mirrors-slot-image-packed-on-the-stream-workers.md) | The mirror's slot image packed on the stream workers | draft 11-26 | ADR-0056. P1 re-reads the sync and can stop it. Lane after 0101 and 0105 merge. |
+| [0108](0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md) | The start-up readings: a shorter pre-roll, the cold pipelines split | draft 11-26 | A chore, no ADR. Beside 0093. P3 before the next tester archive. |
 <!-- roster:end -->
 
 ## Sequence
@@ -260,6 +262,16 @@ while the view bakes 8.3 ms against 21.9. Missed and disclosed: the RTX feeds 0.
 its drain slice against 0.85 and its forest's view is final at 17.9 and 19.0 s against 10 (the
 backlog's "The bake thread's feed on the RTX"). The dig's flash at depth he named after the
 window is the same with the thread off and is Plan 0105's (drafted 2026-11-26).
+
+**Plans 0107 and 0108** (drafted 2026-11-26, not approved; from
+[the review of 2026-11-26](../reviews/2026-11-26-work-off-the-render-thread.md), the owner's
+"all recommended"). **Plan 0107** packs the mirror's slot image on the stream workers
+(ADR-0056): its Phase 1 re-reads the sync's stages with the bake thread on and may run beside
+Plans 0101 and 0105; its lane starts after both merge (`bake/faces.rs`), before or beside Plan
+0091. **Plan 0108** is a chore of start-up readings: a `--pre-roll` setting read headless and
+then by the owner's eye, beside Plan 0093 (textual overlaps only), and the cold pipelines on
+several threads before the next tester archive; it does not run at the same time as Plan 0103
+(parked; the same pipeline builders).
 
 **Plan 0100** (closed 2026-11-25, v0.75.0, ADR-0084 accepted, superseding two clauses of
 ADR-0079: no default changed but the bake's key ray at its cap; `key cover`, `key at` and `key
