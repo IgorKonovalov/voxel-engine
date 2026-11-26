@@ -882,6 +882,10 @@ up to 4 under where today's starts 3 over; (b) as written: within 4 of today's f
 more than 1 under settled at the dig's first frame, which on these tables needs the root on
 every face and brings back parts over their landed light at 2 m.
 
+## Amended 2026-11-26 (owner, the shallow dig's bar)
+
+The owner took option (a) of the question under "Phase 4's two misses": **the 1 m dig stays within 4 levels of its settled look, on either side.** It may start up to 4 levels dark where today's dig starts 3 levels bright; B2 reads as restated in that section, and Phase 4c is judged against it. The earlier wording (within 4 levels of today's frames) is withdrawn.
+
 ## Data shapes
 
 ```rust
