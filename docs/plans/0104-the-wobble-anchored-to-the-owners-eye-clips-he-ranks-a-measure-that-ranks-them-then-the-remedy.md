@@ -2,7 +2,9 @@
 
 > **Status:** in progress: **closing. The owner answered question 4 (a), close (2026-11-26):
 > no remedy; Phase 6 (6a, 6b, 6c) is next, then the fresh-session close review** ("Amended
-> 2026-11-26 (owner)"). Before it: Phase 5 landed
+> 2026-11-26 (owner)"). Phase 6a stopped at the settings-rows walk and is ruled ("Amended
+> 2026-11-26 (architect, after Phase 6a's stop)"): one test-file fix, one short rerun, then
+> 6b. Before it: Phase 5 landed
 > (2026-11-26): 5a holds by its refutation rule (`T b`'s clip total 0.01515 -> 0.01123 held, line
 > (b) at T in his order; the under-0.002 figure missed on each hold's first window), 5b reads the
 > upscaler (outlines 0.007 levels with it off). Before it: Phases 0, 1, 2, 0b and 4 landed (2026-11-25); stopped for the
@@ -1086,6 +1088,110 @@ A fresh session, after 6c. The gate tier is not run again without cause (owner,
 ### Owner questions
 
 None open. A push stays his word.
+
+## Amended 2026-11-26 (architect, after Phase 6a's stop)
+
+Phase 6a stopped at its gpu hold (the wip commit `e8325704`; the log's "Phase 6a"): the sole
+rows walk, `gpu_settings_rows::every_settings_row_changes_the_image_or_is_listed_inert`,
+reads `lighting.key_cover` at 0 pixels under `ray`, the one value left. A code reading, no
+run; the distances below are arithmetic from the fixture, not readings. Nothing above is
+rewritten; where this section differs, this section rules.
+
+### Why `ray` changes nothing in the walk
+
+- The light pass reads the cover ray (`key_cover_near`, `sky_light.wgsl`) only at a cube
+  face the store answers (`key_from_store`, `shade.wgsl`: every cube face under the
+  defaults, key far column with no light history), and only where
+  `far_normal_weight < 0.5`: where a voxel spans more than the middle of the far normal's
+  band, 6 pixels under the default `[4, 8]`.
+- The walk's frame is 192 x 108, rendered 128 x 72 (FSR 2 at 1.5), the camera's vertical
+  field 70 degrees: a voxel spans 6 pixels at about 8.6 voxels if the view's width is the
+  render size (12.9 if the output's). The nearest cube face in view is the floor at the
+  frame's bottom edge, about 11.4 voxels off. So no face is inside the near, or the few
+  that are sit under the roof where the ray agrees with the horizon. The removed `record`
+  acted at every distance, which is why the row read live before.
+- `far_normal_weight` returns 0 at every distance when the band is off
+  (`far_hi <= far_lo`, `look.far_normal = [0, 0]`). Then the cover ray is read at every
+  cube face of the frame. Inside the shelter the floor's own column top is the roof, so the
+  horizon reads 0 (`column_key_visibility`, "under its own cell's top"), while a ray toward
+  a sun 35 degrees up beyond the open side leaves under the roof's edge from the floor
+  within about 28 voxels of the opening. That floor is in the middle of the frame.
+  `gpu_sun`'s `the_approach_penumbra_under_the_column_scores_the_cover_ray_alone` sets the
+  same `far_normal: [0.0, 0.0]` to make the cover ray act on a 64 x 64 frame.
+
+### The ruling: listed absent in the walk, and proved live there with the far normal off
+
+Neither (a) nor (b) as offered:
+
+- **Not `INERT_WHEN` (b).** The window reads that table and marks the menu entry `(inert:
+  why)` when the row's condition holds under the run's settings. The condition here is not
+  one of settings: it is the frame's size and where the camera stands. A row "inert while
+  the far normal is on" would mark `key cover` inert in every default window, where a face
+  within some 85 voxels (1280 wide) takes the ray. `apps/flythrough/src/inert.rs` is not
+  touched; its penumbra clause on `KeyCover::Ray` stays as the table of "What stays and
+  what goes" says.
+- **Not a bare listing (a).** The owner kept `ray` as the parked crowns' control; a walk
+  that only says "absent here" would let the setting die unnoticed.
+- **The ruling, in the test file alone:** `lighting.key_cover` joins the walk's `INERT`
+  with `Why::Absent` (words to the effect of "a cube face inside the far normal's near:
+  none spans 6 pixels at 128 wide"), and the walk gains a test-local table of live proofs
+  beside it, `LIVE_UNDER: &[(&str, fn(&mut RenderSettings))]`, one entry: `lighting.key_cover`
+  under `look.far_normal = [0.0, 0.0]`. The walk treats an entry as it treats
+  `INERT_WHEN`'s `live_under`: the reference is the defaults with the arrangement set, the
+  row's test value is flipped on it, the flip changes at least `MIN_PIXELS`, and the
+  reference repeats to the byte after. Every `LIVE_UNDER` row is asserted to be in `INERT`
+  as `Why::Absent`. The claim and the bar are as written (every row changes the image or
+  is listed with its reason; 20 pixels); one assertion is added, none is loosened. No scene,
+  camera or frame size changes (option (c) is refused: the owner's rule of 2026-11-22).
+- **The dev's one run decides.** If the flip under the far normal off changes under 20
+  pixels, the code reading above is wrong about the scene, and no other arrangement is
+  tried: the row is listed `Why::Open` with the arrangement and the count in its words,
+  `LIVE_UNDER` is not added, the walk is run once more to read it green, the miss is a
+  line in the Implementation log's Notes, and the architect adds the harness chore's
+  backlog line at the report. The row's liveness then stands on `gpu_sun`'s test named
+  above, which passed in 6a's hold.
+
+### The three deviations
+
+| deviation | ruling |
+|---|---|
+| `COLUMN_BLOCK`, `COLUMN_BLOCKS` removed | **stands.** They size the coarse rows alone, which the table removes "with their upload"; a public constant for data that no longer exists is not kept. The close ceremony's `CHANGELOG.md` list gains them and `column_coarse_texel` |
+| `apps/flythrough/tests/support/levels.rs` deleted | **stands.** It is the CPU port of the walk's coarse levels; its one reader's rows went with the walk |
+| `Params::column_top` and `GpuWorld::column_top_max` kept, unread by any pass | **stands for this close.** The word took a pad slot (Plan 0100), so the layout is as shipped and no shader is recompiled over it; removing it now would reopen 6a's gpu hold for no change on screen. It is parked in [`docs/backlog.md`](../backlog.md) ("The sun's term at small faces", the last bullet). The field's comment already says no pass reads it; `the_column_top_max_is_the_maps_maximum` stays as the accessor's test |
+
+### What remains of Phase 6a (one dev brief)
+
+- **Owner skill:** dev
+- **What:**
+  1. `apps/flythrough/tests/gpu_settings_rows.rs` only: the `INERT` entry, the `LIVE_UNDER`
+     table and its loop as ruled; the test's doc comment says what the table proves. No
+     file under `src/` changes.
+  2. Outside the lock: the build of the test, the phase's clippy, fmt, the quick tier,
+     every `scripts/check-*.mjs`.
+  3. One hold of the perf lock, lavapipe: the rows walk alone by name (`-p flythrough`,
+     the binary `gpu_settings_rows`, `--run-ignored only`), about 20 s by its last
+     readings. 6a's other gpu binaries are not run again: no production file moves.
+  4. The log: the "Phase 6a" section gains the rerun (the row's count under the defaults
+     and under the far normal off, the walk's time, the lock, the load), its header no
+     longer says stopped, and the resume notes are deleted.
+  5. The real commit after the wip (no amend), with the Implementation log's 6a row
+     backfilled (done; `e8325704` (wip) and this commit) and one line each in Notes for the
+     three deviations and for the rows walk's ruling.
+- **Done when:** the rows walk passes with `lighting.key_cover` read under 20 pixels under
+  the defaults and at least 20 under the far normal off, both counts in the log; or the
+  fallback above, with its second run green and its Note.
+- **Stops, reported:** the walk fails on anything but this row (another row, a "defaults
+  repeat" or a "repeats after" assertion); the fix needs a file under `src/`, a scene, the
+  camera or the frame's size; a hold projected past 20 minutes.
+
+Then Phase 6b as written.
+
+### What the close review checks, added
+
+8. **The rows walk's ruling is carried out:** the reviewer opens the `LIVE_UNDER` loop and
+   reads that it asserts the count and the repeat (or reads the `Why::Open` words and the
+   backlog line of the fallback); `inert.rs` is as it was at `8f5a3eab` but for the
+   removed values; the unread `Params::column_top` is in the backlog, not forgotten.
 
 ## After Phase 4: the stop, and the candidate remedies
 
