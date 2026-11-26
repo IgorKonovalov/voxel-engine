@@ -191,7 +191,7 @@ plan's, unmoved; a miss is disclosed with what holds it.
 The figures beside these lines (the per-second budget, the `taskset` arm, the RENOIR dig's
 withdrawn samples, and the readings not taken) are in
 [`docs/nfr/02-frame-budget.md`](nfr/02-frame-budget.md). The dig's frame, an edit's wait and
-ring 1 on the bake thread are section 4's, pinned at Plan 0099's last phase.
+ring 1 on the bake thread are section 4's ("An edit's light"), pinned at Plan 0099's Phase 6d.
 
 **Disclosed at the close review (2026-11-23):** the record by rule (ADR-0080 rule 1)
 answered 236 of the 3 540 buried chunks of the RTX's forest (233 to 241 of 3 526 on the hills)
@@ -246,6 +246,29 @@ Every reading against these budgets, with its machine and commit, is in
   6.4 MB, if every touched brick is non-uniform) fits in the streaming line of §2.
   Readings in `docs/nfr/04-edits.md`.
 - **Results** are returned synchronously with the edit, per material, exact.
+- **An edit's light (Plan 0099, ADR-0083; pinned at its Phase 6d, 2026-11-26, the bake thread on
+  (`--bake-thread on`), 16 table rows, depth 3; RTX 3080 Laptop at Floor 1920 x 1080, RADV
+  RENOIR at Portable 1280 x 720; exclusive perf lock per run, quiet at the lock; readings in
+  [`docs/nfr/04-edits.md`](nfr/04-edits.md)):**
+  - *The edit's wait* (the render thread's wait on a dig's frame for the step that read its
+    box, less the rest of a step in progress at the send, per dig frame) **at most lockstep's
+    bake call on the same dig frames**: RTX forest while in view waits 14.5 and 21.8 ms p50
+    against lockstep's 24.3 and 23.6, after 5.8 and 6.3 against 7.7 and 12.7: **met**. RENOIR
+    forest after 4.5 and 4.2 against 5.6 and 5.3: met; while in view waits 10.6 and 12.6
+    against 10.9 and 9.3: **not resolved** between equal and missed (the line prints a run's
+    p50, so the pooled p50 is bracketed: 10.6 to 12.6 against 9.3 to 10.9), disclosed.
+  - *Ring 1* applied within lockstep's ms on the same dig plus two of lockstep's frames on it
+    (the dig rig): **met** on every dig, by 69 to 83 ms at the p50 (RTX waiting A and B,
+    RENOIR drained B). **Disclosed:** a dig that finds every table row with rounds in flight
+    lands ring 1 one round trip later (3 of 12 RTX waiting B digs, 133 to 144 ms against 78 to
+    118); how often at the window's pace is not read.
+  - *A dig's frame and the light at the dig* (a reading, no line; the fly-through's
+    `dig settled:` rows, RTX forest): the longest frame from a dig while the queue is deep
+    about 44 ms with the thread on and 45 off (the frames around it 8.4 against 21.9), about
+    20 against 32 once drained; rings 1 and 2 landed about 170 ms after the dig on, 230 off,
+    and 95 against 127 drained. RENOIR: 48 against 43 ms, 28 against 34; 255 against 249 ms,
+    177 against 161. The owner at the window: "dig is good as well", with a flash at depth
+    routed to the backlog ("A dig flashes with light").
 - **Stamp cost (proposals, Plan 0008):** a 16³ prefab stamp (the shelled box `Prefab::vault`)
   into solid rock costs under 100 µs, and a 64³ all-written prefab under 5 ms, both including
   the `EditResult` tally. Brick prefabs (Plan 0083, ADR-0066): `prefab64_mixed` 3.86 ms, 1.4 %
