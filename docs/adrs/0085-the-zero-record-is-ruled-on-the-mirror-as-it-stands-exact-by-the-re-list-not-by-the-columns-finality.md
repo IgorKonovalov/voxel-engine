@@ -54,13 +54,26 @@ switched on per exclusion only where an audit on the real scenes (every block a 
 a chunk the rule would have answered, compared with the rule's record) reads 0 blocks that
 differ.
 
+**Two clauses added at Plan 0101's close review (2026-11-26, before acceptance)**, each a way
+the invariant above was not enough as first written:
+
+- **The verdict is read on the shadow of the step that writes the record.** A verdict carried
+  from an opening to a later step (the listing pool under the bake thread) is read again
+  where the record is written, because the re-list reads only chunks already zeroed.
+- **A ruled record's faces are part of what it must match.** A listing reads a neighbour the
+  world's store does not hold as rock, so a chunk ruled beside an absent neighbour is listed
+  again when that neighbour is held full, and ruled again on the faces as they stand. Without
+  it the record is final on faces the stream's order chose.
+
 ## Consequences
 
 ### Positive
 - The rule answers the chunks it describes: no GPU job, no provisional bake and catch-up, one
   landing fewer for each buried chunk under a column not final.
 - A ruled record's bytes do not depend on which chunks were resident when a partial job would
-  have cast, nor on the adapter: it is written on the CPU from the listing.
+  have cast, nor on the adapter: it is written on the CPU from the listing. (Its faces do
+  depend on which of its six neighbours the store held at the listing; the second clause
+  above is what removes that.)
 - The correctness argument is one invariant on the mirror's change list, testable case by
   case, in place of a condition (finality) that excluded nearly every chunk while the world
   streams in.

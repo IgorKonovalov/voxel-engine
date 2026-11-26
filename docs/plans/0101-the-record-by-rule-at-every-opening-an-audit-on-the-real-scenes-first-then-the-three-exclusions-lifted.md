@@ -1,6 +1,8 @@
 # 0101: The record by rule at every opening: an audit on the real scenes first, then the three exclusions lifted
 
-> **Status:** implemented, awaits the close review (lane `plan-0101`, Phases 1 to 3 done 2026-11-26); approved (owner, 2026-11-24: lane after Plan 0099 closes; drafted 2026-11-24 with no interview; the guesses
+> **Status:** a fix pass is owed, Phase 4 (the close review of 2026-11-26 found two cases where a
+> ruled record is not the one a bake writes, both by reading the code, neither covered by a test
+> or by the audit; section "The close review"); Phases 1 to 3 done 2026-11-26 on lane `plan-0101`; approved (owner, 2026-11-24: lane after Plan 0099 closes; drafted 2026-11-24 with no interview; the guesses
 > and the open questions are under "Risks & open questions", each with a recommended option).
 > **Order (recommended, question 1):** after Plan 0100's Phase 2 and **after Plan 0099 closes**,
 > not ahead of its Phase 1 as Plan 0096's close ruled; the reasons are under "The order".
@@ -328,6 +330,67 @@ clause). Dev confirms it before Phase 1 by running that phase's test
   6. The gate at the tip: build, `cargo nextest run --profile gate`, doctests, clippy, fmt,
      `cargo deny check`, the doc gates.
 
+### Phase 4: The fix pass: the verdict read where the record is written, the border faces, the bytes
+- **Owner skill:** dev
+- **What:** The close review's findings 1 to 3 (section "The close review"), in this order.
+  Each of the first two starts with its test, written first and read **red on `111a85d7`**; a
+  test that is green there refutes the finding: dev stops that item, says so in the log, and
+  builds nothing for it.
+  **(a) The verdict at the push.** A listing the pool hands back carries the `ruled` verdict
+  its opening read (`Listing::ruled`, `lister.rs`), and `take_listed` writes the record on it
+  in a later step. The rule is read again at the push, on the shadow of the step that writes
+  the record; where it no longer holds the listing is dropped and the chunk stays a candidate
+  (a later opening lists it by a job). Lockstep lists in the opening's own step and does not
+  change.
+  **(b) The border faces.** A listing reads a neighbour that the world's store does not hold
+  as rock (`list_faces_by`, `faces.rs`), so a chunk ruled while one of its six neighbours is
+  absent (not streamed in yet, or LOD-only past the full radius) holds no face across that
+  border, for good: no catch-up and no partial re-queue lists it again as they did for the job
+  it replaces. A ruled chunk remembers which of its six neighbours the shadow did not hold
+  full when its record was written; when one of them is held full (a mirror change the step
+  reads) the chunk is listed again through the re-list's own path (`reach`, class 1), where
+  the rule answers it again with the faces of the world as it stands and no job. A chunk
+  ruled with its six neighbours held is never listed again by this. If dev finds a cheaper
+  mechanism with the same answers, it is named in the log and the tests decide.
+  **(c) The bytes, done-when (5) of Phase 3 restated.** `--queue-rule-reading` writes, once
+  the queue is empty (and at the run's end), the zeroed chunks' count and one hash of their
+  blocks on the `bake queue:` line, and in `run.json` each zeroed chunk's coordinate and block
+  hash (every word but the landing word, `LANDED_AT`). The whole store's hash is printed
+  beside it as a reading: a job's record on a partial reach depends on what was resident when
+  it cast (ADR-0080 rule 4), which is not this plan's to fix, so that hash is no bar.
+- **Files touched:** `crates/svet-render/src/bake/queue/{lister,list,rule,step,mod,stats}.rs`,
+  `crates/svet-render/src/bake/queue/split_tests/{rule,lister}.rs`,
+  `apps/flythrough/src/report/queue.rs`, `apps/flythrough/src/run/queue.rs`,
+  `apps/flythrough/tests/queue_line.rs`, `docs/flythrough.md`, `docs/nfr/02-frame-budget.md`,
+  `docs/plans/logs/0101.md`.
+- **Done when:**
+  1. `a_ruled_verdict_is_read_again_where_its_record_is_written` (CPU, the pooled rig of
+     `split_tests/lister.rs`, under 2 s): `C` is ruled at an opening and its listing is in the
+     pool's hands; a message lowers a footprint column's top to its reach box before the
+     listing is pushed; after the push `C` is not zeroed and holds no zero record, and it
+     settles with one job's block. Red on `111a85d7`.
+  2. `a_ruled_chunk_lists_its_border_faces_when_the_neighbour_arrives` (CPU, the rule's rig,
+     under 2 s): `C` holds rock against a neighbour `N` that holds air there, `N` not in the
+     world's store at `C`'s opening; `C` is ruled with 0 jobs. `N` arrives: `C`'s block
+     becomes the zero record of its faces listed with `N` present (more faces than before,
+     asserted), with 0 jobs, still zeroed, the four flags clear. A second chunk ruled with its
+     six neighbours held is not listed again when a chunk outside them arrives. Red on
+     `111a85d7`.
+  3. Phase 2's three CPU tests, `gpu_bake_rule`, `gpu_queue`, `gpu_bake` and the two soak
+     rigs by name pass unchanged (lavapipe). Binaries: `gpu_bake_rule gpu_queue gpu_bake`.
+  4. **The bytes on the real scene:** the RTX forest from the same start at a still camera to
+     the empty queue, twice in lockstep and twice with `--bake-thread on`: within each pair,
+     every chunk zeroed in both runs has the same block hash. The zeroed sets' sizes and their
+     difference, and the whole store's hashes, are stated as readings. A block that differs
+     stops the plan with the chunk and the first differing word.
+  5. **The thread, read at the tip:** one RTX forest run with `--queue-rule-audit
+     --bake-thread on` reads 0 blocks that differ in every case; one plain run with
+     `--bake-thread on` states the zero records, the re-listed count and the drain rows as
+     readings beside the lockstep rows (loaded or quiet, labelled).
+  6. **The step does not pay for it** (Phase 3 (4)'s stop, again): RTX forest regime B p50
+     within 10 % of Phase 1's base (14.347 ms), with the count of chunks listed again by (b).
+  7. Quick tier, clippy, fmt, the doc gates. The gate tier is the re-review's.
+
 ## Data shapes
 
 No record, buffer or shader changes. The queue's statistics gain the audit's counts.
@@ -432,6 +495,71 @@ once he says go).
 - **A dig's ring and the held record** (Plan 0098): their jobs are not listing jobs.
 - **Any scene, model or material change.**
 - **Windows readings** (owner, 2026-11-15: once in a while, not per plan).
+
+## The close review (2026-11-26, architect): not closed, Phase 4 is owed
+
+Reviewed cold at `111a85d7` (main `69d5ce97` in it). The three phases did what they say, the
+tests assert what the done-whens claim, and the nfr rows claim no more than one lockstep run a
+scene supports. Two findings need code. **Both come from reading the code, not from a failing
+run**, which is why each item of Phase 4 starts with a test that must be red first.
+
+1. **major: a ruled verdict is written on a shadow it was not read on (the bake thread
+   only).** The opening reads the rule (`open.rs`, `note_checked`); with the listing pool
+   (`lists_off_the_loop`, the bake thread's sliced steps, so the owner's window) the verdict
+   rides in `Listing::ruled` and `take_listed` (`lister.rs`) writes the record and adds the
+   chunk to `zeroed` one or more steps later, without reading the rule again. A step's order
+   is `shadow.take`, `relist_zeroed`, then `take_listed` (`step.rs`): a mirror change that
+   arrives between the send and the push is re-listed against a zeroed set that does not hold
+   the chunk yet. If no later change lands within the light radius of its column, the chunk
+   keeps a zero record the rule no longer answers: ADR-0085's dark cave. The path is Plan
+   0099's and held for ADR-0080's narrow rule too; this plan widens it from a dig in the gap
+   to every upload and LOD swap while the world streams in. Lockstep lists in the opening's
+   step, so no reading or test of Phases 1 to 3 crosses it, and the audit holds the rule back.
+2. **major: a ruled record lacks the faces across a neighbour absent at its listing, for
+   good.** `list_faces_by` reads an absent neighbour as rock. `bakeable` asks nothing of the
+   six neighbours: a chunk whose reach crosses the full radius is ready as soon as nothing in
+   its reach is pending in the mirror, with neighbours the streamer has not brought yet or
+   holds LOD-only. Before this plan such a chunk baked by a job flagged provisional or
+   partial and the catch-up or the re-queue listed it again; a ruled record is final, and the
+   re-list reads column tops and emitters, not neighbours. So the record is not the one a
+   bake of the whole world writes, its bytes depend on the order the stream brought the
+   chunks in, and a border face reads through the no-record chain (the chunk's summary, the
+   column, a ray) in place of a record. Read from the shaders that chain answers dark where
+   the rule holds, so the image may be the same; that is not measured. The audit compares a
+   job's block with the zero record **of the job's own faces**, so it cannot see this. The
+   `faceless` set has the same dependence and predates this plan (backlog at the close).
+3. **major: done-when (5) of Phase 3 is unmet and cannot be restated on the evidence in
+   hand.** `a_tiers_record_bytes_are_the_same_on_every_run` is a bounded lavapipe rig with
+   every chunk resident: it defends a job's bytes there, not a ruled record's on a streamed
+   scene. "Written on the CPU from the listing" holds for the words, and finding 2 is the
+   listing's input it leaves out. Phase 4 (c) restates the bar on the ruled records alone.
+
+Rulings on what the lane left open:
+
+- **The ruled record's tier 0** (the field the audit masked on every block): sound. The
+  listing gives it `job_count` `u32::MAX` and `job_coarse` false, so its `block_count` is
+  never `below` a band's count and it is not coarse: no refinement lists it, `landed` counts
+  it, and a retier withdraws only pending jobs, which it never is. Over a coarse block it
+  ends the refinement that block was due, once. The re-list sends it through `reach` to a
+  job at its band's count, whose landing replaces the count. The tier bits are read only by
+  `record_tier` (the audit, `gpu_bake_tiers`); the image's reads mask them.
+- **Phase 2 done-when (3)** stands as built and is restated: the re-list is asserted in the
+  step that reads the change (out of `zeroed`, due in `reach` or in a job), the job by the
+  queue's order, one job and one fade at the settle. A re-listed chunk is a ring 3
+  candidate like any other; the done-when's "with a job in the step" asked for more than the
+  queue promises any candidate.
+- **The two soak-born rigs:** the gate keeps the claim through the three CPU tests (each red
+  with the old condition, read by hand in Phase 2) and the gate's
+  `a_buried_chunk_with_no_emitter_in_reach_gets_the_bakes_bytes_without_a_job`, which holds
+  `zero_block` against a GPU bake. A gate-sized form of the two rigs goes to the backlog at
+  the close.
+- **The readings** are lockstep, one run a scene, the RTX rows "not separable": the nfr text
+  says so and no line moves. Phase 4 (5) adds the thread's.
+
+The gate on `111a85d7`, the lane's one gate run, is in the readings log ("The close review").
+For the close after Phase 4: the backlog entries (a gate-sized rule rig; the `faceless` set's
+neighbours; a re-listed chunk's place in the order), ADR-0085's acceptance with its Outcome,
+v0.78.0.
 
 ## Implementation log
 
