@@ -1,7 +1,6 @@
 //! Plan 0100 Phase 6's reading: the cover arms (`Lighting::key_cover`) rendered at Phase 5's
-//! poses and read off the frames. One fresh start under `record` (the key words' landing, a
-//! census every `CENSUS_EVERY` frames with the key slot read back), then exposure pinned and
-//! the queue stopped, each arm in turn rendered from the same store: its still, its key value
+//! poses and read off the frames. One fresh start under `off` (a census every `CENSUS_EVERY`
+//! frames), then exposure pinned and the queue stopped, each arm in turn rendered from the same store: its still, its key value
 //! at every lighting pixel against Phase 5's reference (64 rays a face), its display against
 //! `off`'s on the truly shadowed pixels, the sun-patch class's change a pair at a still camera
 //! and after a turn.
@@ -9,11 +8,7 @@
 use super::*;
 
 /// The arms in the order rendered; `off` first, the base every leak is read against.
-const ARMS: [svet_render::KeyCover; 3] = [
-    svet_render::KeyCover::Off,
-    svet_render::KeyCover::Ray,
-    svet_render::KeyCover::Record,
-];
+const ARMS: [svet_render::KeyCover; 2] = [svet_render::KeyCover::Off, svet_render::KeyCover::Ray];
 
 /// Frame pairs the still camera's change is read over, and the frames the turn holds away.
 const PAIRS: usize = 32;
@@ -101,7 +96,7 @@ mod reading {
     }
 
     /// `SVET_COVER_ARMS=<pose>[+<arm spec>]` (`w3`, `w1` or `slot`; the spec as the wobble
-    /// rig's, `keyhorizon=walk` the one Phase 6 reads beside the default): the arms' table,
+    /// rig's): the arms' table,
     /// printed and written to `live/wobble/cover/arms-<tag>.txt`, the stills beside it.
     #[test]
     #[ignore = "reading"]
@@ -145,7 +140,7 @@ mod reading {
                 ..f.lighting()
             })
         };
-        set_cover(&mut f, svet_render::KeyCover::Record);
+        set_cover(&mut f, svet_render::KeyCover::Off);
         let mut s = Stepper::new(rig, f);
         let eye = cam.position.to_array();
         let mut out = format!(
@@ -154,9 +149,8 @@ mod reading {
             cam.yaw.to_degrees(),
             cam.pitch.to_degrees(),
         );
-        // The fresh start under `record`, the key slot kept at each census.
+        // The fresh start under `off`.
         let t0 = std::time::Instant::now();
-        let mut series: Vec<(usize, f64, Vec<[f32; 4]>)> = Vec::new();
         let mut k = 0usize;
         loop {
             let q = coarse::step_queue(rig, &mut s.frame, &cam);
@@ -165,21 +159,18 @@ mod reading {
             if !k.is_multiple_of(CENSUS_EVERY) && k < START_MAX {
                 continue;
             }
-            let pair = svet_render::debug::read_rgba16f(
-                &rig.device,
-                &rig.queue,
-                s.frame.visibility_pair(),
-            );
-            series.push((k, t0.elapsed().as_secs_f64(), pair));
             let drained = q.drain_waiting == 0 && q.jobs == 0 && !q.draining;
             if drained || k >= START_MAX {
                 break;
             }
         }
         out.push_str(&format!(
-            "fresh start under record: {k} frames, {:.1} s (wall, RTX-step rig, not the fly-through's drain)\n",
+            "fresh start under off: {k} frames, {:.1} s (wall, RTX-step rig, not the fly-through's drain)\n",
             t0.elapsed().as_secs_f64()
         ));
+        // The shared settle on from there, so the arms read a whole census.
+        let st = support::baked::settle(rig, &mut s.frame, &cam, 0, "cover arms settle");
+        out.push_str(&format!("{}\n", st.line()));
         // Exposure pinned, the queue stopped.
         let st = svet_render::debug::read_buffer(
             &rig.device,
@@ -304,21 +295,6 @@ mod reading {
                 100.0 * r.leak[2] as f64 / nd
             ));
         }
-        // Before the record lands: `record`'s shown share at each census (the fresh start ran
-        // under it).
-        let fin = shown(&keys[2], &keys[0], &refs);
-        let mut at90 = None;
-        out.push_str("record during the fresh start (frame, s, shown under cover):");
-        for (k, t, pair) in &series {
-            let v = shown(&key_of(pair), &keys[0], &refs);
-            if at90.is_none() && v >= 0.9 * fin {
-                at90 = Some((*k, *t));
-            }
-            out.push_str(&format!(" {k} {t:.1} {:.2} %;", 100.0 * v));
-        }
-        out.push_str(&format!(
-            "\n  90 % of the settled share at {at90:?} (frame, s)\n"
-        ));
         // Steady at a still camera, and present after a turn: the patch's edge class.
         let mut turned = cam;
         turned.yaw += std::f32::consts::FRAC_PI_2;

@@ -263,6 +263,7 @@ pub(super) fn fsr_split(rig: &mut Rig, cam0: Camera, arm: &Arm) {
         queue_step(rig, &mut s.frame, &cam0);
         s.run(rig, &cam0);
     }
+    support::baked::settle(rig, &mut s.frame, &cam0, 0, "fsr settle");
     // Still: the far hits phase to phase.
     let eye0 = cam0.position.to_array();
     let mut last: Option<Hits> = None;
@@ -401,6 +402,7 @@ fn term_sums(rig: &mut Rig, cam0: Camera, arm: &Arm, exposure: Option<f32>) -> (
         queue_step(rig, &mut s.frame, &cam0);
         s.run(rig, &cam0);
     }
+    support::baked::settle(rig, &mut s.frame, &cam0, 0, "fsr settle");
     let e = s
         .frame
         .exposure_readout(&rig.device)

@@ -7,7 +7,7 @@ The engine was `voxel-engine`, with crates `vxe-*`, variables `VXE_*` and the WI
 `vxe:logic`, until Plan 0087 renamed it `svet` (v0.73.0); records from before keep those names,
 and `vxe-<x>` reads as `svet-<x>`.
 
-**Next free number: 0106** (0105 the dig's flash at depth, drafted 2026-11-26; 0104 the wobble anchored to the owner's eye, approved 2026-11-25; 0101 the record by rule at every opening, approved 2026-11-24; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
+**Next free number: 0109** (0107 the mirror's slot image packed on the stream workers and 0108 the start-up readings, drafted 2026-11-26 from the review of work off the render thread; 0106 is taken by a test-reliability plan on a branch not yet in main; 0105 the dig's flash at depth, approved 2026-11-26; 0104 the wobble anchored to the owner's eye, closed 2026-11-26; 0101 the record by rule at every opening, approved 2026-11-24; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
 the sky around the camera; 0098 the calm light by default, closed 2026-11-24; 0099 the bake
 step off the main thread, closed 2026-11-26; 0100 a sun fixed in the world, closed 2026-11-25; ADRs are a separate sequence, see `../adrs/README.md` for its next
 free number). Plan 0095, the motion wobble (a calm key light in motion), closed 2026-11-21,
@@ -17,8 +17,10 @@ by default, closed 2026-11-24, v0.72.0. Plan 0087, the rename to `svet`, closed 
 v0.73.0 (the GitHub rename and the manual release run are owed: the backlog's "The rename's two
 owed steps"). Plan 0102, the removal of `own` (FSR 2 is the only upscaler), closed
 2026-11-25, v0.74.0. Plan 0100, a sun fixed in the world, closed 2026-11-25, v0.75.0, with the
-wobble it was written for still there; its follow-on is Plan 0104 (approved 2026-11-25). Plan 0099, the bake step off the main thread, closed
-2026-11-26, v0.76.0 (ADR-0083 accepted); the dig's flash at depth it left is Plan 0105's.
+wobble it was written for still there; its follow-on is Plan 0104. Plan 0099, the bake step off the main thread, closed
+2026-11-26, v0.76.0 (ADR-0083 accepted); the dig's flash at depth it left is Plan 0105's. Plan 0104, the
+wobble anchored to the owner's eye, closed 2026-11-26, v0.77.0, with no remedy (the owner's call);
+what is left under the defaults is in the backlog.
 
 ## Active roster
 
@@ -41,11 +43,12 @@ wobble it was written for still there; its follow-on is Plan 0104 (approved 2026
 | [0090](0090-the-pop-counter-scenes-on-lavapipe-count-the-pixels-that-break-the-light-rules-a-ratchet.md) | The pop counter: fixed scenes on lavapipe count the pixels that break each light rule, by source; a baseline that only falls | approved | Cross-cutting, ADR-0076 (proposed). After 0086 closes, before 0081. |
 | [0091](0091-the-frame-profiler-scopes-across-threads-a-gpu-lane-a-dump-for-agents-and-a-hud-ticker.md) | The frame profiler: scopes across the threads, a GPU lane, a dump the agent ranks, budget scopes, a HUD ticker | approved | M7, ADR-0077. After 0087 and 0089, before 0090 (owner). |
 | [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
-| [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs, no ADR. After 0087 merges, beside 0089, before 0091. |
+| [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs. Refreshed 11-26. After 0104, beside 0101, 0105; before 0091. |
 | [0101](0101-the-record-by-rule-at-every-opening-an-audit-on-the-real-scenes-first-then-the-three-exclusions-lifted.md) | The record by rule at every opening: an audit first, then the exclusions lifted | approved 11-24 | ADR-0085 (proposed). After 0100 P2 and 0099's close. |
 | [0103](0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md) | A pipeline cache for the renderer: the driver's cache through wgpu in an engine envelope, bytes the consumer keeps | draft, parked 11-24 | ADR-0087 (proposed). Parked: the driver's cache already warms a second start (logs/0103.md). |
-| [0105](0105-the-digs-flash-at-depth-a-held-estimate-that-follows-the-holes-own-light.md) | The dig's flash at depth: a held estimate that follows the hole's own light | draft 11-26 | After 0099. P1 reads the blink at depth; the fix is a setting until the window. |
-| [0104](0104-the-wobble-anchored-to-the-owners-eye-clips-he-ranks-a-measure-that-ranks-them-then-the-remedy.md) | The wobble anchored to the owner's eye: clips he ranks, a measure, then the remedy | approved 11-25 | Follows 0100. P0-2, 4 beside 0099; P3 and remedy after it. |
+| [0105](0105-the-digs-flash-at-depth-a-held-estimate-that-follows-the-holes-own-light.md) | The dig's flash at depth: a held estimate that follows the hole's own light | approved 11-26 | After 0099. P1 reads the blink at depth; the fix is a setting until the window. |
+| [0107](0107-the-mirrors-slot-image-packed-on-the-stream-workers.md) | The mirror's slot image packed on the stream workers | approved 11-26 | ADR-0056. P1 re-reads the sync and can stop it. Lane after 0101 and 0105 merge. |
+| [0108](0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md) | The start-up readings: a shorter pre-roll, the cold pipelines split | approved 11-26 | A chore, no ADR. Beside 0093. P3 before the next tester archive. |
 <!-- roster:end -->
 
 ## Sequence
@@ -190,6 +193,12 @@ owner picks from, the README after Bonsai's shape with the layout, checks and pr
 (0087 rewrites the README, every doc and the script names), **beside Plan 0089** (only `ci.yml`
 in common) and **before Plan 0091** (which edits the HUD and `run/frame.rs` that its Phase 1
 touches). 0093's canopy shot may wait for Plan 0094.
+**Refreshed 2026-11-26** (the plan's "Amended 2026-11-26"): a wording standard, the examples
+(a code fence the doctests compile, a keys table, the first commands), the first screen, nine
+feature groups; `--eye` extended in place of a new `--camera`; Plan 0094 has closed, so the
+canopy is shot now. **The lane starts after Plan 0104 closes** and may run beside Plans 0101
+and 0105 (textual conflicts only: `docs/flythrough.md`, the flag table, the changelog); still
+before Plan 0091. Its close carries a scrub the owner asked for (the plan's A9).
 
 **Plan 0094** (the light's transitions: the key mean's age at a still camera, the no-ray sky
 prior and one fade for every no-ray value change, ADR-0076 rule 5's exposure rate cap, the
@@ -254,6 +263,16 @@ its drain slice against 0.85 and its forest's view is final at 17.9 and 19.0 s a
 backlog's "The bake thread's feed on the RTX"). The dig's flash at depth he named after the
 window is the same with the thread off and is Plan 0105's (drafted 2026-11-26).
 
+**Plans 0107 and 0108** (drafted and approved 2026-11-26, start after the lanes then open finish; from
+[the review of 2026-11-26](../reviews/2026-11-26-work-off-the-render-thread.md), the owner's
+"all recommended"). **Plan 0107** packs the mirror's slot image on the stream workers
+(ADR-0056): its Phase 1 re-reads the sync's stages with the bake thread on and may run beside
+Plans 0101 and 0105; its lane starts after both merge (`bake/faces.rs`), before or beside Plan
+0091. **Plan 0108** is a chore of start-up readings: a `--pre-roll` setting read headless and
+then by the owner's eye, beside Plan 0093 (textual overlaps only), and the cold pipelines on
+several threads before the next tester archive; it does not run at the same time as Plan 0103
+(parked; the same pipeline builders).
+
 **Plan 0100** (closed 2026-11-25, v0.75.0, ADR-0084 accepted, superseding two clauses of
 ADR-0079: no default changed but the bake's key ray at its cap; `key cover`, `key at` and `key
 horizon` are settings, off; the wobble is still there and no reading of the plan shows it; the
@@ -266,15 +285,17 @@ reads shadow, the bake's key ray at its cap; exploration to one owner window): *
 2026-11-24** (owner, with his five answers); its lane starts when Plan 0098 (closed 2026-11-24)
 has merged and runs beside Plan 0099's (owner, 2026-11-23).
 
-**Plan 0104** (the wobble anchored to the owner's eye, Plan 0100's follow-on; no ADR until a
-remedy has a rejected alternative): **drafted 2026-11-25, awaits the owner's go.** It builds no
-remedy until a clip is anchored: the wobble rigs' settle audited (Phase 0), the owner's move as
-five lossless clips at his window's size (Phase 1), his answers and blind rankings (Phase 2),
-his own flight recorded and rendered again for a subject not shown (Phase 3), two candidate
-measures against his ranking (Phase 4), then a stop for the architect's amendment. Recommended
-(its question 1): Phases 0 to 2 and 4 run as a lane beside Plan 0099 now (rig and clip work
-under `apps/flythrough/tests/` and `live/`); Phase 3 and the remedy phases start on a main that
-holds Plan 0099.
+**Plan 0104** (closed 2026-11-26, v0.77.0; no ADR, an addition to ADR-0084's Outcome): the
+wobble Plan 0100 left was anchored on five lossless clips at the owner's window's size, which he
+watched and ranked blind; then **he closed the plan with no remedy** (the defaults are "almost
+good"). No default, golden or image bar moved. Plan 0100's unpicked settings are removed
+(`key cover record`, `key at`, `key horizon` with its walk shader and the column map's coarse
+rows: a breaking change to `svet-render`'s settings); `key cover ray` stays a setting, off on
+every profile. The `gpu_wobble` soak tests assert on one baked store. Left, in the backlog with
+his clips as anchors: sunlit tree crowns sparkling in motion, and a second of settling after a
+turn (FSR 2's history, read); the near shadow's hole and sun under cover as a default were not
+taken up. The one reading that followed his eye (the lit edge at the terraces) is provisional,
+on one pair, and is not a measure.
 
 Every active plan but the drafts of 2026-11-24 (Plans 0101 and 0103; Plan 0102 closed 2026-11-25) is approved (Plan 0099 on 2026-11-22; Plans 0091, 0092 and 0093 on 2026-11-19; Plans 0087 and 0089 on 2026-11-17; owner, 2026-11-10; Plans 0070 to 0072 on 2026-11-12; Plan 0069 on 2026-11-11; Plans 0064 and 0065 the same day, after the
 static performance review). Approval accepts the design; a plan's lane
@@ -288,6 +309,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0104](done/0104-the-wobble-anchored-to-the-owners-eye-clips-he-ranks-a-measure-that-ranks-them-then-the-remedy.md) | The wobble anchored on clips the owner ranked; closed with no remedy; Plan 0100's unpicked settings removed, `key cover ray` kept, off | 2026-11-26, v0.77.0 |
 | [0099](done/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) | The bake step off the main thread: a bake thread, write lists, lockstep as a setting; the feed and the RTX forest's in-view line missed, disclosed; ADR-0083 accepted | 2026-11-26, v0.76.0 |
 | [0100](done/0100-a-sun-fixed-in-the-world-the-key-shadow-a-face-at-a-time-the-coarse-tier-held-still-and-sun-under-cover.md) | A sun fixed in the world: closed on the bake's key ray at its cap and three settings, off; no default changed; the wobble stays, to a follow-on plan; ADR-0084 accepted | 2026-11-25, v0.75.0 |
 | [0102](done/0102-remove-own-the-engines-own-upscaler-fsr-2-is-the-only-one.md) | Remove `own`, the engine's own upscaler: FSR 2 is the only one, `Off` renders at the output size; ADR-0086 accepted | 2026-11-25, v0.74.0 |

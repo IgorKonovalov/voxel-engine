@@ -63,26 +63,9 @@ const BINS: [&str; 5] = [
 ];
 
 /// The live queue stepped as the fly-through's: the view's half angles and focal length, so the
-/// tiers by size on screen apply.
+/// tiers by size on screen apply, after a device wait ([`support::baked::queue_step`]).
 pub(super) fn step_queue(rig: &mut Rig, f: &mut Frame, cam: &Camera) -> svet_render::QueueStats {
-    let size = f.output_size();
-    let aspect = size[0] as f32 / size[1] as f32;
-    let view = svet_render::QueueView {
-        eye: cam.position.to_array(),
-        forward: cam.basis().0.to_array(),
-        resident: None,
-        samples: None,
-        interval_s: 1.0 / 60.0,
-        hold: None,
-        half_angle: svet_render::internals::view_half_angle(cam.vfov, aspect),
-        frustum: Some(svet_render::internals::view_half_angles(cam.vfov, aspect)),
-        full_radius: None,
-        lod_radius: None,
-        focal_px: Some(svet_render::Bands::focal_px(size[1], cam.vfov)),
-    };
-    f.bake_queue_step(&rig.device, &rig.queue, &mut rig.gpu, &rig.world, &view)
-        .expect("the queue runs")
-        .expect("the queue's step")
+    support::baked::queue_step(rig, f, cam)
 }
 
 /// One frame's reads per lighting pixel.
@@ -410,6 +393,11 @@ mod reading {
             k += 1;
         };
         out.push_str(&live_line(&live));
+        // The held state is read before the store has baked, by design: its census is not whole.
+        out.push_str(&format!(
+            "held: {}\n",
+            support::baked::census(rig, &s.frame, &cam1).line()
+        ));
         out.push_str(&format!(
             "held at turn +{k} frames: lighting px on no block / coarse / full {:?}, at w 0 {:?}\n",
             census_at_hold.0, census_at_hold.1
@@ -453,6 +441,10 @@ mod reading {
                 break;
             }
         }
+        out.push_str(&format!(
+            "landed: {}\n",
+            support::baked::census(rig, &s.frame, &cam1).line()
+        ));
         let landed = still(rig, &mut s, &cam1, &arm, &format!("{}-landed", arm.name));
         let c = census(&landed[0]);
         out.push_str(&format!(

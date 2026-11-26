@@ -1,6 +1,6 @@
 # 0105: The dig's flash at depth: a held estimate that follows the hole's own light
 
-> **Status:** draft (2026-11-26; drafted from the owner's report after Plan 0099's window, with
+> **Status:** approved (owner, 2026-11-26: go; his four answers are under "Amended 2026-11-26 (owner)" and bind Phase 1's sites and the remedy's bars; drafted from the owner's report after Plan 0099's window, with
 > his three answers and no further interview; the questions left are under "Risks & open
 > questions", each with a recommended option). Starts on a main that holds Plan 0099.
 > **Created:** 2026-11-26
@@ -262,6 +262,41 @@ Every phase carries exactly one `**Owner skill:**`: `dev` or `human`.
   `docs/nfr/04-edits.md`: the D+0 step and an edit's wait before and after, machine and
   commit; (5) the gate tier at the tip under the perf lock, clippy, fmt, deny, the doc
   gates. Binaries: `gpu_sun`, `gpu_outdoor`, `gpu_settings_rows`; the gpu tier at the tip.
+
+## Amended 2026-11-26 (owner)
+
+The owner gave the go and answered the questions (2026-11-26, his words):
+
+1. The go: "go".
+2. Which way a new face may err: "slightly dark, and I think we should keep depth in mind. If
+   deep enough, no flash should happen - like in a cave, as there is no chance of sunlight".
+3. The accepted surface dig stays as it is: "yes".
+4. Which hole: "pit dig looking down or to the side, narrow, i think it was 1 dig wide. but
+   not 100% sure".
+
+What the answers change:
+
+- **Answer 4 runs against the code reading's caveat** (a single straight shaft at the default
+  dig radius closes every ray and holds the floor value, so M1 should not flash there). The
+  reading is a reading, not a measurement, and the owner is not certain of the width, so
+  neither is taken as settled. **Phase 1's first site is his: a pit one dig wide at the
+  default radius, dug looking down, and the same dug to the side from the pit's wall, at 1 to
+  7 m, before the wider pits.** If the one-dig shaft flashes, Phase 1 names what wrote the
+  bright frames there (M2's chunk with no block, the faces at the shaft's rim or wall, or a
+  source the reading did not name) and stops for the architect before Phase 2: the first fix
+  is then chosen for that cause, not for M1 by default. If it does not flash there and does
+  in the wider hole, that is reported with both, and Phase 2 goes on as written.
+- **Answer 2 adds a bar to the fix phases and to Phase 6's tests: at depth no flash at all.**
+  Where the landed light of the new faces is dark (the cave and the tunnel away from the
+  mouth, and a pit deep enough that the sky's share is under the held floor), no frame from
+  the dig to the landing shows the new faces brighter than their settled value by more than
+  the 4 levels the surface dig is held to. A new face may start under its settled value and
+  rise. The depth is to be read by the estimate (how far the hole's own light and the open
+  sky are), not assumed from the surface's light.
+- **Answer 3** is the plan's bar as written (the 1 m surface dig within 4 levels, the before
+  arm at the window).
+
+No other phase text changes. Phase 5's window shows him a narrow one-dig pit at depth first.
 
 ## Data shapes
 

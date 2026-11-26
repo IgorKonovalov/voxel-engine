@@ -4,11 +4,29 @@
 //! "far-baked" class) beside all far ones, and the far's key source per frame (the record, the
 //! column map's horizon, a landing's fade, the ray). Nothing is asserted: a reading in `mod
 //! reading`. The protocol (Plan 0095 Phase 4): no pre-roll drain (the queue steps at the
-//! fly-through's budget from the first frame), 120 settle frames, a still strip of 33, a fly of
-//! 180 at 1 m/s, a stop held 300, a 60-degree turn over 40, a hold of 300; `drain=N` is the
+//! fly-through's budget from the first frame), 120 settle frames read, then the shared settle
+//! (`support::baked`: a device wait every frame, the fly-through's bake knobs and view) until
+//! the store's census is whole, a still strip of 33, a fly of 180 at 1 m/s, a stop held 300, a 60-degree turn over 40, a hold of 300; `drain=N` is the
 //! drained control.
 //! `SVET_WOBBLE` names the arm (see `Arm::parse`), `SVET_TEST_ADAPTER` the adapter. Frames and
 //! maps go under `live/wobble/<arm>/`.
+//!
+//! The readings (each `#[ignore = "reading"]`, run by name) and the variables that spec them:
+//! - `reading::wobble`, `reading::the_wobble_table_over_the_arm_set`: `SVET_WOBBLE`;
+//! - `reading::the_eye_across_a_stop`: `SVET_WOBBLE`, `SVET_EYE_FLY`;
+//! - `coarse::reading::coarse_hold`, `terraces::reading::terraces` and `terraces_w3`:
+//!   `SVET_WOBBLE`;
+//! - `fsr::reading::the_fsr2_stages_after_the_turn`: `SVET_WOBBLE_FSR`;
+//!   `fsr::reading::the_far_flips_by_term`: `SVET_WOBBLE_TERMS`;
+//! - `cover::reading::sun_under_cover`: `SVET_COVER`; its cover arms' reading `cover_arms`:
+//!   `SVET_COVER_ARMS`;
+//! - `owner_move::reading::the_owners_move`: `SVET_POSE`, `SVET_MOVE`, `SVET_WOBBLE`;
+//! - `clips::reading::the_owners_move_as_a_clip`: `SVET_CLIP=<subject>:<arm>[:<stem>[:<opts>]]`
+//!   (opts `keys` writes the `.keys` that `measure` scores, `pin<N>` pins the exposure);
+//! - `measure::reading::the_measures` (CPU, no device): `SVET_MEASURE=<clip>,..|control`.
+//!
+//! The soak tests `the_defaults_hold_still_at_rest_and_the_far_holds` and
+//! `the_far_moves_no_worse_than_the_before` assert; everything else reads.
 #![allow(
     dead_code,
     clippy::too_many_lines,
@@ -16,12 +34,18 @@
     reason = "a reading rig: its arms leave fields unread, its runs time themselves"
 )]
 
+#[path = "gpu_wobble/clips.rs"]
+mod clips;
 #[path = "gpu_wobble/coarse.rs"]
 mod coarse;
 #[path = "gpu_wobble/cover.rs"]
 mod cover;
 #[path = "gpu_wobble/fsr.rs"]
 mod fsr;
+#[path = "gpu_wobble/keys.rs"]
+mod keys;
+#[path = "gpu_wobble/measure.rs"]
+mod measure;
 #[path = "gpu_wobble/owner_move.rs"]
 mod owner_move;
 mod support;
@@ -36,9 +60,11 @@ std::thread_local! {
     static QUEUE_ON: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
 }
 
+/// The live queue's step where the rig runs it ([`QUEUE_ON`]): [`support::baked::queue_step`], a
+/// device wait first and the fly-through's view.
 fn queue_step(rig: &mut Rig, f: &mut Frame, cam: &Camera) {
     if QUEUE_ON.with(std::cell::Cell::get) {
-        support::defects::queue_step(rig, f, cam);
+        support::baked::queue_step(rig, f, cam);
     }
 }
 use support::terms::Rig;
@@ -110,12 +136,7 @@ struct Arm {
     /// `Lighting::light_history_far` (`hfar`).
     far_light_wide: bool,
     light_history_far: bool,
-    /// Plan 0100 Phase 1's arms: where on a cube face the key light's column horizon is read
-    /// (`keyat=hit|face|face-smooth`).
-    key_at: svet_render::KeyAt,
-    /// Plan 0100 Phase 5b's arm: how the column horizon reads the map (`keyhorizon=march|walk`).
-    key_horizon: svet_render::KeyHorizon,
-    /// Plan 0100 Phase 6's arm: the source under cover (`keycover=off|ray|record`).
+    /// Plan 0100 Phase 6's arm: the source under cover (`keycover=off|ray`).
     key_cover: svet_render::KeyCover,
     /// Plan 0100 Phase 3's arms, read by `coarse::reading` alone: the coarse pass's samples a
     /// brick direction (`coarse=N`, the fly-through's by default), the full-first radius
@@ -145,9 +166,8 @@ impl Arm {
     /// on), `fly=N` (the fly's frames) and
     /// `normals` (the normals view); Plan 0098 Phase 5's arms `wide` (`far_light_wide`) and
     /// `hfar` (`light_history_far`); Plan 0098 Phase 9's `hist` (`light_history` on, after
-    /// `calm`) and `baked` (`key_far baked`); Plan 0100 Phase 1's `keyat=hit|face|face-smooth`
-    /// (`Lighting::key_at`); Plan 0100 Phase 3's `coarse=N`, `ff=N|none` and `skyface`; Phase 5b's
-    /// `keyhorizon=march|walk`; Phase 6's `keycover=off|ray|record`; Phase 8b's `out=WxH`.
+    /// `calm`) and `baked` (`key_far baked`); Plan 0100 Phase 3's `coarse=N`, `ff=N|none` and
+    /// `skyface`; Phase 6's `keycover=off|ray`; Phase 8b's `out=WxH`.
     fn parse() -> Self {
         Self::from_spec(&std::env::var("SVET_WOBBLE").unwrap_or_else(|_| "default".into()))
     }
@@ -199,8 +219,6 @@ impl Arm {
             normals: false,
             far_light_wide: false,
             light_history_far: false,
-            key_at: flythrough::default_lighting().key_at,
-            key_horizon: flythrough::default_lighting().key_horizon,
             key_cover: flythrough::default_lighting().key_cover,
             coarse: svet_render::DEFAULT_COARSE_SAMPLES,
             full_first: Some(svet_render::DEFAULT_NEAR),
@@ -274,10 +292,6 @@ impl Arm {
                 "wide" => a.far_light_wide = true,
                 "hfar" => a.light_history_far = true,
                 "fly" => a.fly = v.parse().unwrap(),
-                "keyat" => a.key_at = svet_render::KeyAt::from_name(v).expect("keyat=NAME"),
-                "keyhorizon" => {
-                    a.key_horizon = svet_render::KeyHorizon::from_name(v).expect("keyhorizon=NAME")
-                }
                 "keycover" => {
                     a.key_cover = svet_render::KeyCover::from_name(v).expect("keycover=NAME")
                 }
@@ -376,8 +390,6 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
         source_fade: arm.source_fade,
         far_light_wide: arm.far_light_wide,
         light_history_far: arm.light_history_far,
-        key_at: arm.key_at,
-        key_horizon: arm.key_horizon,
         key_cover: arm.key_cover,
         sky_normal: if arm.sky_face {
             svet_render::SkyNormal::Face
@@ -424,7 +436,7 @@ fn frame_for(rig: &Rig, arm: &Arm) -> Frame {
         svet_render::queue_settings(),
         svet_render::DEFAULT_BAKE_SLICE_MS,
     );
-    f.set_bake_coarse(8, 2);
+    support::baked::fly_through_knobs(&mut f);
     f
 }
 
@@ -442,7 +454,18 @@ fn lumas(rgba: &[u8]) -> Vec<u8> {
 /// not fresh, 4 far whose record is (its lighting pixel's sky source word `record`: the key words
 /// bake in the same job and share the stale bit, so a fresh sky record is a fresh key record).
 fn classes(hits: &[[f32; 4]], source: &[u8], gw: usize, eye: [f32; 3]) -> Vec<u8> {
-    let (dw, dh) = (OUT[0] as usize, OUT[1] as usize);
+    classes_at(hits, source, gw, eye, OUT)
+}
+
+/// [`classes`] over a display of `out` pixels.
+fn classes_at(
+    hits: &[[f32; 4]],
+    source: &[u8],
+    gw: usize,
+    eye: [f32; 3],
+    out: [u32; 2],
+) -> Vec<u8> {
+    let (dw, dh) = (out[0] as usize, out[1] as usize);
     let gl = hits.len();
     (0..dw * dh)
         .map(|i| {
@@ -508,7 +531,7 @@ fn fmt_classes(v: &[(f64, f64); 5]) -> String {
         .join(", ")
 }
 
-fn write_map(dir: &Path, name: &str, map: &[f64], scale: f64) {
+fn write_map(dir: &Path, name: &str, map: &[f64], scale: f64, out: [u32; 2]) {
     let px: Vec<u8> = map
         .iter()
         .flat_map(|v| {
@@ -516,7 +539,7 @@ fn write_map(dir: &Path, name: &str, map: &[f64], scale: f64) {
             [g, g, g, 255]
         })
         .collect();
-    support::write_png(&dir.join(name), &px, OUT[0], OUT[1]);
+    support::write_png(&dir.join(name), &px, out[0], out[1]);
 }
 
 fn moved(cam: &Camera, metres: f32) -> Camera {
@@ -671,9 +694,17 @@ fn src_state(rig: &Rig, f: &Frame, shot: &support::defects::Shot, eye: [f32; 3])
 }
 
 /// The [`SrcRow`] of the pair `a` to `b` (display lumas) over classes `cls`, lighting states
-/// `pa` to `pb` on a grid `gw` wide.
-fn src_row(a: &[u8], b: &[u8], cls: &[u8], pa: &SrcState, pb: &SrcState, gw: usize) -> SrcRow {
-    let (dw, dh) = (OUT[0] as usize, OUT[1] as usize);
+/// `pa` to `pb` on a grid `gw` wide, over a display of `out` pixels.
+fn src_row(
+    a: &[u8],
+    b: &[u8],
+    cls: &[u8],
+    pa: &SrcState,
+    pb: &SrcState,
+    gw: usize,
+    out: [u32; 2],
+) -> SrcRow {
+    let (dw, dh) = (out[0] as usize, out[1] as usize);
     let gl = pb.source.len();
     let mut r = SrcRow::default();
     for i in 0..a.len() {
@@ -737,13 +768,19 @@ struct Segment {
     sources: Vec<[f64; 4]>,
     /// Per frame after its queue step: the live queue's counters (the default's with no queue).
     queue: Vec<svet_render::QueueStats>,
+    /// The display's size.
+    out: [u32; 2],
 }
 
 /// A sampled frame's diagnostic: its index, and per lighting pixel the age, the source word,
 /// whether the sky ray was cast and the moments' kind.
 type Diag = (usize, Vec<f32>, Vec<u8>, Vec<bool>, Vec<u8>);
 
-/// Runs `n` frames along `cams`, reading every frame; `keep` keeps the lumas.
+/// The frames of a segment after which [`run_segment`] prints its projected length.
+const PROJECT_AT: usize = 30;
+
+/// Runs `n` frames along `cams`, reading every frame; `keep` keeps the lumas. Prints the
+/// segment's wall time, and after its first [`PROJECT_AT`] frames the length it projects to.
 #[allow(
     clippy::too_many_arguments,
     reason = "a reading's segment: the rig, the stepper, the path and its outputs"
@@ -758,7 +795,8 @@ fn run_segment(
     every: usize,
     prev: Option<Vec<u8>>,
 ) -> Segment {
-    let n = OUT[0] as usize * OUT[1] as usize;
+    let out = s.frame.output_size();
+    let n = out[0] as usize * out[1] as usize;
     let mut map = vec![0f64; n];
     let mut pairs = Vec::new();
     let mut last = prev;
@@ -771,7 +809,16 @@ fn run_segment(
     let mut queue = Vec::new();
     let mut src = Vec::new();
     let mut src_prev: Option<SrcState> = None;
+    let len = cams.size_hint().0;
+    let t0 = std::time::Instant::now();
     for cam in cams {
+        if k == PROJECT_AT && len > PROJECT_AT {
+            let secs = t0.elapsed().as_secs_f64();
+            println!(
+                "  {name}: {PROJECT_AT} frames in {secs:.1} s; its {len} frames project to {:.0} s",
+                secs * len as f64 / PROJECT_AT as f64
+            );
+        }
         queue_step(rig, &mut s.frame, &cam);
         queue.push(s.frame.bake_queue().map(|q| q.stats()).unwrap_or_default());
         let shot = s.step(rig, &cam);
@@ -782,7 +829,7 @@ fn run_segment(
             *a += b;
         }
         gw = s.frame.light_hit_positions().width() as usize;
-        let cls = classes(&shot.hits, &shot.source, gw, cam.position.to_array());
+        let cls = classes_at(&shot.hits, &shot.source, gw, cam.position.to_array(), out);
         let y = lumas(&shot.display);
         sources.push(far_sources(rig, &s.frame, cam.position.to_array()));
         if keep && DIAG_AT.contains(&k) {
@@ -813,14 +860,14 @@ fn run_segment(
             support::write_png(
                 &dir.join(format!("{name}-{k:03}.png")),
                 &shot.display,
-                OUT[0],
-                OUT[1],
+                out[0],
+                out[1],
             );
         }
         if keep {
             let now = src_state(rig, &s.frame, &shot, cam.position.to_array());
             let row = match (&src_prev, frames.last()) {
-                (Some(pa), Some(a)) => Some(src_row(a, &y, &cls, pa, &now, gw)),
+                (Some(pa), Some(a)) => Some(src_row(a, &y, &cls, pa, &now, gw, out)),
                 _ => None,
             };
             src.push(row);
@@ -834,7 +881,7 @@ fn run_segment(
     for v in &mut map {
         *v /= pairs_n;
     }
-    write_map(dir, &format!("{name}-diff.png"), &map, 8.0);
+    write_map(dir, &format!("{name}-diff.png"), &map, 8.0, out);
     let names = svet_render::FRAME_PASSES;
     let ms: Vec<String> = names
         .iter()
@@ -846,7 +893,8 @@ fn run_segment(
         [0, 1, 2, 3].map(|c| a[c] + v[c] / sources.len().max(1) as f64)
     });
     println!(
-        "  {name}: {k} frames; pass ms: {}; at its end {}; far key sources, mean: {}; first: {}; last: {}",
+        "  {name}: {k} frames, {:.1} s; pass ms: {}; at its end {}; far key sources, mean: {}; first: {}; last: {}",
+        t0.elapsed().as_secs_f64(),
         ms.join(", "),
         depth(&s.frame),
         fmt_sources(&src_mean),
@@ -864,6 +912,7 @@ fn run_segment(
         gw,
         sources,
         queue,
+        out,
     }
 }
 
@@ -1015,7 +1064,7 @@ fn hold_series(seg: &Segment, cls: &[u8], still_far_max: f64) -> f64 {
     }
     // The far pixels over 4 from the final frame at the sampled frames: their lighting pixels'
     // age, source word, cast share and kind.
-    let (dw, dh) = (OUT[0] as usize, OUT[1] as usize);
+    let (dw, dh) = (seg.out[0] as usize, seg.out[1] as usize);
     for (k, age, source, cast, kind) in &seg.diag {
         let f = &seg.frames[*k];
         let gl = age.len();
@@ -1088,7 +1137,7 @@ mod reading {
 
     /// Plan 0097 Phase 3d bar 1: the auto exposure across a stop on the wobble rig's forest
     /// (`forest_rig(8)`, the `SVET_WOBBLE` arm, `default` unset): 120 settle frames at the
-    /// spawn, a fly of `SVET_EYE_FLY` frames (20 unset) at the arm's speed, the stop held 30.
+    /// spawn and the shared settle on until the census is whole, a fly of `SVET_EYE_FLY` frames (20 unset) at the arm's speed, the stop held 30.
     /// Per frame from the fly's last to stop +29: the exposure the frame used (`previous`,
     /// log2) and its step from the frame before, the next frame's (`current`), the adapted and
     /// metered levels, the exposure's target (`key / 2^metered`), the ceiling in force and
@@ -1127,6 +1176,7 @@ mod reading {
             queue_step(rig, &mut s.frame, &cam0);
             s.run(rig, &cam0);
         }
+        support::baked::settle(rig, &mut s.frame, &cam0, 0, "eye");
         let step = arm.speed_m_s / 60.0;
         let mut cams: Vec<(String, Camera)> = (1..=fly_n)
             .map(|k| (format!("fly {k}"), moved(&cam0, step * k as f32)))
@@ -1261,6 +1311,20 @@ struct StopRead {
     far0: f64,
     far30: f64,
     depth: String,
+    /// The store's census at the settle's end ([`support::baked::Census::line`]).
+    census: String,
+}
+
+/// The protocol's first camera: the spawn's camera `cam0` turned by the arm's yaw, at its
+/// pitch, raised by its `up` metres.
+fn start_camera(cam0: Camera, arm: &Arm) -> Camera {
+    let mut c = Camera {
+        pitch: arm.pitch.to_radians(),
+        yaw: cam0.yaw + arm.yaw.to_radians(),
+        ..cam0
+    };
+    c.position.z += arm.up / VOXEL_M;
+    c
 }
 
 /// The rig's protocol for `arm` on `rig` from the spawn's camera `cam0`: the table's rows
@@ -1273,12 +1337,7 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
             .join(&arm.name);
         std::fs::create_dir_all(&dir).unwrap();
         println!("arm {} on {}: {arm:?}", arm.name, rig.adapter);
-        let mut cam0 = Camera {
-            pitch: arm.pitch.to_radians(),
-            yaw: cam0.yaw + arm.yaw.to_radians(),
-            ..cam0
-        };
-        cam0.position.z += arm.up / VOXEL_M;
+        let cam0 = start_camera(cam0, arm);
         let f = frame_for(rig, arm);
         let mut s = Stepper::new(rig, f);
         if arm.probe {
@@ -1290,7 +1349,7 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
                 }
                 let shot = s.step(rig, &c);
                 let gw = s.frame.light_hit_positions().width() as usize;
-                let cls = classes(&shot.hits, &shot.source, gw, c.position.to_array());
+                let cls = classes_at(&shot.hits, &shot.source, gw, c.position.to_array(), arm.out);
                 let n = cls.len() as f64;
                 let share: Vec<String> = (0..5)
                     .map(|k| {
@@ -1305,8 +1364,8 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
                 support::write_png(
                     &dir.join(format!("probe-{:03}.png", 45 * k)),
                     &shot.display,
-                    OUT[0],
-                    OUT[1],
+                    arm.out[0],
+                    arm.out[1],
                 );
             }
             return StopRead {
@@ -1315,6 +1374,7 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
                 far0: f64::NAN,
                 far30: f64::NAN,
                 depth: depth(&s.frame),
+                census: String::new(),
             };
         }
         if let Some(ms) = arm.pre_ms {
@@ -1350,7 +1410,13 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
                 }
             }
             let gw = s.frame.light_hit_positions().width() as usize;
-            let cls = classes(&shot.hits, &shot.source, gw, cam0.position.to_array());
+            let cls = classes_at(
+                &shot.hits,
+                &shot.source,
+                gw,
+                cam0.position.to_array(),
+                arm.out,
+            );
             let y = lumas(&shot.display);
             let q = s.frame.bake_queue().map(|q| q.stats()).unwrap_or_default();
             if let Some(p) = &prev {
@@ -1359,6 +1425,10 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
             q_prev = q;
             prev = Some(y);
         }
+        // The shared settle on from the read frames, until the census is whole.
+        let census = support::baked::settle(rig, &mut s.frame, &cam0, 0, "  settle")
+            .census
+            .line();
         let fresh_ms: Vec<String> = svet_render::FRAME_PASSES
             .iter()
             .zip(&fresh)
@@ -1372,98 +1442,8 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
         if arm.nqueue {
             QUEUE_ON.with(|q| q.set(false));
         }
-        if arm.pin_exposure {
-            let e = s
-                .frame
-                .exposure_readout(&rig.device)
-                .map(|r| r.exposure)
-                .expect("a read-back");
-            s.frame.set_lighting(svet_render::Lighting {
-                exposure: svet_render::Exposure::Manual(e),
-                ..s.frame.lighting()
-            });
-            for _ in 0..32 {
-                queue_step(rig, &mut s.frame, &cam0);
-                s.run(rig, &cam0);
-            }
-        }
-        // The still strip.
-        let still = run_segment(
-            rig,
-            &mut s,
-            std::iter::repeat_n(cam0, 33),
-            "still",
-            false,
-            &dir,
-            32,
-            None,
-        );
-        summarise(&still, "classes per frame");
-        {
-            let shot = support::defects::read(rig, &s.frame, None);
-            let gw = s.frame.light_hit_positions().width() as usize;
-            let cls = classes(&shot.hits, &shot.source, gw, cam0.position.to_array());
-            let n = cls.len() as f64;
-            let share: Vec<String> = (0..5)
-                .map(|k| {
-                    format!(
-                        "{} {:.1} %",
-                        ["sky", "near", "mid", "far (not baked)", "far-baked"][k],
-                        100.0 * cls.iter().filter(|c| **c == k as u8).count() as f64 / n
-                    )
-                })
-                .collect();
-            println!("  classes at the still: {}", share.join(", "));
-        }
-        let still_far_max = still.pairs.iter().map(|p| p[3].0).fold(0.0, f64::max);
-        // The slow fly: `arm.fly` frames forward (180 by default).
-        let step = arm.speed_m_s / 60.0;
-        let fly_cams: Vec<Camera> = (1..=arm.fly)
-            .map(|k| moved(&cam0, step * k as f32))
-            .collect();
-        let cam1 = *fly_cams.last().unwrap();
-        let fly = run_segment(
-            rig,
-            &mut s,
-            fly_cams.into_iter(),
-            "fly",
-            false,
-            &dir,
-            30,
-            Some(still.last.clone()),
-        );
-        summarise(&fly, "classes per frame, the camera moving");
-        // The stop: 180 frames held at the fly's end.
-        let stop = run_segment(
-            rig,
-            &mut s,
-            std::iter::repeat_n(cam1, arm.hold),
-            "stop",
-            true,
-            &dir,
-            0,
-            Some(fly.last.clone()),
-        );
-        summarise(&stop, "classes per frame");
-        let stop_read;
-        {
-            let shot = support::defects::read(rig, &s.frame, None);
-            let gw = s.frame.light_hit_positions().width() as usize;
-            let cls = classes(&shot.hits, &shot.source, gw, cam1.position.to_array());
-            let near0 = hold_series(&stop, &cls, still_far_max);
-            let near_pair = landing_rows(&stop, &cls);
-            let last = stop.frames.last().unwrap();
-            let far0 = change_by_class(&stop.frames[0], last, &cls, 4)[3].0;
-            let far30 = change_by_class(&stop.frames[30], last, &cls, 4)[3].0;
-            stop_read = StopRead {
-                near0,
-                near_pair,
-                far0,
-                far30,
-                depth: depth(&s.frame),
-            };
-            support::write_png(&dir.join("stop-final.png"), &shot.display, OUT[0], OUT[1]);
-        }
+        let (stop_read, cam1, still_far_max, stop_last) =
+            to_the_stop(rig, &mut s, cam0, arm, &dir, census);
         // The turn: `turn_deg` over `turn_frames` frames, then the hold.
         let tf = arm.turn_frames;
         let turn_cams: Vec<Camera> = (1..=tf)
@@ -1478,7 +1458,7 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
             false,
             &dir,
             10,
-            Some(stop.last.clone()),
+            Some(stop_last),
         );
         summarise(&turn, "classes per frame, the camera turning");
         let hold = run_segment(
@@ -1495,9 +1475,20 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
         {
             let shot = support::defects::read(rig, &s.frame, None);
             let gw = s.frame.light_hit_positions().width() as usize;
-            let cls = classes(&shot.hits, &shot.source, gw, cam2.position.to_array());
+            let cls = classes_at(
+                &shot.hits,
+                &shot.source,
+                gw,
+                cam2.position.to_array(),
+                arm.out,
+            );
             hold_series(&hold, &cls, still_far_max);
-            support::write_png(&dir.join("hold-final.png"), &shot.display, OUT[0], OUT[1]);
+            support::write_png(
+                &dir.join("hold-final.png"),
+                &shot.display,
+                arm.out[0],
+                arm.out[1],
+            );
             let e = s.frame.exposure_readout(&rig.device).map(|r| r.exposure);
             println!(
                 "  exposure at the end {e:?}; store missing {} black {}",
@@ -1509,14 +1500,156 @@ fn wobble_on(rig: &mut Rig, cam0: Camera, arm: &Arm) -> StopRead {
     }
 }
 
+/// The rig's protocol from the exposure's pin to the stop's end on the stepper `s` (its store
+/// settled, census line `census`): with `arm.pin_exposure`, the exposure pinned at what it reads
+/// (once: a frame already in manual keeps its value) and 32 frames at `cam0`; the still strip of
+/// 33; the fly of `arm.fly` frames at `arm.speed_m_s`; the stop held `arm.hold`. Returns what it
+/// read of the stop, the stop's camera, the still strip's largest far pair and the stop's last
+/// frame's luma.
+fn to_the_stop(
+    rig: &mut Rig,
+    s: &mut Stepper,
+    cam0: Camera,
+    arm: &Arm,
+    dir: &Path,
+    census: String,
+) -> (StopRead, Camera, f64, Vec<u8>) {
+    if arm.pin_exposure && matches!(s.frame.lighting().exposure, svet_render::Exposure::Auto(_)) {
+        let e = s
+            .frame
+            .exposure_readout(&rig.device)
+            .map(|r| r.exposure)
+            .expect("a read-back");
+        s.frame.set_lighting(svet_render::Lighting {
+            exposure: svet_render::Exposure::Manual(e),
+            ..s.frame.lighting()
+        });
+    }
+    if arm.pin_exposure {
+        for _ in 0..32 {
+            queue_step(rig, &mut s.frame, &cam0);
+            s.run(rig, &cam0);
+        }
+    }
+    // The still strip.
+    let still = run_segment(
+        rig,
+        s,
+        std::iter::repeat_n(cam0, 33),
+        "still",
+        false,
+        dir,
+        32,
+        None,
+    );
+    summarise(&still, "classes per frame");
+    {
+        let shot = support::defects::read(rig, &s.frame, None);
+        let gw = s.frame.light_hit_positions().width() as usize;
+        let cls = classes_at(
+            &shot.hits,
+            &shot.source,
+            gw,
+            cam0.position.to_array(),
+            arm.out,
+        );
+        let n = cls.len() as f64;
+        let share: Vec<String> = (0..5)
+            .map(|k| {
+                format!(
+                    "{} {:.1} %",
+                    ["sky", "near", "mid", "far (not baked)", "far-baked"][k],
+                    100.0 * cls.iter().filter(|c| **c == k as u8).count() as f64 / n
+                )
+            })
+            .collect();
+        println!("  classes at the still: {}", share.join(", "));
+    }
+    let still_far_max = still.pairs.iter().map(|p| p[3].0).fold(0.0, f64::max);
+    // The slow fly: `arm.fly` frames forward (180 by default).
+    let step = arm.speed_m_s / 60.0;
+    let fly_cams: Vec<Camera> = (1..=arm.fly)
+        .map(|k| moved(&cam0, step * k as f32))
+        .collect();
+    let cam1 = *fly_cams.last().unwrap();
+    let fly = run_segment(
+        rig,
+        s,
+        fly_cams.into_iter(),
+        "fly",
+        false,
+        dir,
+        30,
+        Some(still.last.clone()),
+    );
+    summarise(&fly, "classes per frame, the camera moving");
+    // The stop: 180 frames held at the fly's end.
+    let stop = run_segment(
+        rig,
+        s,
+        std::iter::repeat_n(cam1, arm.hold),
+        "stop",
+        true,
+        dir,
+        0,
+        Some(fly.last.clone()),
+    );
+    summarise(&stop, "classes per frame");
+    let stop_read;
+    {
+        let shot = support::defects::read(rig, &s.frame, None);
+        let gw = s.frame.light_hit_positions().width() as usize;
+        let cls = classes_at(
+            &shot.hits,
+            &shot.source,
+            gw,
+            cam1.position.to_array(),
+            arm.out,
+        );
+        let near0 = hold_series(&stop, &cls, still_far_max);
+        let near_pair = landing_rows(&stop, &cls);
+        let last = stop.frames.last().unwrap();
+        let far0 = change_by_class(&stop.frames[0], last, &cls, 4)[3].0;
+        let far30 = change_by_class(&stop.frames[30], last, &cls, 4)[3].0;
+        stop_read = StopRead {
+            near0,
+            near_pair,
+            far0,
+            far30,
+            depth: depth(&s.frame),
+            census,
+        };
+        support::write_png(
+            &dir.join("stop-final.png"),
+            &shot.display,
+            arm.out[0],
+            arm.out[1],
+        );
+    }
+    (stop_read, cam1, still_far_max, stop.last)
+}
+
 /// The far class's over-4 share 30 frames into the stop against its last at rest
 /// (`default,pin,nqueue`: the five picks, the exposure pinned, the queue stopped after the
-/// settle), at the fly of 180 frames and of 20: the largest of three readings on the RTX 3080
-/// Laptop (the readings log, Plan 0098 Phase 11: Phase 4's run and two more), which
-/// [`the_defaults_hold_still_at_rest_and_the_far_holds`] bars against plus 2 points.
+/// settle) on a store whose census is whole, at the fly of 180 frames and of 20, at 1080p
+/// through FSR 2 at 1.5: the largest of three readings on the RTX 3080 Laptop (the readings
+/// log, Plan 0104 Phase 0b: Phase 0's run and two of Phase 0b's), which
+/// [`the_defaults_hold_still_at_rest_and_the_far_holds`] bars against plus 2 points (Plan 0098
+/// Phase 11's rule).
 const REST_FAR30: [(usize, f64); 2] = [(180, REST_FAR30_180), (20, REST_FAR30_20)];
-const REST_FAR30_180: f64 = 9.98;
-const REST_FAR30_20: f64 = 11.39;
+const REST_FAR30_180: f64 = 5.52;
+const REST_FAR30_20: f64 = 4.88;
+
+/// [`REST_FAR30`] at the half frame a software adapter reads ([`REST_HALF_OUT`]): the largest
+/// of three lavapipe readings (the readings log, Plan 0104 Phase 0b).
+const REST_FAR30_HALF: [(usize, f64); 2] = [(180, REST_FAR30_HALF_180), (20, REST_FAR30_HALF_20)];
+const REST_FAR30_HALF_180: f64 = 8.99;
+const REST_FAR30_HALF_20: f64 = 8.30;
+
+/// The output size [`the_defaults_hold_still_at_rest_and_the_far_holds`] reads on a software
+/// adapter: half the 1080p frame each way (640 x 360 internal through FSR 2 at 1.5), the one
+/// lever on the cost of a read frame there.
+const REST_HALF_OUT: &str = "out=960x540";
 
 /// The near class's over-4 share from the stop's first frame to its last at rest, at most:
 /// Plan 0095 Phase 10's bar as written, the lighting-off arm's (`albedo`) 0.05 % plus 2 points.
@@ -1526,52 +1659,72 @@ const REST_NEAR0: f64 = 2.05;
 /// Plan 0098 Phases 6 and 6b; the bar is the largest plus 2 points).
 const REST_NEAR_PAIR: f64 = 2.5;
 
-/// Plan 0098 Phase 4's bars as ruled at its findings (ADR-0082): the rig's protocol
-/// ([`wobble_on`]) on the forest (`r` 8) at 1080p through FSR 2 at 1.5, no drain, the exposure
-/// pinned after the settle, the defaults with no token (the five picks), at the fly of 180
-/// frames and of 20. Asserted at rest only, with the queue stopped after the settle
-/// (`default,pin,nqueue`), where nothing lands and the exposure takes no step: no frame pair
-/// of the stop moves more than [`REST_NEAR_PAIR`] of the near pixels over 4 levels, the near
-/// from the stop's first frame to its last moves at most [`REST_NEAR0`], and the far 30 frames
-/// into the stop against its last at most [`REST_FAR30`] plus 2 points. A figure that is not a
-/// number fails. Printed, not barred: with the queue stepping (`default,pin`) and with no
-/// upscaler (`default,pin,native`, 1080p native, the distance left) the far +30 and +0, the
-/// queue's depth at the stop's end and every landing row with its frame: a landing's frame is
-/// the machine's pace, not the rig's (accepted by eye at window W2). `SVET_TEST_ADAPTER` picks
-/// the adapter (the RTX by hand; unset, lavapipe).
+/// Plan 0098 Phase 4's bars as ruled at its findings (ADR-0082), asserted at rest only, on one
+/// store: the forest (`r` 8), the defaults with no token (the five picks), one frame from the
+/// spawn's camera (the rig's yaw and pitch), the shared settle (`support::baked::settle`, at
+/// least [`SETTLE`] unread frames, then until the census is whole; a census that is not whole
+/// fails), then the queue stopped (`default,pin,nqueue`), so nothing lands and the store does
+/// not change between the two reads. Twice from the spawn's camera, at the fly of 180 frames
+/// and then of 20 ([`to_the_stop`]): the exposure pinned (read once, after the settle) and 32
+/// frames, the still strip, the fly, the stop held 300. No frame pair of the stop moves more
+/// than [`REST_NEAR_PAIR`] of the near pixels over 4 levels, the near from the stop's first
+/// frame to its last moves at most [`REST_NEAR0`], and the far 30 frames into the stop against
+/// its last at most [`REST_FAR30`] plus 2 points. A figure that is not a number fails. The frame
+/// is 1080p through FSR 2 at 1.5; on a software adapter (lavapipe) half that each way
+/// ([`REST_HALF_OUT`], bars [`REST_FAR30_HALF`]; the near bars are absolute and the same).
+/// `SVET_TEST_ADAPTER` picks the adapter (the RTX by hand; unset, lavapipe).
+///
+/// The arms this test once printed beside the asserted one run as `reading::wobble` under
+/// `SVET_WOBBLE`: the queue stepping, `default,pin,fly=180` and `default,pin,fly=20`; no
+/// upscaler, `default,pin,native,fly=180` and `default,pin,native,fly=20`.
 #[test]
 #[ignore = "soak"]
 fn the_defaults_hold_still_at_rest_and_the_far_holds() {
     let Some((mut rig, cam0)) = forest_rig(8) else {
         return;
     };
+    let half = rig.adapter.contains("llvmpipe");
+    let (size, bars) = if half {
+        (format!(",{REST_HALF_OUT}"), REST_FAR30_HALF)
+    } else {
+        (String::new(), REST_FAR30)
+    };
+    let base = Arm::from_spec(&format!("default,pin,nqueue{size}"));
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../live/wobble")
+        .join(format!("rest-{}", base.name));
+    std::fs::create_dir_all(&dir).unwrap();
+    println!("rest on {}: {base:?}", rig.adapter);
+    let cam0 = start_camera(cam0, &base);
+    QUEUE_ON.with(|q| q.set(true));
+    let f = frame_for(&rig, &base);
+    let mut s = Stepper::new(&rig, f);
+    let settled = support::baked::settle(&mut rig, &mut s.frame, &cam0, SETTLE, "  settle");
+    assert!(
+        settled.census.whole(),
+        "the store is not baked in view: {}",
+        settled.line()
+    );
+    QUEUE_ON.with(|q| q.set(false));
     let mut fails = Vec::new();
-    for (fly, bar) in REST_FAR30 {
-        let mut read = |spec: &str| {
-            wobble_on(
-                &mut rig,
-                cam0,
-                &Arm::from_spec(&format!("{spec},fly={fly}")),
-            )
+    for (fly, bar) in bars {
+        let arm = Arm {
+            fly,
+            ..base.clone()
         };
-        let rest = read("default,pin,nqueue");
-        let picks = read("default,pin");
-        let native = read("default,pin,native");
+        let t = std::time::Instant::now();
+        let (rest, ..) = to_the_stop(&mut rig, &mut s, cam0, &arm, &dir, settled.census.line());
         println!(
-            "fly {fly} on {}: at rest the largest stop near pair {:.2} % (bar {REST_NEAR_PAIR}), stop +0 near {:.2} % (bar {REST_NEAR0}), far +30 {:.2} % against {bar:.2} % + 2 (far +0 {:.2} %, {}); stepping (printed): far +30 {:.2} %, far +0 {:.2} %, the largest near pair {:.2} %, {}; native (printed): far +30 {:.2} %, far +0 {:.2} %, {}",
+            "fly {fly} on {} ({:?} out, {:.1} s): at rest ({}) the largest stop near pair {:.2} % (bar {REST_NEAR_PAIR}), stop +0 near {:.2} % (bar {REST_NEAR0}), far +30 {:.2} % against {bar:.2} % + 2 (far +0 {:.2} %, {})",
             rig.adapter,
+            arm.out,
+            t.elapsed().as_secs_f64(),
+            rest.census,
             rest.near_pair,
             rest.near0,
             rest.far30,
             rest.far0,
             rest.depth,
-            picks.far30,
-            picks.far0,
-            picks.near_pair,
-            picks.depth,
-            native.far30,
-            native.far0,
-            native.depth,
         );
         // A figure that is not a number fails.
         if rest.near_pair.is_nan() || rest.near_pair > REST_NEAR_PAIR {
@@ -1593,6 +1746,7 @@ fn the_defaults_hold_still_at_rest_and_the_far_holds() {
             ));
         }
     }
+    QUEUE_ON.with(|q| q.set(true));
     assert!(fails.is_empty(), "{}", fails.join("; "));
 }
 
@@ -1613,9 +1767,12 @@ struct Gate {
     /// The far's and near's shares of the display at the hold's end.
     far_px: f64,
     near_px: f64,
+    /// The store's census at the settle's end.
+    census: String,
 }
 
-/// The gate scene's frames: 120 settle, a still strip of 16, a fly of 20 at 1 m/s, a stop held
+/// The gate scene's frames: the shared settle (`support::baked::settle`, at least 120 frames,
+/// then until the census is whole), a still strip of 16, a fly of 20 at 1 m/s, a stop held
 /// 60, a 60-degree turn over 10, a hold of 120.
 const GATE_SETTLE: usize = 120;
 const GATE_STILL: usize = 16;
@@ -1629,9 +1786,10 @@ const GATE_HOLD: usize = 120;
 fn gate_run(rig: &mut Rig, cam0: &Camera, arm: support::wobble::Arm, frozen: bool) -> Gate {
     use support::wobble::{FAR, NEAR, depth, frame, moved, over, share, step, yawed};
     let mut f = frame(rig, arm);
-    for _ in 0..GATE_SETTLE {
-        step(rig, &mut f, cam0, true);
-    }
+    support::baked::fly_through_knobs(&mut f);
+    let census = support::baked::settle(rig, &mut f, cam0, GATE_SETTLE, arm.name())
+        .census
+        .line();
     let q = !frozen;
     let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len().max(1) as f64;
     let mut last = support::wobble::read(rig, &f, cam0);
@@ -1672,9 +1830,10 @@ fn gate_run(rig: &mut Rig, cam0: &Camera, arm: support::wobble::Arm, frozen: boo
         hold: [0, 30, 60].map(|i| over(&hold[i].luma, &end.luma, &end.class, FAR)),
         far_px: share(&end.class, FAR),
         near_px: share(&end.class, NEAR),
+        census,
     };
     println!(
-        "gate, {} on {}{}: still far {:.2} %; fly far {:.2} % near {:.2} %; stop +0 near {:.2} % far {:.2} %; hold +0 / +30 / +60 far {:.2} / {:.2} / {:.2} %; far {:.1} % of the display, near {:.1} %; {}",
+        "gate, {} on {}{} ({}): still far {:.2} %; fly far {:.2} % near {:.2} %; stop +0 near {:.2} % far {:.2} %; hold +0 / +30 / +60 far {:.2} / {:.2} / {:.2} %; far {:.1} % of the display, near {:.1} %; {}",
         arm.name(),
         rig.adapter,
         if frozen {
@@ -1682,6 +1841,7 @@ fn gate_run(rig: &mut Rig, cam0: &Camera, arm: support::wobble::Arm, frozen: boo
         } else {
             ", undrained"
         },
+        g.census,
         g.still,
         g.fly,
         g.fly_near,
@@ -1700,7 +1860,8 @@ fn gate_run(rig: &mut Rig, cam0: &Camera, arm: support::wobble::Arm, frozen: boo
 /// Plan 0095 Phase 10 bar 1 (ADR-0079, as amended 2026-11-20: the far no worse than the before):
 /// [`support::wobble`]'s scene, a 3 x 3 x 2 chunk forest of seed 1 at 320 x 180 through FSR 2
 /// at 1.5 to 480 x 270, no drain, the queue stepping at the default budget from the first frame;
-/// [`gate_run`]'s protocol (120 settle frames, a still strip of 16, a 20-frame fly at 1 m/s, a
+/// [`gate_run`]'s protocol (the shared settle from a fresh store under the fly-through's bake
+/// knobs, at least 120 frames and until the census is whole, a still strip of 16, a 20-frame fly at 1 m/s, a
 /// stop held 60, a 60-degree turn over 10 frames, a hold of 120: the hold runs past 60 frames so
 /// +60 has a final frame to read against). With the queue frozen at the settle's end, under the
 /// picks against the before (`key far ray`, `penumbra disc`) read in the same run: the far
