@@ -85,8 +85,14 @@ fn world_frames(stderr: &str) -> usize {
 /// frames on in the pre-roll's stages, none off, and exactly 3 world frames in both.
 #[test]
 fn a_sliced_pre_roll_bakes_what_an_unsliced_one_bakes() {
-    let off_run = room_spawn(&["--loading-screen", "off"]);
-    let on_run = room_spawn(&["--loading-screen", "on", "--load-slice", "0.05"]);
+    let off_run = room_spawn(&["--loading-screen", "off", "--pre-roll-stepped"]);
+    let on_run = room_spawn(&[
+        "--loading-screen",
+        "on",
+        "--load-slice",
+        "0.05",
+        "--pre-roll-stepped",
+    ]);
     // Each run's pipes drained on its own thread, so neither blocks on a full pipe.
     let on_done = std::thread::spawn(move || room_wait(on_run));
     let off_done = room_wait(off_run);
@@ -131,7 +137,11 @@ fn loading_frames(stderr: &str) -> Vec<(String, f32)> {
 /// at 0 and a coarse pass of 16, the screen on with a 0.05 ms slice (one step a loading
 /// frame): the loading frames name the pipelines' build, then the near residency, then
 /// the near chunks' light, then the coarse pass, each at least once and in that order; their fractions never decrease; the
-/// last reads 1. About 21 s on lavapipe here (2026-11-16), so it runs in the soak tier.
+/// last reads 1. The build's stage is named only by a loading frame that finds the build worker
+/// unfinished, a race the run loses only if the main thread stalls through the whole build
+/// (at least 0.2 s warm, seconds cold) between the worker's spawn and the first loading
+/// frame's check, microseconds apart. About 21 s on lavapipe here (2026-11-16), so it runs in
+/// the soak tier.
 #[test]
 #[ignore = "soak"]
 fn the_streamed_load_reports_its_stages_in_order_and_ends_at_one() {
@@ -256,8 +266,10 @@ fn a_benchmark_warms_up_from_the_first_world_frame() {
     assert_eq!(on.0 + on.1, 129.0, "world frames only");
 }
 
-/// The showcase headless on lavapipe at 64 x 36 with the screen on, the pre-roll's near ring
-/// at 0 and no coarse pass, switched in process after its frame 0 (`--switch-at 0`; the
+/// The showcase headless on lavapipe at 64 x 36 with the screen on and a 0.05 ms slice (one
+/// start-up step a loading frame, so every stage with a step is named by a loading frame,
+/// whatever the machine's pace), the pre-roll's near ring at 0 and no coarse pass, switched
+/// in process after its frame 0 (`--switch-at 0`; the
 /// showcase's next source is the outdoor hills, trees sparse by default): after the
 /// showcase's frame 0 a loading frame names the next world and the one it leaves (`switch
 /// splash drawn: loading outdoor, trees sparse, switching from showcase`), then the new run's
@@ -286,6 +298,8 @@ fn a_source_switch_shows_the_loading_frames_before_the_new_world() {
             "0",
             "--loading-screen",
             "on",
+            "--load-slice",
+            "0.05",
         ])
         .env("RUST_LOG", "flythrough=info")
         .output()

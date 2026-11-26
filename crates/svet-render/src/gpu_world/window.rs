@@ -94,6 +94,8 @@ const STAGES: usize = 7;
 /// per record, never per brick: a read can cost microseconds (an `hpet` clocksource), which a
 /// lap per brick would add to the stage it times.
 pub(super) struct StageClock {
+    /// The first read, at `start`.
+    from: std::time::Instant,
     at: std::time::Instant,
     cur: Stage,
     ns: [u64; STAGES],
@@ -105,8 +107,10 @@ pub(super) struct StageClock {
 
 impl StageClock {
     pub(super) fn new() -> Self {
+        let at = stopwatch();
         Self {
-            at: stopwatch(),
+            from: at,
+            at,
             cur: Stage::Select,
             ns: [0; STAGES],
             lock_ns: 0,
@@ -138,9 +142,11 @@ impl StageClock {
         g
     }
 
-    /// Closes the split and writes each stage's microseconds into `st`.
+    /// Closes the split and writes each stage's microseconds into `st`, and the span between
+    /// the first and the last read, which the stages' nanoseconds sum to.
     pub(super) fn stop(&mut self, st: &mut SyncStats) {
         self.lap(Stage::Select);
+        st.span_us = self.at.duration_since(self.from).as_micros() as u64;
         let us = |s: Stage| self.ns[s as usize] / 1000;
         st.select_us = us(Stage::Select);
         st.size_us = us(Stage::Size);

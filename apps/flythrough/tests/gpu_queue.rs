@@ -826,7 +826,12 @@ const THREAD_FRAMES: usize = 20_000;
 /// lockstep and to a one-shot bake, with no lockstep step between the join and the read. On the
 /// way, with the thread running, `bake_queue_mut` is `None`, and a knob set
 /// (`set_bake_digs`) reaches the books only through the next message: joined before a step
-/// reads it, the books hold the old value until that step.
+/// reads it, the books hold the old value until that step. The drain's frames are stepped by
+/// count ([`Q::step_counted`]): each waits for the thread's step of its own message, so the
+/// books a frame reads are the ones that step left. The printed frame count is a reading: the
+/// listing pool and the thread's read-backs join at their own pace, so the frame at which the
+/// books first read empty can move between runs. The claim is the joined store, equal to
+/// lockstep's and to a one-shot bake's at any count.
 #[test]
 #[ignore = "soak"]
 fn the_threaded_queue_drains_to_the_lockstep_store() {
@@ -868,7 +873,7 @@ fn the_threaded_queue_drains_to_the_lockstep_store() {
     let mut frames = 0;
     for n in 0..THREAD_FRAMES {
         q.camera.yaw = ((n / 8) % 4) as f32 * std::f32::consts::FRAC_PI_2;
-        q.step();
+        q.step_counted();
         frames = n + 1;
         assert!(
             q.frame.bake_thread_running(),

@@ -7,7 +7,7 @@ The engine was `voxel-engine`, with crates `vxe-*`, variables `VXE_*` and the WI
 `vxe:logic`, until Plan 0087 renamed it `svet` (v0.73.0); records from before keep those names,
 and `vxe-<x>` reads as `svet-<x>`.
 
-**Next free number: 0109** (0107 the mirror's slot image packed on the stream workers and 0108 the start-up readings, drafted 2026-11-26 from the review of work off the render thread; 0106 no gate test passes by a clock, approved 2026-11-26, its Phase 1 the fix for main's red CI; 0105 the dig's flash at depth, approved 2026-11-26; 0104 the wobble anchored to the owner's eye, closed 2026-11-26; 0101 the record by rule at every opening, closed 2026-11-26; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
+**Next free number: 0110** (0109 a blocked chunk is checked again when its blocker clears, drafted 2026-11-26 from Plan 0106's Phases 10 and 11; 0107 the mirror's slot image packed on the stream workers and 0108 the start-up readings, drafted 2026-11-26 from the review of work off the render thread; 0106 no gate test passes by a clock, closed 2026-11-26; 0105 the dig's flash at depth, approved 2026-11-26; 0104 the wobble anchored to the owner's eye, closed 2026-11-26; 0101 the record by rule at every opening, closed 2026-11-26; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
 the sky around the camera; 0098 the calm light by default, closed 2026-11-24; 0099 the bake
 step off the main thread, closed 2026-11-26; 0100 a sun fixed in the world, closed 2026-11-25; ADRs are a separate sequence, see `../adrs/README.md` for its next
 free number). Plan 0095, the motion wobble (a calm key light in motion), closed 2026-11-21,
@@ -21,7 +21,9 @@ wobble it was written for still there; its follow-on is Plan 0104. Plan 0099, th
 2026-11-26, v0.76.0 (ADR-0083 accepted); the dig's flash at depth it left is Plan 0105's. Plan 0104, the
 wobble anchored to the owner's eye, closed 2026-11-26, v0.77.0, with no remedy (the owner's call);
 what is left under the defaults is in the backlog. Plan 0101, the record by rule at every
-opening, closed 2026-11-26, v0.78.0 (ADR-0085 accepted with an Outcome); what it left is in the backlog.
+opening, closed 2026-11-26, v0.78.0 (ADR-0085 accepted with an Outcome); what it left is in the backlog. Plan 0106, no gate
+test passes by a clock, closed 2026-11-26, v0.79.0 (`scripts/check-test-clocks.mjs` in CI); `RUN_BOUND` and the switch test's tier
+are Plan 0109 Phase 6's.
 
 ## Active roster
 
@@ -47,9 +49,9 @@ opening, closed 2026-11-26, v0.78.0 (ADR-0085 accepted with an Outcome); what it
 | [0093](0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite with reproducible screenshots: a shot manifest, a shoot script, an image gate, the owner's picks | approved | M7 docs. Refreshed 11-26. After 0104, beside 0101, 0105; before 0091. |
 | [0103](0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md) | A pipeline cache for the renderer: the driver's cache through wgpu in an engine envelope, bytes the consumer keeps | draft, parked 11-24 | ADR-0087 (proposed). Parked: the driver's cache already warms a second start (logs/0103.md). |
 | [0105](0105-the-digs-flash-at-depth-a-held-estimate-that-follows-the-holes-own-light.md) | The dig's flash at depth: a held estimate that follows the hole's own light | in-progress | `depth` is the default (7a); its stop ruled 11-26 as a fault. Next 7a2 the fix, 7b a short look, 7c, 7d. |
-| [0106](0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md) | No gate test passes by a clock: the red dig test, the sweep, a gate script | approved 11-26 | P1 (main's red CI) done; P2-4 approved; P5-6 the soak tier's sweep. |
 | [0107](0107-the-mirrors-slot-image-packed-on-the-stream-workers.md) | The mirror's slot image packed on the stream workers | approved 11-26 | ADR-0056. P1 re-reads the sync and can stop it. Lane after 0101 and 0105 merge. |
 | [0108](0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md) | The start-up readings: a shorter pre-roll, the cold pipelines split | approved 11-26 | A chore, no ADR. Beside 0093. P3 before the next tester archive. |
+| [0109](0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md) | A blocked chunk is checked again when its blocker clears: the streamed start | draft 11-26 | No ADR. P1 the rule, P2-3 readings, P4 the owner's answer. Awaits go. |
 <!-- roster:end -->
 
 ## Sequence
@@ -337,6 +339,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0106](done/0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md) | No gate test passes by a clock: the sweep of both tiers, the tests stepped by count, a gate script in CI | 2026-11-26, v0.79.0 |
 | [0101](done/0101-the-record-by-rule-at-every-opening-an-audit-on-the-real-scenes-first-then-the-three-exclusions-lifted.md) | The record by rule at every opening (ADR-0085): audited at 0 blocks differing, then the three exclusions lifted | 2026-11-26, v0.78.0 |
 | [0104](done/0104-the-wobble-anchored-to-the-owners-eye-clips-he-ranks-a-measure-that-ranks-them-then-the-remedy.md) | The wobble anchored on clips the owner ranked; closed with no remedy; Plan 0100's unpicked settings removed, `key cover ray` kept, off | 2026-11-26, v0.77.0 |
 | [0099](done/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md) | The bake step off the main thread: a bake thread, write lists, lockstep as a setting; the feed and the RTX forest's in-view line missed, disclosed; ADR-0083 accepted | 2026-11-26, v0.76.0 |

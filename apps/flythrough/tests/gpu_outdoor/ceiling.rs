@@ -371,7 +371,9 @@ mod ceiling {
     /// (`ExposureState::previous`) is at or under `R_f + 1/256` (`R_f` the rate over 60 Hz).
     /// In this rig the exposure holds at the anchored ceiling and every step reads 0 EV; the
     /// test is a guard: a jump on a stop frame (the sky set to midnight with the exposure reset
-    /// to the meter at stop +5) fails it with a step of 8.6 EV at stop +6.
+    /// to the meter at stop +5) fails it with a step of 8.6 EV at stop +6. Every frame waits on
+    /// the device before its queue step, so the store and the metered level the unread frames
+    /// leave are the count's, not the device's pace.
     /// `SVET_TEST_ADAPTER` picks the adapter (unset: lavapipe).
     #[test]
     #[ignore = "soak"]
@@ -420,6 +422,8 @@ mod ceiling {
         let mut worst = (0.0f64, 0i64);
         for k in 0..120 + 20 + 31 {
             let cam = if k < 120 { cam0 } else { at(k - 119) };
+            // The frame before finished first, so the step reads its read-backs at a count.
+            support::baked::wait(&rig);
             support::defects::queue_step(&mut rig, &mut f, &cam);
             f.step(&rig.device, &rig.queue, &rig.gpu, &cam, &light);
             if k + 2 < 120 + 20 {

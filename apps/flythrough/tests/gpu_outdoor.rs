@@ -188,12 +188,13 @@ fn the_underground_eye_reads_no_sky() {
 /// at noon, reached as by a jump) under the column wait's default, off (Phase 18 bar 4: a chunk
 /// may bake provisionally before its columns are final): the hit pixels' mean direct part reads
 /// under 0.05 by frame 60 and under 0.02 at frame 240; frames 1 to 30 are printed (a brief
-/// provisional leak is allowed there).
+/// provisional leak is allowed there). Stepped by count (`support::streamed::Streamed::stepped`):
+/// each frame takes every chunk its update queued and waits on the device after its step.
 #[test]
 #[ignore = "soak"]
 fn the_underground_eye_streamed() {
     let frames: Vec<u32> = (1..=30).chain([60, 240]).collect();
-    let reads = reading::underground_streamed(6, 1, &frames);
+    let reads = reading::underground_streamed(6, 1, &frames, true);
     let Some(last) = reads.last() else {
         return;
     };
@@ -1309,6 +1310,7 @@ mod reading {
             env("SVET_UNDER_R", 6),
             env("SVET_UNDER_RAYS", 1) as u32,
             &[1, 3, 10, 30, 60, 120, 240, 480, 720, 960, 1440, 1920],
+            false,
         );
     }
 
@@ -1343,6 +1345,7 @@ mod reading {
             rays: 1,
             reads: (0..600).collect(),
             hold: None,
+            stepped: false,
         });
         let first = |f: &dyn Fn(&support::streamed::StreamedRead) -> bool| {
             reads
@@ -1365,11 +1368,13 @@ mod reading {
         );
     }
 
-    /// [`streamed`] at the run-12 eye underground at noon, facing +x, full radius `r`.
+    /// [`streamed`] at the run-12 eye underground at noon, facing +x, full radius `r`, stepped
+    /// by count when `stepped` (`support::streamed::Streamed::stepped`).
     pub(super) fn underground_streamed(
         r: i32,
         rays: u32,
         reads: &[u32],
+        stepped: bool,
     ) -> Vec<support::streamed::StreamedRead> {
         let source = std::sync::Arc::new(flythrough::outdoor::OutdoorSource::new(1));
         let camera = flythrough::Pose {
@@ -1391,6 +1396,7 @@ mod reading {
             rays,
             reads: reads.to_vec(),
             hold: None,
+            stepped,
         })
     }
 

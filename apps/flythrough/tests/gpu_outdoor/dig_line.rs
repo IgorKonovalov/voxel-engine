@@ -899,10 +899,11 @@ mod dig_line {
 
         /// The run of `seq` (`A` or `B`) under `arm` at the image test's start (`waiting`
         /// false: one frame and the settle) or after 600 frames (`waiting`), on the adapter
-        /// the test support opens, with its claims' figures.
-        pub(crate) fn claims(seq: &str, waiting: bool, arm: &str) -> Option<Claims> {
+        /// the test support opens, with its claims' figures; `wait` the stepper's device-wait
+        /// mode ([`line_run`]'s).
+        pub(crate) fn claims(seq: &str, waiting: bool, arm: &str, wait: bool) -> Option<Claims> {
             let drain = if waiting { 600 } else { 1 };
-            let (line, _rig) = line_run("above", waiting, seq, arm, drain, None, false, svet_render::DEFAULT_RING1_STRETCH, false)?;
+            let (line, _rig) = line_run("above", waiting, seq, arm, drain, None, wait, svet_render::DEFAULT_RING1_STRETCH, false)?;
             let land = ring1_landings(&line);
             let hold = !arm.split(',').any(|t| t == "hold=off");
             let LineRun { frames, digs, out, eye, head, .. } = line;
@@ -1001,7 +1002,7 @@ mod dig_line {
         fn hold_histogram() {
             let (_, arm, _) = super::super::super::support::defects::dig_spec(("above", "default", 0));
             for seq in ["A", "B"] {
-                let Some(c) = claims(seq, true, &arm) else {
+                let Some(c) = claims(seq, true, &arm, false) else {
                     return;
                 };
                 println!(

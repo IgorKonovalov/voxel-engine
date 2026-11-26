@@ -318,8 +318,12 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
         ),
         Flag::switch(
             &["--spawn-hash"],
-            "print the voxel hash of the chunks within 2 of the spawn's chunk at the end",
-            |p: &mut Parsing| p.args.spawn_hash = true,
+            "print the voxel hash of the chunks within 2 of the spawn's chunk at the end, after \
+                 waiting for the stream's chunks in flight to arrive (tests)",
+            |p: &mut Parsing| {
+                p.args.spawn_hash = true;
+                p.args.spawn_hash_wait = true;
+            },
         ),
     ];
     flags.extend(sky_light_flags());

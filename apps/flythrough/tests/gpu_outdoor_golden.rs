@@ -94,6 +94,9 @@ impl Empty {
                 &LightParams::headlamp(),
             );
         }
+        // The device waited before the read: every slot the frames copied has mapped, so the
+        // readout is the newest of them on every run, not the one a non-blocking poll found.
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
         let e = self
             .frame
             .exposure_readout(&self.device)
