@@ -1292,6 +1292,276 @@ into the manifest, the final shoot) are Phases 5b and 6a's. Its Done when stands
    it needs the castle placed outdoors, which this plan excludes. Alternative: a plan for it
    and the `castle` slot left out of the README until then.
 
+## Amended 2026-11-26, late evening (owner, nothing waits for him; architect, the path to the merge)
+
+The plan reaches its close and its merge with no `human` phase and without waiting for
+another plan. Phases 5c and 7 are replaced by recorded defaults, Phase 6a loses its three
+waits, and what is left is cut into six dev phases (G7). Where this section and the text
+above differ, this section wins. Phase 5b, running as this is written, is not changed.
+
+### G1. The owner's instruction (2026-11-26, late evening, verbatim)
+
+He had been shown the reading of his picks (F1), the re-shoot round (Phase 5b), the
+group-image assignment, the two questions (which body, the castle under the sun), and that
+the final shoot waited on his confirmation, on Plan 0105 closing and on Plan 0106's
+`--pre-roll-stepped` reaching main. His answer:
+
+> all good, just use what we have as images, merge and push. no need to wait for me. and tag
+
+**The reading (the orchestrator's; a reading, not his words; he corrects it if wrong).**
+
+1. F1's reading of his ten picks is right and its group-image assignment stands (F5's
+   questions 1 and 2).
+2. Nothing in this plan waits for his eye any more. Phase 5c (his confirmation of the
+   re-shoots) and Phase 7 (his read on GitHub before the close) no longer block. Where a
+   choice among candidates is needed, the recommended option is taken and recorded for him
+   to correct afterwards.
+3. "use what we have as images": no further image work holds the merge. The seven picks
+   stand. Phase 5b's round is used for `dig`, `walkers` and `castle` by taking its best
+   candidate per shot against the plan's own bars: for the castle the nave as picked unless
+   a sunlit variant plainly reads better; for "spider" whichever body is whole in the frame
+   and reads best, the other noted. A shot whose re-shoot fails its bar falls back to his
+   earlier pick or number.
+4. The merge into main, the push and the tag follow without asking, done by the orchestrator.
+
+**Not a waiver in any other plan.** Plan 0105's second look (its Phase 7b) is his, so Plan
+0105 does not close tonight and is not in main for this plan's shoot. Plan 0106 closes by
+its own rules.
+
+### G2. Ruling 1: no other plan is waited on, and the stepped pre-roll is a follow-up
+
+Phase 6a's "Waits on" is struck, all three lines. No unclosed plan's branch is merged into
+this lane; the lane merges main as main stands when Phase 6a starts.
+
+- **What the flag was for here.** Two things only: D3's patch in the hero (the pre-roll's
+  coarse pass ended by a wall box, so its end differs with the load) and B3's note that the
+  entries take the flag once it is in the tree. It was never what makes a shot settled:
+  `--settled-start` is, and Phases 2b to 2f read their sets on it.
+- **What the shoot does without it.** Every `flythrough` entry keeps `--settled-start` and
+  the pre-roll as the tree has it. `validate` does not ask for `--pre-roll-stepped`. The
+  sets are read by F4 as written (its sizes, its wrong pictures, its ceiling), on the
+  merged tree. For every hero render the log keeps D4's line: the coarse count the
+  pre-roll's box ended at, and the largest cell against the first render with its place.
+- **The hero's patch.** A patch in two states inside a tolerance that stands on its set and
+  under its ceiling is a line in the log and a known limit, as D3 ruled. Phase 6a's third
+  stop named the stepped pre-roll, which is not in the tree; it does not apply. The limit
+  is in [the backlog](../backlog.md) with the follow-up.
+- **A set that cannot be made stable (the one new rule).** A set whose largest pair breaks
+  its ceiling was a stop for the architect. Tonight it is handled in the phase: the image
+  ships, since no bar on the image failed; the entry's `tolerance` stays `null`; the entry
+  carries `"unjudged"`, a line with the largest pair, the smallest wrong share and the
+  date; `--check` renders it and prints its share marked unjudged, and that line never
+  counts towards exit 0; `check-images.mjs` prints the unjudged entries by name on every
+  run. Nothing is restated as a pass: no ceiling is raised, no wrong picture is swapped for
+  a grosser one, no tolerance is written from a set over its ceiling, and no render is left
+  out of a set. A `--check` over a tolerance that does stand is a stop, as before. The
+  backlog entry names each unjudged entry; the set is read again when the stepped pre-roll
+  is in main.
+
+Rejected: **waiting for Plan 0106 in main** (it may not close tonight; its flag ends one of
+the settle's waits and changes no picked image; the owner's word); **a tolerance widened
+until the set fits** (a bar moved to pass); **the image left out of the README** (his word:
+use what we have; an unread check is a fault of the check, not of the still).
+
+### G3. Ruling 2: the dig is shot on this tree's dig, and a flash makes it a still
+
+F2's last sentences are replaced. The `dig` entry is shot in Phase 6a on the merged tree,
+whose dig is the present one. The entry names no dig-estimate flag (A6), so once Plan 0105
+is in main the re-shoot is one command, `node scripts/shoot-images.mjs --only dig,skylight`,
+with those entries' sets read again (C2: a named change of the look). That follow-up is in
+the backlog. The final loop is not shown to him before the merge.
+
+Whether the loop shows the flash he rejected is not known from the code: the loop's frames
+start before the dig, so the dig's first frames are in it, but the flash he named is a face
+lit with the surface's sky, and the cave's shot has the lamp off and may hold no sky at
+all. It is read, not assumed (Phase 5d): on two renders of the picked candidate, over the
+pixels that differ between the frame before the dig and the loop's last frame, the mean
+level of each frame from the dig on. **A flash** is a frame whose mean is over the last
+frame's by more than the largest difference the two renders show in that mean at any frame.
+
+- **No flash:** the loop ships as the entry stands.
+- **A flash:** the entry becomes a still of the loop's last frame at the stills' size (the
+  dug cave with its light settled), captioned as that, and the loop's flags stay in its
+  `candidates` for the re-shoot. World and edits is then followed by a still until then.
+
+Rejected: **the loop cut to begin after the dig's first frames** (a dig loop without the
+dig's opening is a cut that hides a fault, which "What this plan does NOT do" forbids, and
+what is left shows nothing opening); **shipping a flash he rejected the same evening in the
+README's first loop**; **waiting for Plan 0105** (its close is his second look).
+
+### G4. Ruling 3: the dev picks the three by the bars (replaces Phase 5c)
+
+Phase 5c is replaced by Phase 5d, a dev phase. The dev takes, per shot, the first of these
+that holds, and writes the choice into the log with the tile's path, the bar's numbers and
+the path of the candidate not taken, under a heading that says the picks are defaults for
+the owner to correct:
+
+- **`dig`:** candidate 3's pose with the lamp off at auto exposure (the default look), if
+  Phase 5b's count of changed pixels is over zero and its page does not report the frame as
+  one in which no rock reads; else the same with `--exposure-comp 1`; else his pick as he
+  saw it (candidate 3, the lamp on). Then G3's reading decides loop or still.
+- **`walkers`:** a candidate passes when its body's box touches no edge and is at least a
+  quarter of the frame's height at the three frames Phase 5b logged. His line names the
+  spider, so of the passing candidates the spider's with the taller box; if no spider
+  passes, the walker's by the same rule; if none passes, his earlier number (walkers 2).
+  The other body's best tile is noted.
+- **`castle`:** the nave as picked (candidate 2). His "maybe" is no instruction: a sunlit
+  candidate replaces it only if Phase 5b's page holds one with sun on a surface of the
+  nave and the dev can name, in one sentence each, what it shows that the pick does not and
+  that nothing lit in the pick is black in it. Otherwise it is noted with its path. A
+  castle under the open sky is parked in the backlog (F5's question 3, as recommended).
+
+### G5. Ruling 4: the README on GitHub is the orchestrator's check after the push (replaces Phase 7)
+
+Phase 7 is no phase and the close does not wait for it. After the push the orchestrator
+checks the rendered page once: every image the README names is served as an image from the
+pushed commit, the page's rendered HTML holds one image per reference, and each loop's file
+is an animated one. What no command reads (a loop playing in a browser, the first screen at
+a 1080p width, a phone, the opening read aloud) is the owner's glance whenever he takes
+it, listed in the backlog. Findings go to the backlog; a loop that shows as a still is a
+fix pass after the close (the entry's GIF `fallback`, as Phase 7 had it). Animated WebP on
+GitHub stays an expectation until one of the two has seen it play.
+
+### G6. Ruling 5: the scrub is the close ceremony's first step, and its gate
+
+A9's rule 3 stands but for its timing: not "after the owner's Phase 7", but in the close
+review's session, after a clean review and before the `Status:` flip, as the architect's
+doc edit (the files are plans, ADRs, reviews and the backlog, which no dev phase edits).
+Rules 1 and 2 bind every phase below and the merge, the tag and the push.
+
+**The gate.** The orchestrator gives the close session two patterns in its brief: the
+model project's name, and the handle that owns its repository. Neither is written into a
+tracked file, a script or a commit message. `git grep -i -c -e <name> -e <handle>` prints
+nothing on the lane's tip, which holds main; the doc gates exit 0 after it. The
+orchestrator runs the same grep on main after the merge and before the push. History is
+not rewritten: commits already made keep their messages (A9, rule 2).
+
+### G7. The phases that remain
+
+One brief is one phase. Order: 5d, 6a, 6b, 6, 6c, 6d, then the close. All run in the
+lane's worktree, one agent at a time. Phase 6c may instead run beside 6b and 6 from the
+lane's worktree while those two run in a second worktree cut from 6a's tip: the tracks
+share only the manifest (6c writes `tolerance`, `note` and `unjudged`; 6 writes the
+`frozen` list) and the log. The noise sets are the lock's largest user, so they are placed
+where they hold up nothing but the tip.
+
+### Phase 5d: The three picks by the bars, and the dig's flash read
+- **Owner skill:** dev
+- **Waits on:** Phase 5b.
+- **What:** G4's picks become the three entries' flags (`candidates` kept, the numbers
+  unchanged). Then G3's reading: the picked `dig` candidate rendered twice over the
+  entry's whole frame range in one hold of the lock, the per-frame means tabulated, and
+  the entry left a loop or made a still by G3's rule. Phase 5c's row in the Implementation
+  log is set to "replaced by 5d".
+- **Files touched:** `docs/images/shots.json`, `docs/plans/logs/0093.md`.
+- **Done when:** the log holds, under a heading that names the picks as defaults for the
+  owner to correct, one line per shot with the chosen tile's number and path, the bar's
+  numbers and the candidate not taken with its path; the dig's table of per-frame means
+  from both renders, the largest difference between them, the largest overshoot over the
+  last frame, and the word `loop` or `still` that follows from them; `--print` of each of
+  the three entries equals the chosen tile's legend line but for the still directory (the
+  dig's as a still names the last frame); `node --test scripts/shoot-images.test.mjs` and
+  `node scripts/check-images.mjs` pass; the hold is under 900 s.
+- **Stop, reported:** none of a shot's rules holds, his earlier number included (its tile
+  cannot be rendered). The entry keeps its Phase 4 flags and the log says so.
+
+### Phase 6a: Main merged and the final shoot (replaces Phase 6a above)
+- **Owner skill:** dev
+- **Waits on:** Phase 5d. No person and no other plan.
+- **What:** main is merged into the lane (a merge commit; A10's conflicts are textual). A
+  flag an entry names that main renamed or removed is replaced by the row of
+  `docs/flythrough.md` that gives the same shot, and named in the log. Then
+  `node scripts/shoot-images.mjs` shoots every entry by B4's batches. The bars the picks
+  stood on are read again on the final frames: the `walkers` box at the loop's first,
+  middle and last frame, and the dig's count of changed pixels. The entries stay drafts
+  with their tolerances as they are; the images are committed.
+- **Files touched:** the merge; `docs/images/shots.json` (a flag replaced, if any),
+  `docs/images/*.webp`, `docs/plans/logs/0093.md`.
+- **Done when:** every entry's file is in the tree at or under its cap and nothing else
+  under `docs/images/` changed; the log holds each file's bytes, each hold's wait and
+  length (none over 900 s), the binary's commit, and the two bars' numbers on the final
+  frames; `node scripts/check-images.mjs` and `node --test "scripts/*.test.mjs"` pass.
+- **Stop, reported:** a pick's bar fails on the merged tree. The shot falls back down
+  G4's list, the fall is one line in the log, and the phase goes on; a render that fails
+  outright for a reason no flag row fixes stops the phase.
+
+### Phase 6b, as written above, with two changes
+- **Owner skill:** dev
+- **Waits on:** Phase 6a (the example is written against main's API).
+- **What changes:** the phase itself puts the `Use it as a library` section's second
+  fence, its command and its line into the README as it stands, so the byte-equality check
+  is green at the phase's own commit; Phase 6 rewrites around it. Its still is a gallery
+  candidate only if Phase 6 has room under the 5 MB line; no sheet is made for it.
+- **Done when, Stop:** as written.
+
+### Phase 6: The rewrite, as written and amended, less three clauses
+- **Owner skill:** dev
+- **Waits on:** Phases 6a and 6b.
+- **What changes:** the group images are F1's assignment; if the dig is a still (G3) its
+  caption says a dug cave with its light settled. Three clauses of its Done when move to
+  Phase 6d: "`node scripts/shoot-images.mjs --check` exits 0", "no entry is a draft", and
+  the gate's line for the README's total. Here the total is read by a one-liner over the
+  files the README references (at most 5 MB, logged), and of the manifest the phase edits
+  the `frozen` list only. A5's and A8's "Phase 7 checks it" clauses are G5's.
+- **Done when:** the rest of A8's Phase 6 text and the two-fence line, as written.
+
+### Phase 6c: The noise sets and the tolerances
+- **Owner skill:** dev
+- **Waits on:** Phase 6a (its binaries and its committed files).
+- **What:** F4's sets, sizes, wrong pictures and schedule, on the binaries Phase 6a shot
+  with, with G2's rule for a set over its ceiling. `scripts/shoot-images.mjs`: an entry
+  may carry `unjudged` with a `null` tolerance; `--check` prints such an entry's share
+  marked unjudged and does not count it; `validate` allows a `null` tolerance on a draft
+  or an unjudged entry only. `scripts/check-images.mjs` prints the unjudged entries by
+  name. Each other entry's `tolerance` and `note` are written from its set. Then
+  `--check` once.
+- **Files touched:** `docs/images/shots.json`, `scripts/shoot-images.mjs`,
+  `scripts/check-images.mjs`, their tests (an unjudged entry prints its share and leaves
+  the exit code alone; a `null` tolerance with neither mark is refused),
+  `docs/flythrough.md` (the shooting section), `docs/plans/logs/0093.md`.
+- **Done when:** every entry has either a tolerance whose `note` names its renders, pairs,
+  largest pair, rule and smallest wrong share, with the largest pair at most a third of
+  that share, or `unjudged` with the same numbers; `--check` exits 0 with every judged
+  entry at or under its tolerance and prints every unjudged one as such; the hero's lines
+  (G2) are in the log; no hold is over 900 s and the log holds each hold's wait and
+  length; the scripts' tests pass in under a second each.
+- **Stop, reported:** a `--check` over a tolerance that stands on its set (nothing is
+  edited; the frames and logs go to the architect); or the first hold projects the whole
+  over an hour held (F4): the dev reports the projection before the second hold.
+
+### Phase 6d: The tip
+- **Owner skill:** dev
+- **Waits on:** Phases 6 and 6c.
+- **What:** no entry stays a draft; main is merged again if it moved (a merge that brings
+  Plan 0105's default re-shoots `dig` and `skylight` and reads their sets again, G3); the
+  second `--check`, not sooner than an hour after Phase 6c's or after another lane has
+  held the lock in between; every doc gate; the tip's gate: `cargo nextest run --profile
+  gate` in one hold of the lock (about 1000 s by the last closes, a reading, under the
+  20-minute line), doctests, clippy, fmt, deny. The close triggers are filled in.
+- **Files touched:** `docs/images/shots.json`, `docs/plans/logs/0093.md`, the plan's
+  `Status:` line and Implementation log.
+- **Done when:** `git grep -n '"draft"' docs/images/shots.json` prints nothing;
+  `check-images.mjs` exits 0 and its line for the README's total, at most 5 MB, is in the
+  log with each file's bytes and the unjudged entries' names; the second `--check` exits
+  0; `check-doc-links.mjs`, `check-index-rows.mjs`, `check-comment-hygiene.mjs`,
+  `check-plan-size.mjs`, `check-file-size.mjs` and `check-test-tiers.mjs` exit 0; the gate
+  tier's result is in the log with its wall time and the lock's wait.
+- **Stop, reported:** the second `--check` over a tolerance (as Phase 6c's stop).
+
+### G8. The close, the merge and what is left for the owner
+
+The close review is a fresh architect session on Phase 6d's tip. It runs the gate tier
+itself (one more hold of about 1000 s), reads the README against W1 to W9, does G6's scrub
+and the ceremony. The owner asked for a tag, so the close bumps the version (the level is
+the reviewer's call; "none" is not open). Then the orchestrator merges into main, runs
+G6's grep there, pushes, tags, and does G5's check. Outstanding `human` phases: none.
+
+Left for the owner, none of it blocking, all in [the backlog](../backlog.md) under "The
+README's images after the unattended close": his corrections to Phase 5d's default picks;
+his glance at the page on GitHub; the dig's re-shoot once Plan 0105 is in main; the
+stepped pre-roll on the entries once Plan 0106's flag is in main, with any unjudged
+entry's set read again; a castle under the sun.
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
@@ -1315,10 +1585,13 @@ into the manifest, the final shoot) are Phases 5b and 6a's. Its Done when stands
 | 5: the owner picks | human | done 2026-11-26: seven picks, three re-shoots, no drop (F1, verbatim) | recorded by the architect |
 | 5b: the re-shoot round (dig, walkers, castle) | dev | not started | |
 | 5c: the owner confirms the three | human | not started | |
-| 6a: the merged tree, the noise sets, the final shoot | dev | not started; waits on 5c, Plans 0105 and 0106 in main | |
-| 6: the rewrite | dev | not started | |
-| 6b: a minimal window as the second example | dev | not started | |
-| 7: the README on GitHub | human | not started | |
+| 6a: main merged and the final shoot (G7) | dev | not started; waits on 5d | |
+| 6: the rewrite | dev | not started; waits on 6a and 6b | |
+| 6b: a minimal window as the second example | dev | not started; waits on 6a | |
+| 7: the README on GitHub | none | no phase (owner, 2026-11-26, G5): the orchestrator's check after the push | |
+| 5d: the three picks by the bars, the dig's flash read (replaces 5c) | dev | not started; waits on 5b | |
+| 6c: the noise sets and the tolerances | dev | not started; waits on 6a | |
+| 6d: the tip | dev | not started; waits on 6 and 6c | |
 
 ### Notes
 

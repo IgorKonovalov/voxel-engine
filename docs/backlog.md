@@ -1419,6 +1419,16 @@ From [Plan 0093](plans/0093-the-readme-rewrite-with-reproducible-screenshots-a-s
 - **What it would take:** the same shot with the pre-roll ended by its coarse pass (Plan 0106's stepped pre-roll) under load and idle, the patch read in each; if it still splits, the queue's record for the crown's chunk in both states.
 - **Pick it up when:** Plan 0093 reads the hero's set again before its final shoot (its B3 note), or a still or golden taken after a settled start turns out to depend on load.
 
+### The README's images after the unattended close (owner, 2026-11-26)
+
+From [Plan 0093](plans/0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) (its section "Amended 2026-11-26, late evening", G1 to G8; readings in `docs/plans/logs/0093.md`). The owner: "all good, just use what we have as images, merge and push. no need to wait for me. and tag". The plan closed without his confirmation of the re-shoots, without Plan 0105 and without Plan 0106's `--pre-roll-stepped`. What that left, none of it blocking:
+
+- **His corrections to the default picks.** `dig`, `walkers` and `castle` were picked by the dev against the plan's bars (the log's Phase 5d, with every tile's path and the candidate not taken). A correction is the entry's flags and `node scripts/shoot-images.mjs --only ID`.
+- **His glance at the page on GitHub.** No command reads whether each loop plays in a browser, whether the title, the tagline and the whole hero show at a 1080p width without scrolling, how it reads on a phone, and the opening read aloud. A loop that shows as a still takes its entry's GIF `fallback`.
+- **The dig after Plan 0105.** The `dig` entry was shot on the dig before Plan 0105's default (a still of the settled dig instead of the loop if the log's Phase 5d read a flash). **Pick it up when** Plan 0105 is in main: `node scripts/shoot-images.mjs --only dig,skylight`, the loop back in place of a still, and the two entries' noise sets read again.
+- **The stepped pre-roll after Plan 0106.** The `flythrough` entries shoot on `--settled-start` with the pre-roll's wall box, so the hero may hold the patch of the entry above ("A settled start's still differs in one patch"). **Pick it up when** the flag is in main: the entries take it, `validate` asks for it, and the hero's set and every entry marked `unjudged` in `docs/images/shots.json` (`node scripts/check-images.mjs` names them) are read again.
+- **A castle under the sun.** His "castle 2, maybe its better under sunlight". The castle stands in the streamed cave; `--vox` is ignored on `--source outdoor`. A castle placed on a hill is code and scene work, a plan of its own if he wants the shot.
+
 ## Ideas from Bonsai
 
 Parked 2026-11-19: the owner pointed at [Bonsai](https://github.com/scallyw4g/bonsai), a C++
