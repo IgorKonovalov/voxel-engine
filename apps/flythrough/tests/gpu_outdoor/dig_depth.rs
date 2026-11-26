@@ -468,7 +468,7 @@ mod dig_depth {
                 .map(|(k, c)| format!("{k} {:.0}", pc(c)))
                 .collect();
             format!(
-                "  {label:>5} {write:<8} px {:>6} luma mean {:6.1} p95 {:5.0} | over settled mean {:+6.1} p95 {:+5.0} | lpx {:>5} sky {:.3} [{}] cast {:.0} % table none {:.0} blk {:.0} coarse {:.0} | key {:.3} [{}] | stored {:.3} direct {:.3} | exposure {:.3e}",
+                "  {label:>5} {write:<8} px {:>6} luma mean {:7.3} p95 {:5.0} | over settled mean {:+7.3} p95 {:+5.0} | lpx {:>5} sky {:.3} [{}] cast {:.0} % table none {:.0} blk {:.0} coarse {:.0} | key {:.3} [{}] | stored {:.3} direct {:.3} | exposure {:.3e}",
                 x.n, x.mean, x.p95, x.excess, x.excess95, x.ln, x.sky, src.join(", "), pc(x.cast), pc(x.table[0]), pc(x.table[1]), pc(x.table[2]), x.key, ks.join(", "), x.stored, x.direct, exposure
             )
         }
@@ -655,7 +655,7 @@ mod dig_depth {
                 .iter()
                 .map(|&i| {
                     format!(
-                        "{} {} {:+.1}/{:+.0} e {:.4e}{}",
+                        "{} {} {:+.3}/{:+.0} e {:.4e}{}",
                         r.frames[i].label,
                         r.writes[i],
                         fs[i].excess,

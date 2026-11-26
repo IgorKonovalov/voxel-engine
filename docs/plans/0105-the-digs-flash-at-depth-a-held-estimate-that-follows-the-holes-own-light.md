@@ -1,6 +1,6 @@
 # 0105: The dig's flash at depth: a held estimate that follows the hole's own light
 
-> **Status:** in-progress (Phase 1 done 2026-11-26; the phases after it are rewritten under "Amended 2026-11-26 (architect)": the held floor is the flash; Phase 2 read 2026-11-26 and stopped for the architect: the exposure at D-1 is not within 1 % of D+60's at 6 of 20 read digs); approved (owner, 2026-11-26: go; his four answers are under "Amended 2026-11-26 (owner)" and bind Phase 1's sites and the remedy's bars; drafted from the owner's report after Plan 0099's window, with
+> **Status:** in-progress (Phase 3 done 2026-11-26, Phase 4 next; Phase 1 done 2026-11-26; the phases after it are rewritten under "Amended 2026-11-26 (architect)": the held floor is the flash; Phase 2 read 2026-11-26 and stopped for the architect: the exposure at D-1 is not within 1 % of D+60's at 6 of 20 read digs); approved (owner, 2026-11-26: go; his four answers are under "Amended 2026-11-26 (owner)" and bind Phase 1's sites and the remedy's bars; drafted from the owner's report after Plan 0099's window, with
 > his three answers and no further interview; the questions left are under "Risks & open
 > questions", each with a recommended option). Starts on a main that holds Plan 0099.
 > **Created:** 2026-11-26
@@ -765,8 +765,8 @@ No record, block or buffer changes shape: the held record is the store's record 
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: the blink reproduced headless at depth | dev | done; stopped for the architect (the one-dig shaft flashes at `down` and `side`, both modes; the held record's sky term, M1's floor; M2 at `down` 5 m only; no M3). `wide`, `slope`, `tunnel` and lavapipe not read. Readings in [the log](logs/0105.md) | 56e34b50 |
-| 2: the before arm on a settled exposure, and the wide pit | dev | read; stopped for the architect (the exposure at D-1 against D+60 over 1 % at `side` 1 and 2 m both modes, `side` 3 m and `wide` 1 m thread; the holds were still by the stated rule). `side` before arm with the exposure held: +62 to +102 mean levels, the same in both modes; `wide` +3 to +20 from 1 m, key, direct and direction values 0. Readings in [the log](logs/0105.md) | committed with this row |
-| 3: no floor under the held value | dev | not started | |
+| 2: the before arm on a settled exposure, and the wide pit | dev | read; stopped for the architect (the exposure at D-1 against D+60 over 1 % at `side` 1 and 2 m both modes, `side` 3 m and `wide` 1 m thread; the holds were still by the stated rule). `side` before arm with the exposure held: +62 to +102 mean levels, the same in both modes; `wide` +3 to +20 from 1 m, key, direct and direction values 0. Readings in [the log](logs/0105.md) | bd5429b9 |
+| 3: no floor under the held value | dev | done (`down`, both modes, under `depth` against `S`: B1 at 2, 3 and 7 m, and at 5 m in the frames all on a record; the casting frames at 5 m printed; B2 at 1 m, its second clause 3.99 levels at D+0 to three decimals). `side` printed, no bar: `depth` +15.7 to +30.4 mean at 1 to 5 m, 0 at 7 m. The rig's own check, the check frames and the exposures within their stops. Readings 10 to 12 in [the log](logs/0105.md) | abcc40aa, 3250031c; readings committed with this row |
 | 4: a ray is open where it reaches its base's height | dev | not started | |
 | 5: a chunk with no block holds the dig too | dev | not started | |
 | 6: the owner's window | human | not started | |
@@ -790,6 +790,24 @@ each. Empty is fine.)_
   first build that restarted ran 600 frames at `side` 3 m with the exposure unchanged, and
   was dropped before the four runs. Phase 2's runs are on the RTX 3080 Laptop only; `down`
   was not re-read under the hold.
+- Phase 3 (`abcc40aa`): the setting's plumbing also edits `bake/queue/message.rs`
+  (`StepSettings`), `bake/queue/mod.rs` (the queue's field), `bake/queue/split_tests.rs` (its
+  `StepSettings`), `crates/svet-render/src/lib.rs` (the export),
+  `apps/flythrough/src/cli/tests/outdoor.rs` (the flag's test) and
+  `apps/flythrough/src/run/hud_live_tests.rs` (the args from a lighting); no fly-through key
+  cycles it (`toggles.rs` not touched). The row names `dig estimate depth` only off the
+  default, as `dig hold`'s does: a row for `surface` changed the cave's default line that
+  `lighting_flags_parse_and_refuse_unknown_values` asserts.
+- Phase 3's rig change and the setting landed in one commit (`abcc40aa`), not the rig first;
+  the rig's own check ran on the rig-only build (`live/bin/p3a`) and counts as the `side`
+  lockstep `surface` run (the `surface` path is unchanged by the setting). That run's hold
+  spanned a machine suspend (11:58 to about 14:20) at load1 35. The D+0 step column was added
+  after it (`3250031c`), so that run has none.
+- Phase 3's fades line: lockstep names the queue's own sets (`fades` among them) for each
+  touched chunk; the thread names only the books' sets (`busy`), no fade set; the `fading`
+  count is both modes'. `QueueStats::dig_ns` read 0.00 at every read dig.
+- Phase 3 reads `down` 1 m four more times (reading 11) from a build that prints the luma
+  means to three decimals, to resolve B2's second clause that read 4.0 at one decimal.
 
 ### Close triggers
 
