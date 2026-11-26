@@ -1,6 +1,6 @@
 # 0106: No gate test passes by a clock: the red dig test stepped by count, the sweep, and a gate script
 
-> **Status:** in-progress (2026-11-26): Phase 1, the fix for main's red CI, done and merged on its own. Phases 2 to 4 approved (owner, 2026-11-26), with the soak tier's sweep added as Phases 5 and 6. Phases 1 to 4 and 7 done.
+> **Status:** in-progress (2026-11-26): Phase 1, the fix for main's red CI, done and merged on its own. Phases 2 to 4 approved (owner, 2026-11-26), with the soak tier's sweep added as Phases 5 and 6. Phases 1 to 4 and 7 done. Phase 10 read; Phase 11 (a reading of the switched pre-roll, step by step) is next, Phase 12 reserved ("Amended 2026-11-26 (architect, Phase 10's reading)").
 > **Created:** 2026-11-26
 > **Milestone:** none (harness; follows Plan 0099, `docs/roadmap.md` M9's bake thread)
 > **Related ADRs:** [ADR-0083](../adrs/0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md) (the bake thread; not changed)
@@ -196,11 +196,7 @@ Three things Phase 2 left, read from the code at `eac1d05e` (nothing was run; ev
 - **Done when:** the log holds the two stage tables side by side, the stage or stages that hold the growth with their step counts and per-step ms at both trees, and the merge at which the time entered, or the statement that four builds did not name it. Nothing is changed.
 - **Stops:** `db9c170a`'s tree reading over 30 s on the same day (the growth is then the machine's, not the tree's: report both walls). Everything else returns to the architect with the tables; the dev marks, cuts and fixes nothing.
 
-### Phase 11: reserved for Ruling 3's tier
-- **Owner skill:** dev
-- **What:** Written by the architect when Phase 10 returns (the mark with section 7's row, or the fix's own phase). Not started before that.
-- **Files touched:** named then.
-- **Done when:** stated then; until it is, the source switch is in the gate and Phase 6's and the close's `test-times.mjs` name it as over the line with this ruling as the reason.
+Phases 11 and 12 are under "Amended 2026-11-26 (architect, Phase 10's reading)" below: Phase 10 returned, and the stub that stood here (the tier, written when it did) is replaced there.
 
 ## Amended 2026-11-26 (architect, Phase 3's two leftovers)
 
@@ -208,6 +204,49 @@ Phase 3 came back with every class B site restated but two (`ee3accbd`, the read
 
 - **The three stage sums take two reading-only production edits (dev's option (a)).** Phase 3's remedy ("the laps are compared with the span between the step's own first and last clock reads") cannot be written from the test files: `StepStages::total_ms` is read by a clock call after the last lap (`bake/queue/step.rs`), and `SyncStats` carries each stage's truncated microseconds and no span (`StageClock::stop`, `gpu_world/window.rs`). Phase 3's files gain those two: `total_ms` is taken from the last lap's own instant, and `SyncStats` gains the span between its first and last clock reads. No behaviour moves: no frame path reads either figure but the readings lines, and no new clock call is added (one is removed). Rejected: leaving the three bounds (the claim then still compares two clocks), and a second amendment round for two fields. **Stop:** if either figure is read by anything but a readings line or a test, dev reports the reader and changes nothing.
 - **`RUN_BOUND` is sized after Phase 10, not before.** The child runs read 26 to 36 s loaded (11 runs) and 107.7 s once in Plan 0104's log; ten times that is a kill guard of 6 to 18 minutes, sized on a start-up that Ruling 3 says grew threefold on lavapipe inside two days. A guard sized on a regression would hide it. So Phase 3 closes without the resize: the bound stays 120 s, the readings are logged as they are, and the ten loaded runs a child and the resize join Phase 11, read on the tree Phase 10's finding leaves. Until then `RUN_BOUND` is the known next false red (the plan's Context already says so).
+
+## Amended 2026-11-26 (architect, Phase 10's reading)
+
+Phase 10 came back (`79b0744c`, the readings log's Phase 10 section). The code was read at that tip; nothing was run. Each statement below says whether it is from the code, from Phase 10's files (`live/p10/` in the lane's worktree) or a guess.
+
+### Ruling 4: the switched run's pre-roll has two lengths, and the listing pool is not why
+
+**From the code.**
+- **The listing pool is not on this path.** Every run prints `bake thread off` for both loads (`Args::bake_thread` is off under `--headless`); the pool starts only with the thread (`frame/bake_thread.rs`, `start_lister`), and a pre-roll step passes `samples`, so it would not list through it anyway (`queue/step.rs`, `pooled`). The run line's "listed from the workers" is `QueueStats::prepared`: the jobs listed from the **stream workers'** prepared masks (`queue/list.rs`), a count of what was opened, not a feed that holds the end back. Phase 10's inference is refuted as worded.
+- **The end condition.** With `--near 0 --coarse 0` the pre-roll ends at the first step where the camera's chunk is settled (`PreRoll::decide`: `settled >= of`, then the coarse pass is empty), and by nothing else short of the 120 s cap. Settled is a block at the full count and no job, dig or due entry for the chunk (`queue/reads.rs`, `settled`).
+- **What holds it.** An opening that finds a candidate's reach or lights not ready marks it blocked at that step and skips it for `QUEUE_RECHECK` steps, 30 (`queue/open.rs`, `queue/mod.rs`). The reach is not ready while any chunk within the light radius waits to upload or, on a streamed world, is not resident full and mirrored (`queue/reach.rs`). The constant is a count of steps written for frames; a pre-roll step here takes 0.1 to 0.35 s.
+- **What runs meanwhile.** The opening lists every other ready candidate up to two caps of samples at each step, the near setting notwithstanding: the pre-roll's `near` only names the chunks whose settling ends it.
+
+**From Phase 10's files.** The short mode is 32 steps on every tree: the camera's chunk blocked at the first opening (the stream has only begun), checked again 30 steps on, baked, settled. The long modes read 95 and 98 steps at `e1628197` and 129 at the tip: three and four more waits of 30, then a few steps behind the jobs opened meanwhile (the long runs print 48 and 15 steps "with no table slot free"). After a short pre-roll the queue's line reads `waiting reach` above 0 and `lights 0`: what blocks is the reach. The chunks baked (256 to 789) and the samples follow from the wait: 30 steps of two-cap openings a failed check.
+
+**So, derived, not read step by step:** the pre-roll's length after a switch is 2 steps plus 30 for every check of the camera's chunk that finds its reach not ready, and whether a check finds it ready is a race between the step count and the stream workers and the mirror's upload. That is a second clock inside the pre-roll, on a path `--pre-roll-stepped` does not reach (it waits on the device, not on the streamer).
+
+**Guesses, named as such.** Which chunk of the reach is not ready at step 31 and why (waiting to upload, not yet full, LOD-only). Why the odds moved at `e1628197` (before it, every run on record is short): the merge changed what the queue reads of the mirror (a per-step shadow of it) and of the residency (a snapshot), and either could change what a check sees; nothing here shows which. Whether the long mode exists on the RTX host or in a window (no reading; a window steps the pre-roll the same way but its steps are shorter).
+
+**Verdict: an engine finding in the start-up path, not a test fault and not the bake thread.** Start-up on a streamed world can take 30 steps of unasked baking per unlucky check: tens of seconds on lavapipe before the first frame, unpredictably. It is the complaint Plan 0108 reads (the pre-roll's length) and the owner's standing one (waiting for light). **It is not this plan's to fix**: this plan changes how tests wait, and the fix changes what a start-up shows. Rejected: **fixing it here** (a start-up behaviour change inside a harness plan, with no reading of the cause); **a fix plan drafted now** (the two guesses above decide its shape: a shorter recheck helps only if the reach is ready a step or two late, not if a chunk never uploads in time); **the soak mark now** (as Ruling 3: the test is what shows the finding); **passing `--pre-roll-stepped` or a quieter next source in the test** (the first does not reach the streamer, the second is a scene made simpler for a check). Routed: `docs/backlog.md`, "The pre-roll's end on a streamed world rides a 30-step recheck"; the fix plan is drafted when Phase 11 returns.
+
+**The 40.5 s reading at `db9c170a`: accepted as the machine's.** The stop was written on the run's wall, which was the wrong figure for a shared machine (the architect's wording). Its purpose was to tell the tree from the machine, and the stage table does: that run's switched pre-roll is 32 steps and 9 chunks like the two quiet runs, and its excess is the showcase's pipeline build (21.0 s at load 22 to 30 against 6.8 s quiet), which moves the same way at the tip. No repeat is owed.
+
+**Readings owed, and not owed.** Owed (Phase 11): the per-step trace that confirms or refutes the grid of 30 and names what blocks; the same at `c87bf7a6`; a few RTX runs. Not owed: `9b1cd85d` on its own (the tip's longer long mode is one more wait of 30, which the trace reads directly); quiet repeats of the walls (the finding is the step count, which the load does not make: the long mode read at load 1 and at load 8).
+
+### Phase 11: the camera's chunk through the switched pre-roll, step by step (a reading)
+- **Owner skill:** dev
+- **What:** A local trace, **not committed**, in the lane's tree: for each pre-roll step of the switched run, the step's number and ms; whether the opening checked the camera's chunk and what it found (reach ready, or the first chunk of the reach that is not and why: waiting to upload, not resident full, not mirrored, LOD-only; lights ready or not); whether a job for it is in the loop; the streamer's full chunks, the mirror's chunks waiting to upload, the jobs listed and the samples submitted that step. The shape is the dev's. Runs, each alone under the exclusive lock with its load1 logged: (1) Phase 10's command line on lavapipe at the tip, repeated until two short and two long pre-rolls are in hand, at most eight runs (27 to 60 s each as read); (2) the same trace on a worktree at `c87bf7a6` with its own target directory, built outside the lock, two runs; (3) Phase 10's untraced tip binary on the RTX adapter (the same command line without `--adapter`), five runs, reading the switched run's `pre-roll:` and `bake queue:` lines only. Every run is projected from its first stage's stamp and stopped past 5 minutes; the phase holds the lock under 15 minutes in all.
+- **Files touched:** `docs/plans/logs/0106.md`.
+- **Done when:** the log holds, per traced run, the steps at which the camera's chunk was checked with each check's finding, and the step it was opened and settled; one sentence each, from those rows, on (a) whether the checks fall 30 steps apart and a long pre-roll is one or more checks that found the reach not ready, (b) which chunk blocked at each such check and in what state, and whether it was ready one step later or many, (c) what the check at `c87bf7a6` saw at the same step; and the five RTX lines with their steps, chunks and ms. The trace's diff is in the log or beside the raw files, and `git status` shows no code change.
+- **Stops (report, change nothing):** the checks not falling 30 steps apart, or a long pre-roll whose camera chunk was never found blocked (the reading above is then wrong: log the trace of that run and run nothing more); the trace not applying at `c87bf7a6` without more than its print lines changing (skip that arm and say so); eight tip runs with no long pre-roll (report the eight). The dev fixes, marks and resizes nothing.
+
+### Phase 12: reserved for the switch test's tier and `RUN_BOUND`
+- **Owner skill:** dev
+- **What:** Written by the architect when Phase 11 returns and the fix's plan exists: the switch test's tier (Ruling 3's two outcomes stand), and `RUN_BOUND`'s ten loaded runs a child and its resize, which the amendment "Phase 3's two leftovers" moved to "Phase 11" and which now wait here, on the tree the fix leaves. Not started before that.
+- **Files touched:** named then.
+- **Done when:** stated then. Until it is, the source switch stays in the gate, unmarked, reading 27 to 60 s on lavapipe by the pre-roll's two lengths; Phase 6's and the close's `test-times.mjs` name it as over the line with Rulings 3 and 4 as the reason, and `RUN_BOUND` stays 120 s.
+
+**For the Implementation log** (the dev's, with Phase 11's commit): row 11 is renamed to this Phase 11 and a row 12 is added for the reserved phase.
+
+**Owner questions** (the first is a stability question and is not decided here; the second takes the recommendation unless the owner says otherwise):
+1. When the camera's chunk cannot bake at a start because its surroundings are still streaming in: does the first frame **wait for it** (as now, with the wait cut to the least the stream allows), or does start-up **end on a bound and show the frame with that chunk's light still landing**? The second is faster and shows light arriving in view; Plan 0108 Phase 2 (the owner looks at the start) is where it can be seen. Recommended to look before choosing; the fix plan carries both arms until then.
+2. The fix as its own small plan (next free number in `docs/plans/README.md`), drafted after Phase 11, not as phases of Plan 0108 (a chore of readings whose outdoor starts would read two lengths until the fix lands). **Recommended and taken.**
 
 ## Data shapes
 
