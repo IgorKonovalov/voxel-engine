@@ -561,6 +561,101 @@ For the close after Phase 4: the backlog entries (a gate-sized rule rig; the `fa
 neighbours; a re-listed chunk's place in the order), ADR-0085's acceptance with its Outcome,
 v0.78.0.
 
+## Amended 2026-11-26 (architect, the pool's check under a ruled push)
+
+A ruled chunk between its push and its block is, for the candidate pool, **in a job**:
+`sync_pool` counts the chunks of `BakeQueue::ruled` (pushed, their zero blocks placed at the
+step's submit) with the loop's jobs. Phase 5 below does it, **before Phase 4 (c)'s runs**.
+
+**Established from the code** (`9838fb4d`; nothing run by the architect):
+
+- **The invariant.** The kept pool equals `candidacy` read over every chunk the shadow holds
+  full (`queue/mod.rs`, the debug check at the end of `sync_pool`). `candidacy` answers from
+  the store's blocks, `reach`, the due sets, `faceless`, `sealed`, `digs` and the job set
+  `sync_pool` builds from `lp.chunks()`.
+- **The state.** `push_listed`'s ruled branch (`list.rs`) takes the chunk out of the pool,
+  allocates its place, pushes it on `ruled` and opens no job; `submit` (`step.rs`) places the
+  block. Until then a class 0 chunk has no block, no job and no flag: `candidacy` reads
+  `Some((0, false))` and the kept pool lacks it (a class 1 chunk over a coarse block reads
+  `(1, true)`). A job-listed chunk crosses the same gap, for many steps, and never trips the
+  check: it is in `lp.chunks()`, so `candidacy` is `None`, and when its job ends `pool_jobs`'
+  difference has the pool read it again.
+- **Who reads in the gap.** `take_listed` runs in `open_step` ahead of the opening, and the
+  opening's `score_and_census` is one of `sync_pool`'s two callers (the other,
+  `withdraw_passed`, runs before the take). So the check fails in every step that pushes a
+  pooled ruled record **and opens**; a step that pushes and does not open passes. Lockstep
+  pushes inside the opening, after its sync, and submits before the next: it never crosses it.
+- **Inherited, widened here.** `main` (`69d5ce97`) holds the same branch, the same placement
+  at the submit and the same order (Plan 0099's pool under ADR-0080's narrow rule); no test
+  there pushes a pooled ruled record. Not created by Phase 4: (a) only drops listings. This
+  plan makes every buried chunk of the owner's window (thread on by default) cross it, so a
+  debug window or a debug test on the thread with one buried chunk ends at the check. It is
+  fixed here and reaches `main` with the merge; no separate fix there.
+
+**The architect's reading of the release build** (from the code, not from a run; Phase 5's
+second test reads it): the kept pool is right only while `sync_pool` does not read the chunk
+again. It does when the chunk is in `touched` (the mirror's changes since the last opening
+name it) or the pool is stale (an untracked step: more changes than the mirror keeps, the
+streamed start). Then the pushing step's opening has the chunk back as a class 0 candidate,
+rules it and sends it to the pool a second time; `take_listed` of a later step runs before
+any sync, finds it still in the pool at its sent value and pushes it again: a second place,
+a second record of the same words over the first as a class 1 landing, `stats.zeroed`
+counted twice. It ends there (the chunk has a block at the next sync). Not a wrong image by
+this reading; a wrong count on the readings of Phase 4 (5), and listing work twice.
+
+**Rejected.** (1) The check alone widened to skip the chunks of `ruled`: the assert is
+silent and the release path above stays. (2) The block placed at the push: the placement
+borrows the step's fades, landing word, stats and laps and writes the store's lists; moved
+ahead of the opening it changes the order of a step's writes in lockstep too, which Plan
+0099 holds fixed. (3) `take_listed` after the opening: the gate reads `projection()`, the
+loop's samples the take has just pushed against the pool's estimates; the pooled level
+(Plan 0099 Phase 4b) was read in this order, and the change would touch every listing for a
+ruled one. (4) `candidacy` reading a set of its own: the job set is the mechanism that
+exists, and it also has the pool read the chunk again once the submit has placed or released
+its block.
+
+### Phase 5: The pool counts a ruled chunk awaiting its block as in a job
+- **Owner skill:** dev
+- **What:** In `sync_pool` the job set is `lp.chunks()` and the coordinates of `ruled`, for
+  the kept pool, `pool_jobs` and the debug check alike. Nothing else moves: the push, the
+  placement at the submit, the order of `take_listed` and the opening, lockstep's steps.
+  Each test is written first and read red on `9838fb4d`'s code. Every other reader of
+  `lp.chunks()` is checked against the gap (by the architect's reading `open_digs`,
+  `open_keys` and the message's boxes run before the take; `Books::of`, `settled` and
+  `dig_trace` after the submit) and the finding goes to the log.
+- **Files touched:** `crates/svet-render/src/bake/queue/mod.rs`,
+  `crates/svet-render/src/bake/queue/split_tests/lister.rs`, `docs/plans/logs/0101.md`.
+- **Done when:**
+  1. `a_pooled_ruled_push_keeps_the_pool_a_whole_reading` (CPU, the rule's rig with the pool
+     started as Phase 4 (1)'s test, the quick tier's debug build, under 2 s; steps by count,
+     the only wait the rig's `wait_listed` on the pool's thread): `C` is ruled, its listing
+     back; one step with no change pushes it **and opens** (`stats.openings` grows in that
+     step, asserted, else the test does not cross the gap); after it `C` is zeroed,
+     `stats.zeroed` is 1, `C` is not in the pool's hands and not a candidate; it settles with
+     0 jobs and the zero record. Red on `9838fb4d` in debug at `sync_pool`'s check.
+  2. `a_pooled_ruled_chunk_is_listed_once_under_a_change_that_keeps_the_rule` (same rig and
+     bounds): before the pushing step a message names `C` among the mirror's changes with
+     the tops as they were; after that step `C` is zeroed and not in the pool's hands; at
+     the settle `stats.zeroed` is 1 with 0 jobs. Read on `9838fb4d` in both builds: red in
+     debug at the check; in release (`cargo nextest run --release`, this test by name) red
+     on an assertion is the architect's reading confirmed, green refutes it and is logged
+     as such (the phase still lands for (1)).
+  3. Phase 4 (1) and (2)'s tests and Phase 2's three CPU tests pass unchanged; the quick
+     tier, clippy, fmt, the doc gates. Binaries: `gpu_queue gpu_bake_rule` (lavapipe), since
+     `sync_pool` is every opening's.
+- **Stop:** if (1) is green on `9838fb4d`, the reading above is wrong: dev builds nothing
+  and says so. If a test still fails the check with `ruled` in the job set, another state
+  breaks the invariant: dev stops with the chunk and both values, and does not narrow the
+  check.
+
+**Where it sits.** After Phase 4 (a) and (b), before (c): done-whens (4) to (6) of Phase 4
+run on the tip of Phase 5. The lane's readings binaries are release builds
+(`live/bin/p*/flythrough`, the readings log), so the check itself would not stop those runs;
+the release path above would put double counts in (5)'s zero records and extra listings in
+(6)'s step, which is why the runs wait. Phase 4 (5) also states, from its thread-on run, the
+`bake queue:` line's zero records beside the zeroed chunks' count of (c)'s hash line: equal,
+or the difference named (a re-list rules a chunk twice by design).
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases

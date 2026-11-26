@@ -64,6 +64,9 @@ the invariant above was not enough as first written:
   world's store does not hold as rock, so a chunk ruled beside an absent neighbour is listed
   again when that neighbour is held full, and ruled again on the faces as they stand. Without
   it the record is final on faces the stream's order chose.
+- **A ruled chunk awaiting its block is in a job, for the candidate pool.** Its record is
+  placed at the submit of the step that pushes it; until then it is no candidate, as a chunk
+  whose job is open is none, so an opening between the two does not list it again.
 
 ## Consequences
 
