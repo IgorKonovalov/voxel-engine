@@ -2879,6 +2879,8 @@ version = "0.79.0"
 dependencies = [
  "log",
  "pollster",
+ "svet-render",
+ "svet-world",
  "wgpu",
  "winit",
 ]
