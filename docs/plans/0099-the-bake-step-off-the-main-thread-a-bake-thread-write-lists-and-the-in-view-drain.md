@@ -2581,6 +2581,22 @@ as it was; the close review reads them).
 
 Not amended.
 
+## Amended 2026-11-26 (architect, after Phase 3g)
+
+Phase 3g landed with neither stop fired. Its quick tier beside the 40 runs showed a second
+test with the fault ruling 4 named:
+`the_edits_frame_waits_for_its_list_and_no_other_frame_does` fails 3 of 40 at the Phase 3g
+tip and 2 of 40 at its base, run by name beside a quick tier, in the fading-chunk case. The
+case paces its frames by a 1 ms sleep and releases the held step from a second thread
+after a 50 ms sleep, so a descheduled thread changes which frame the step lands in.
+
+**Phase 6 takes the remedy as its first item, before the pins**, by Phase 3g's pattern:
+the held step waits on a gate the test releases at the frame it names (the box signal or a
+gate of the test's own), frames are stepped by count and not by a sleep, and no assertion
+is loosened. Done when: the test run by name 40 times beside a running quick tier has 0
+failures, the count in the log. **Stop, reported:** the case cannot be gated without a
+change to the product's path. Phase 4d is unchanged and goes first.
+
 ## Data shapes
 
 ```rust
