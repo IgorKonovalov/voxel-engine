@@ -1,6 +1,6 @@
 # 0105: The dig's flash at depth: a held estimate that follows the hole's own light
 
-> **Status:** in-progress (Phase 4 read 2026-11-26 and stopped for the architect: B1 missed at `side` 2 m, +9.9 mean, and B2's second clause at `down` 1 m, 8.0 levels under `surface` at D+0; Phase 3 done 2026-11-26; Phase 1 done 2026-11-26; the phases after it are rewritten under "Amended 2026-11-26 (architect)": the held floor is the flash; Phase 2 read 2026-11-26 and stopped for the architect: the exposure at D-1 is not within 1 % of D+60's at 6 of 20 read digs); approved (owner, 2026-11-26: go; his four answers are under "Amended 2026-11-26 (owner)" and bind Phase 1's sites and the remedy's bars; drafted from the owner's report after Plan 0099's window, with
+> **Status:** in-progress (Phase 4b done 2026-11-26: `side` lockstep `depth`, B1 met at 2, 3, 5 and 7 m against `S`, no part from 2 m over its landed byte; 4c not started; Phase 4 read 2026-11-26 and stopped for the architect: B1 missed at `side` 2 m, +9.9 mean, and B2's second clause at `down` 1 m, 8.0 levels under `surface` at D+0; Phase 3 done 2026-11-26; Phase 1 done 2026-11-26; the phases after it are rewritten under "Amended 2026-11-26 (architect)": the held floor is the flash; Phase 2 read 2026-11-26 and stopped for the architect: the exposure at D-1 is not within 1 % of D+60's at 6 of 20 read digs); approved (owner, 2026-11-26: go; his four answers are under "Amended 2026-11-26 (owner)" and bind Phase 1's sites and the remedy's bars; drafted from the owner's report after Plan 0099's window, with
 > his three answers and no further interview; the questions left are under "Risks & open
 > questions", each with a recommended option). Starts on a main that holds Plan 0099.
 > **Created:** 2026-11-26
@@ -963,7 +963,8 @@ No record, block or buffer changes shape: the held record is the store's record 
 | 1: the blink reproduced headless at depth | dev | done; stopped for the architect (the one-dig shaft flashes at `down` and `side`, both modes; the held record's sky term, M1's floor; M2 at `down` 5 m only; no M3). `wide`, `slope`, `tunnel` and lavapipe not read. Readings in [the log](logs/0105.md) | 56e34b50 |
 | 2: the before arm on a settled exposure, and the wide pit | dev | read; stopped for the architect (the exposure at D-1 against D+60 over 1 % at `side` 1 and 2 m both modes, `side` 3 m and `wide` 1 m thread; the holds were still by the stated rule). `side` before arm with the exposure held: +62 to +102 mean levels, the same in both modes; `wide` +3 to +20 from 1 m, key, direct and direction values 0. Readings in [the log](logs/0105.md) | bd5429b9 |
 | 3: no floor under the held value | dev | done (`down`, both modes, under `depth` against `S`: B1 at 2, 3 and 7 m, and at 5 m in the frames all on a record; the casting frames at 5 m printed; B2 at 1 m, its second clause 3.99 levels at D+0 to three decimals). `side` printed, no bar: `depth` +15.7 to +30.4 mean at 1 to 5 m, 0 at 7 m. The rig's own check, the check frames and the exposures within their stops. Readings 10 to 12 in [the log](logs/0105.md) | abcc40aa, 3250031c, 5cbe305c |
-| 4: a ray is open where it reaches its base's height | dev | read; stopped for the architect (lockstep, RTX: B1 missed at `side` 2 m, +9.9 mean / +28 p95 against `S`, parts one byte over a landed 0; B2's second clause missed at `down` 1 m, depth 8.0 levels under `surface` at D+0, and at `side` 1 m against Phase 3's surface at +2.0 % exposure). Form picked by the CPU table: the share. B1 met at `down` and `wide` from 2 m (5 m on the frames all on a record), `side` 3 to 7 m. The thread runs not read. Readings 13 and 14 in [the log](logs/0105.md) | committed with this row |
+| 4: a ray is open where it reaches its base's height | dev | read; stopped for the architect (lockstep, RTX: B1 missed at `side` 2 m, +9.9 mean / +28 p95 against `S`, parts one byte over a landed 0; B2's second clause missed at `down` 1 m, depth 8.0 levels under `surface` at D+0, and at `side` 1 m against Phase 3's surface at +2.0 % exposure). Form picked by the CPU table: the share. B1 met at `down` and `wide` from 2 m (5 m on the frames all on a record), `side` 3 to 7 m. The thread runs not read. Readings 13 and 14 in [the log](logs/0105.md) | f310ff93, 21324b90 |
+| 4b: a held value under one byte holds 0 | dev | done (`side`, lockstep, RTX, `depth`, against `S`: B1 at 2, 3, 5 and 7 m, +0.0 / +0 each; no part from 2 m over its landed byte, 3 at 2 m in Phase 4; 1 m printed, +0.8 / +8, one part 3 bytes over a landed 1). Run at load1 30.52 at the lock. Reading 15 in [the log](logs/0105.md) | committed with this row |
 | 5: a chunk with no block holds the dig too | dev | not started | |
 | 6: the owner's window | human | not started | |
 | 7: the pick as the default, with its tests | dev | not started | |
@@ -1008,6 +1009,9 @@ each. Empty is fine.)_
   arms (was a dense vector over the box); the `down` surface arm repeats Phase 3's figures on
   it. The rig's `forms over landed` row is its own function (`forms_row`). The phase's runs are
   lockstep only: it stopped at the first missed bars, and the thread runs were not started.
+- Phase 4b: the traced part's `value` is the written value (after the cut); the fill of a
+  direction with no face is the mean of the directions' values before the cut. Phase 4b's one
+  run is from a binary built before `rustfmt` rewrapped one line of `held.rs`.
 
 ### Close triggers
 

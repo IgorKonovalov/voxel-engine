@@ -16,7 +16,8 @@
 //! clears the near reach counts open only where it goes on, with no opaque voxel, until it
 //! stands at the height the base was read at (the top of the record's cell above, or the
 //! chunk's top for the summary; a base from the cell's own record keeps the near rays alone);
-//! the value is the base times [`depth_form`] of that share.
+//! the value is the base times [`depth_form`] of that share, and each of the cell's six values
+//! under one byte of the record is written as 0 ([`written`]).
 
 use std::collections::HashMap;
 
@@ -44,6 +45,18 @@ const GRID_MARGIN: i32 = (HELD_REACH + 8) / 8;
 /// that reach the base's height: the share itself (Plan 0105 Phase 4's rule on its CPU table).
 fn depth_form(reach: f32) -> f32 {
     reach
+}
+
+/// The value the record takes for a held value `v`: under [`DigEstimate::Depth`] a value under
+/// one byte of the record (1/255) is 0, so a hole the bake will land at 0 never shows a byte of
+/// sky that rounding up gave it; from one byte up, and under [`DigEstimate::Surface`], `v`
+/// (rounded to the byte as every record is).
+fn written(v: f32, estimate: DigEstimate) -> f32 {
+    if estimate == DigEstimate::Depth && v < 1.0 / 255.0 {
+        0.0
+    } else {
+        v
+    }
 }
 
 /// A brick's opaque mask (bit `x + 8 y` of word `z`) by global brick.
@@ -356,7 +369,8 @@ fn radiance_source(own: Option<&[u32]>, f: usize) -> (RadianceFrom, Option<f32>)
 /// a face inside one at the held estimate; `None` for a cell with no removed surface's record
 /// above it and no chunk summary under a sky. `estimate` sets the floor: [`HELD_FLOOR`] under
 /// [`DigEstimate::Surface`] for a dig's face and for a cell with no face, none under
-/// [`DigEstimate::Depth`]. Each dig direction's parts are pushed to `trace` where given (a
+/// [`DigEstimate::Depth`], where each of the six values under one byte is 0 ([`written`]). Each
+/// dig direction's parts are pushed to `trace` where given (a
 /// reading).
 #[allow(
     clippy::too_many_arguments,
@@ -462,7 +476,7 @@ pub(crate) fn held_visibilities(
                     parts = Some((value, open, reach, new.len(), old.len()));
                 }
                 vis[f] = sum / list.len() as f32;
-                if let (Some(t), Some((estimate, open, reach, n_new, n_old))) =
+                if let (Some(t), Some((part, open, reach, n_new, n_old))) =
                     (trace.as_deref_mut(), parts)
                 {
                     let (radiance_from, old_radiance) = radiance_source(own, f);
@@ -471,8 +485,8 @@ pub(crate) fn held_visibilities(
                         slot: *slot,
                         sub: sub as u16,
                         face: f as u8,
-                        value: vis[f],
-                        estimate,
+                        value: written(vis[f], estimate),
+                        estimate: part,
                         up,
                         from,
                         own: own_f,
@@ -494,7 +508,9 @@ pub(crate) fn held_visibilities(
             } else {
                 held.iter().sum::<f32>() / held.len() as f32
             };
-            cells.push(Some(vis.map(|v| if v.is_nan() { fill } else { v })));
+            cells.push(Some(
+                vis.map(|v| written(if v.is_nan() { fill } else { v }, estimate)),
+            ));
         }
         out.push((*slot, cells));
     }
@@ -770,6 +786,84 @@ mod tests {
         assert_eq!(held(40, DigEstimate::Depth), 0.0, "40 down under depth");
         let depth8 = held(8, DigEstimate::Depth);
         assert!(depth8 > 0.0, "8 down under depth {depth8}");
+    }
+
+    /// The byte a value takes in the record (`visibility_words`' rounding).
+    fn byte(v: f32) -> u32 {
+        visibility_words([v; 6])[0] & 0xFF
+    }
+
+    /// Under `Depth` a held value under one byte holds 0 and one of 1.10 bytes holds one byte;
+    /// under `Surface` 0.54 and 0.84 of a byte round as every record does.
+    #[test]
+    fn a_held_value_under_one_byte_holds_zero_under_depth() {
+        for b in [0.54f32, 0.69, 0.84] {
+            let v = b / 255.0;
+            assert_eq!(written(v, DigEstimate::Depth), 0.0, "{b} of a byte");
+            assert_eq!(byte(written(v, DigEstimate::Depth)), 0, "{b} of a byte");
+        }
+        assert_eq!(byte(written(1.10 / 255.0, DigEstimate::Depth)), 1);
+        assert_eq!(byte(written(0.54 / 255.0, DigEstimate::Surface)), 1);
+        assert_eq!(byte(written(0.84 / 255.0, DigEstimate::Surface)), 1);
+    }
+
+    /// A cell's up direction of 24 faces the dig did not make (x in 21..24 at z 23, outside the
+    /// box dilated by one), its old record at 2 bytes, beside 38 dig faces (x in 16..21) under
+    /// a roof one voxel over them, so every ray closes: under `Depth` the dig faces hold 0 and
+    /// the mean is 48 / 62 of a byte, which holds 0 in all six values; under `Surface` the dig
+    /// faces hold `HELD_FLOOR` and the cell more than 0.
+    #[test]
+    fn kept_faces_under_one_byte_beside_closed_dig_faces_hold_zero_under_depth() {
+        // Opaque but the layer z = 24 (the faces' empty voxels).
+        let pocket = || {
+            Opaque::from_bricks([-3, -3, -3], [10, 10, 10], |g| {
+                let mut m = [0u64; 8];
+                for (z, w) in m.iter_mut().enumerate() {
+                    if g[2] * 8 + z as i32 != 24 {
+                        *w = u64::MAX;
+                    }
+                }
+                m
+            })
+        };
+        let slot = brick_slot([2, 2, 2]);
+        let mut words = surface(&[[2, 2, 2]]);
+        let block = words.get_mut(&[0, 0, 0]).expect("the block");
+        let run = (block[slot] >> 11) as usize;
+        block[run - BRICK_WORDS + VIS_WORD..run - BRICK_WORDS + VIS_WORD + 2]
+            .copy_from_slice(&visibility_words([2.0 / 255.0; 6]));
+        // Up faces at z 23 (brick voxel z 7): 38 dig faces at x 16..21, then 24 kept at 21..24.
+        let up = |x: i32, y: i32| ((((x - 16) + 8 * (y - 16) + 64 * 7) << 3) | 5) as u16;
+        let mut keys: Vec<u16> = (16..21)
+            .flat_map(|x| (16..24).map(move |y| up(x, y)))
+            .take(38)
+            .collect();
+        keys.extend((21..24).flat_map(|x| (16..24).map(move |y| up(x, y))));
+        assert_eq!(keys.len(), 62);
+        let faces = ChunkFaces {
+            bricks: vec![(slot as u16, keys)],
+            glass: vec![],
+        };
+        let boxes = [[[16, 16, 24], [19, 23, 24]]];
+        let held = |estimate| {
+            held_of(
+                &held_visibilities(
+                    &mut pocket(),
+                    &words,
+                    &boxes,
+                    [0, 0, 0],
+                    &faces,
+                    &[slot as u16],
+                    8,
+                    estimate,
+                    None,
+                ),
+                slot as u16,
+            )
+        };
+        assert_eq!(held(DigEstimate::Depth), [0.0; 6], "under depth");
+        let surface = held(DigEstimate::Surface)[5];
+        assert!(surface > 0.0, "under surface {surface}");
     }
 
     #[test]
