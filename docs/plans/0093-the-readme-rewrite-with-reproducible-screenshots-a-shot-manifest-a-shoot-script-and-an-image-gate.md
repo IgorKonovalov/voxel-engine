@@ -3,7 +3,10 @@
 > **Status:** approved 2026-11-19 (drafted from the Bonsai second pass, section 2, and the
 > owner's "more screenshots through the doc"; the owner: "all recommended", every owner question
 > on its recommendation: after 0087, beside 0089, before 0091; canopy shot now; one caption line;
-> the frame-time figure; the hero from the sheet)
+> the frame-time figure; the hero from the sheet). **Refreshed 2026-11-26** against main
+> `aa8a76a3` (v0.76.0): see "Amended 2026-11-26" below, which wins where it differs (a wording
+> standard, the examples, the first screen, `--eye` for `--camera`, nine feature groups, the
+> scrub at the close). Not started; the lane starts after Plan 0104 closes, beside 0101 and 0105
 > **Created:** 2026-11-19
 > **Milestone:** M7 in `docs/roadmap.md` (tooling); a docs plan: no engine crate changes
 > **Related ADRs:** none. The one choice with a rejected alternative (the README's images come
@@ -411,6 +414,253 @@ Laptop, not budgets.
    4.3 ms, `docs/nfr.md` section 2). Alternative: the determinism claim (a session replays from
    seed plus log to the same hash on Linux and Windows).
 
+## Amended 2026-11-26 (architect, the owner's note on the README's model)
+
+The owner, 2026-11-26, on the README this plan models ours on: "an example of a very good
+readme. Good texting, sections, examples, images. It looks pretty and I want to give a star
+right away." The plan had the structure and the images; it said little about the wording, the
+examples and the first screen, and a week of merges made parts of it stale. This section adds
+the rules and restates every Done when it changes. Where it and the text above differ, this
+section wins; the phases, their owners and their order stand. Main at `aa8a76a3`, v0.76.0.
+
+### A1. What the model does (read today)
+
+The model is Bonsai's README (`scallyw4g/bonsai`, `readme.md` on `master`, 246 lines, fetched
+2026-11-26 through the GitHub API). This sentence is the amendment's only use of the name; the
+rules below stand without it (A9).
+
+- **Wording.** First person, warm, short: most sentences under 20 words. The opening is three
+  short paragraphs: what it is, the one remarkable claim with a number and a comparison a
+  reader can picture, and what a user can do with it. Quoted: "The view distance is the entire
+  world, all the time." and "Yes, you read that right." Feature bullets are noun phrases of two
+  to six words in the field's own terms (quoted: "Hot Shader & Game-code Reloading",
+  "Procedural sky with a smooth horizon and directional sun"); one bullet in thirty explains a
+  mechanism. No process, no decision records, no internal vocabulary.
+- **Sections.** A welcome with the opening; a version note; Getting Started (what a build
+  needs) holding Quickstart (the release binaries first, then four linked headings: getting
+  started, build from source, controls, the chat server); quoted praise; Feature Sets in six
+  groups; Gallery; Wishlist in six groups.
+- **Examples.** None inline: no code fence, no command line, no keys table. The first screen
+  links to the releases and to three guides. It is an application; a download is its example.
+- **Images.** Seventeen: a 256 px logo floated right of the opening and sixteen full-width
+  stills, no loop, no caption, every alt text the same word. One still closes every block:
+  after the version note, the quickstart, each feature group, each wishlist group; four in the
+  gallery. The longest run of text between two images is twelve short lines.
+- **The first screen.** A title, the logo, three short paragraphs, then a full-width still. No
+  badge. Much whitespace, since every line is short.
+
+### A2. Where the plan matched and where it was short
+
+Matched: the quickstart first with the release archive leading; grouped features with an image
+after each; a gallery; a wishlist; process moved out (`docs/development.md`); no ADR or plan
+number in the README. Ours is stricter on images, rightly: a manifest, a gate, real alt text,
+one caption line.
+
+Short: (1) no wording standard, so today's dense sentences would move over unchanged; (2) no
+named examples: a library workspace needs a code example and a keys table, where the model
+needs neither; (3) the first screen was a list of parts, not a specification; (4) no rule for
+how much text may sit between two images outside the feature groups; (5) nothing in the
+feature groups for the outdoor work, and two groups (Simulation, Audio) with no shot that
+could follow them.
+
+### A3. The wording standard (binding on Phase 6; the reviewer checks each)
+
+W1. **Sentences.** No sentence of README prose is over 25 words; the opening's (A5) are at
+    most 20. Prose is every line outside code fences, tables, headings and image lines.
+W2. **The opening** is at most three paragraphs of at most three sentences: what `svet` is;
+    the one measured claim with its hardware; what a game does with it (composes crates, owns
+    its loop). The name's meaning ("light", and "the world") stays: it is our one warm line.
+W3. **A feature bullet says what the reader gets**, in at most 12 words, starting with the
+    thing or the verb: "Dig, fill and stamp at runtime; every edit reports what it changed."
+    No "through", "via" or "by" clause that explains the build, no parenthesis, no type or
+    field name. One bullet a group may run to 25 words. Detail lives behind at most one link
+    line at the group's end.
+W4. **Terms.** The field's names stand (ray marching, FSR 2, HRTF, WGSL, WebAssembly, `.vox`).
+    A term coined in this repository is replaced by plain words or explained in its sentence:
+    the store, the record, a landing, the key light, calm light, honest cubes, the far normal,
+    the bake queue, the mirror, the belt, a profile's name used bare.
+W5. **No internal numbering anywhere in the README:** no ADR, plan or milestone code (`M7`),
+    no `docs/plans/` or `docs/adrs/` path. A wishlist line's link text says the thing.
+W6. **A number names its machine.** Every speed or size figure states the hardware and the
+    output size in its sentence and is quoted from `docs/nfr.md` or `docs/nfr/` as they read
+    at Phase 6's tip. At most five such figures in the README.
+W7. **Voice.** Active, present tense; "you" is allowed. No hedge ("aims to", "is designed
+    to"), no adjective of praise without a figure beside it, no project history, no emoji.
+W8. **Status is one line:** pre-alpha, with links to the changelog and the roadmap. A miss is
+    not hidden: the line links `docs/nfr.md`, "met and missed".
+W9. **Rhythm.** From `## Features` to the end of `## Gallery`, no more than 120 words of
+    prose separate two images.
+
+### A4. The examples the README carries
+
+E1. **The first commands** (Quickstart): the release archive from the releases page and the
+    binary to start, then from source `cargo run --release -p flythrough` and two scene lines
+    (the showcase, the outdoor hills with `--trees forest`), each with a trailing comment of
+    what the reader sees. At most six command lines in the section.
+E2. **The keys**: a table of at most eight rows (look and fly, dig and fill, the menu, the
+    keys page, the overlay, the headlamp, walk, quit), then the link to `docs/flythrough.md`.
+    This replaces "one line of keys".
+E3. **The code example**, under `## Use it as a library`, after Quickstart: one sentence that
+    a game composes the crates it needs; the dependency lines as the tree allows them (the
+    crates are not on a registry today, so a git dependency, said in one line); one `rust`
+    fence of at most 25 lines on `svet-world` alone: a material table, a generated world, one
+    carve, the edit's result asserted, one query. No hidden lines: the fence compiles as
+    shown. Then one line pointing at `apps/flythrough` as the worked example of the render
+    loop. **How it is checked:** `crates/svet-world/src/lib.rs` gains a `#[cfg(doctest)]` item
+    whose doc is `include_str!` of the README, so `cargo test --doc -p svet-world` (already in
+    CI as `cargo test --workspace --doc`) compiles and runs the fence. This is the plan's one
+    line in `crates/`; it adds no public item.
+E4. **Try it**: each feature group whose image is a fly-through shot ends with that shot's
+    scene as a windowed command (the manifest entry's flags without `--headless`, `--frames`
+    and the still flags).
+E5. **The regenerate command**, once, at the gallery's end (as approved).
+
+Every flag in E1, E2 and E4 is a row of `docs/flythrough.md`; every key is the table's there.
+
+### A5. The first screen
+
+In this order, nothing else before `## Quickstart`: the `# svet` title; a tagline of at most
+12 words; at most three badges on one line (CI, licence, latest release); the hero, full
+width, with its one `<sub>` caption line; the opening (W2), at most 120 words; the status line
+(W8). No table, no list, no second image. On GitHub at a 1080p desktop width the title, the
+tagline and the whole hero show without scrolling (Phase 7 checks it).
+
+### A6. What was stale, and the tree's names
+
+- **`--camera` is not added.** The tree has `--eye X,Y,Z,YAW,PITCH` (outdoor only; yaw
+  counter-clockwise from +x, 90 north; `cli/outdoor.rs`). Phase 1 extends `--eye` to every
+  source and refuses it on `--path`. Read `--eye` for `--camera` throughout.
+- **The fly-through already writes an image.** `--still PATH` (with `--mode-text`,
+  `cli/still.rs`, `run/still.rs`) writes a headless run's last frame, without the HUD, as a
+  PPM, for `scripts/rehearse-window.mjs`. `--still-at` and `--still-dir` build on that
+  readback; `--still` keeps its behaviour. `rehearse-window.mjs` already holds the perf lock
+  and memory cap wrapper and a PPM to PNG writer; `shoot-images.mjs` imports what it can.
+- **A headless run bakes in lockstep** (`--bake-thread` is off under `--headless`), which is
+  what the idempotence reading wants; no shot passes `--bake-thread on`.
+- **The outdoors moved:** `--trees none|sparse|forest` (sparse by default; the canopy and the
+  hero pass `forest`), `--sun EL,AZ` fixes the sun beside `--time`. `--vox` places "in the
+  streamed cave"; the castle on a hill stays one try in Phase 1.
+- **Plan 0094 has closed**, so "may wait for Plan 0094" and the second Followup are moot: the
+  canopy is shot now. Owner question 3 is answered by events.
+- **A shot shows the default look.** An entry's flags are scene, pose, clock, trees,
+  entities, lamp, exposure, frames and size; never a lighting-mode flag. So nothing here
+  names the rows Plan 0104 removes (`--key-at`, `--key-horizon`, `--key-cover record`).
+- **No flag for the dig's radius exists**; the `dig` and `skylight` candidates vary pose and
+  frame, not radius. Every other flag the shot list names is a row of `docs/flythrough.md`
+  today (`--source`, `--spawn`, `--shot`, `--castle`, `--castle-shot`, `--castle-out`,
+  `--vox`, `--entities`, `--entities-walk`, `--dig-at`, `--time`, `--lamp`, `--hud`, `--room`,
+  `--render`, `--frames`, `--headless`).
+- **The identity figure.** `docs/nfr.md` section 2 still reads 2.9 to 4.3 ms of GPU at Floor,
+  from Plan 0069's tip, before the outdoors. Since v0.76.0 it also reads the forest: a frame
+  of 8.3 ms at 1080p on the RTX 3080 Laptop while the view bakes. Owner question 5 reopens
+  (below); either way Phase 6 quotes the file as it reads at its tip.
+- **The README itself changed** (refreshed to v0.74.0, the spider loop as its hero); Phase 6
+  rewrites whatever it finds.
+
+### A7. Feature groups and shots, refreshed
+
+Nine groups, since the outdoors is now a body of work with the hero in it: World and edits,
+Rendering, Lighting, Outdoors, Entities, Structures, Simulation and determinism, Audio,
+Tooling. The image after each:
+
+| Group | Image |
+|---|---|
+| World and edits | `dig` (loop) |
+| Rendering | `hall` (new: `--source showcase --shot hall / chasm / crystals`, the lamp off) |
+| Lighting | `lamp-cave` |
+| Outdoors | `canopy`; `skylight` beside it or in the gallery |
+| Entities | `walkers` (loop) or `spider-walk` (loop) |
+| Structures | `chapel` or `castle`, the other in the gallery |
+| Simulation and determinism, Audio | no shot illustrates them: the owner assigns a gallery still to each at Phase 5; no diagram is drawn for the slot |
+| Tooling | `hud` |
+
+Shot list changes: `hero` candidates are `--source outdoor --trees forest --spawn forest` at
+`--time 17:40 / 18:10 / 18:40` and two `--eye` poses; `canopy` is `--trees forest --time
+15:00` at three `--eye` poses; `skylight` uses `--eye` for its pose; `hall` is added. Twelve
+shot entries at the caps would be 8 x 300 KB + 4 x 700 KB = 5.2 MB, over the 5 MB line: the
+day cycle drops first, as approved (then 4.5 MB). Plans 0101 and 0105 change how a dig and an
+opening look; after either merges, `node scripts/shoot-images.mjs --check` names the entries
+that moved and one shoot refreshes them.
+
+### A8. Done whens restated
+
+- **Phase 1** as written, with `--eye` for `--camera`: `--eye 100,100,40,90,-10` on the
+  showcase puts the eye there; `--eye` with `--path` is refused naming both; `--still PATH`
+  still writes its PPM (`rehearse-window.test.mjs` stays green). Files touched add
+  `apps/flythrough/src/cli/still.rs`, `cli/outdoor.rs` and `run/still.rs`.
+- **Phase 5** adds: the owner assigns the images after Simulation and Audio, and answers the
+  owner questions below that are still open.
+- **Phase 6**, replacing its Done when: `README.md` holds, in order, the first screen (A5),
+  `Quickstart`, `Use it as a library`, `Features` with the nine `###`, `Gallery`, `Wishlist`,
+  `Development`, `License`; every `###` group is followed by an image before the next
+  heading; `git grep -n -E 'ADR|Plan [0-9]|\bM[0-9]+\b|docs/(plans|adrs)/' README.md` prints
+  nothing; `git grep -i -E 'roguelite|horror|delve' README.md docs/development.md` prints
+  nothing; a Node one-liner in the readings log prints the longest sentence (at most 25
+  words), the opening's word count (at most 120), the longest feature bullet per group (W3)
+  and the most words between two images from Features to the Gallery's end (at most 120);
+  the reviewer reads the README against W2 to W8 and names any line that fails;
+  `cargo test --doc -p svet-world` runs the README's fence and fails when the fence is
+  broken (tried once: a typo in the fence turns it red; logged); every flag and key in E1,
+  E2 and E4 is in `docs/flythrough.md`, and each E1 and E4 command starts and draws 2 frames
+  with `--headless --frames 2` added (under the perf lock, logged); the identity figure
+  quotes `docs/nfr.md` with its machine; the five doc gates and `check-images.mjs` exit 0;
+  `node scripts/shoot-images.mjs --check` exits 0; the README's images total at most 5 MB.
+  Files touched add `crates/svet-world/src/lib.rs` (the doctest item only).
+- **Phase 7** adds: at a 1080p desktop width the title, the tagline and the whole hero show
+  without scrolling; the owner reads the opening aloud once and says it reads right.
+
+### A9. The model is not named (owner, 2026-11-26)
+
+The owner: "after plan implementation I want to amend it and remove mention of [the model] as
+a source of inspiration. let it be abstract", then: "scrub all, and don't mention in commit
+messages". Three rules:
+
+1. **Nothing this plan produces names the model or links to it:** not `README.md`,
+   `docs/development.md`, the manifest, the scripts, their tests and fixtures, the readings
+   log or the CHANGELOG entry. The rules of A3 to A5 are the standard; they need no source.
+2. **From now on no commit message, branch name or tag names it.** Binding on the lane's dev
+   agents and on the close review. Earlier commits stay as they are; history is not rewritten.
+3. **The scrub, at the close, after the owner's Phase 7.** The close review's ceremony, as a
+   doc edit by the architect, rewrites every tracked file that names the model so that it
+   describes it abstractly ("a README with an image every ten lines, grouped features and
+   the quickstart first"; "another voxel engine's source" for a borrowed idea), with no
+   project name, repository path or link, and no exception by file. Today `git grep -i -c`
+   of the name lists: this plan (the Status line, the TL;DR, Context, A1), `docs/plans/README.md`,
+   Plans 0091 and 0092, `docs/backlog.md` (a section heading and its entries, the heading
+   reworded and every fragment link to it fixed), `docs/reviews/2026-11-20-crystal-islands-look.md`,
+   `docs/reviews/2026-11-22-backlog-review.md`, and ADR-0071 and ADR-0077. The second-pass
+   report was delivered in conversation and is no file. The grep is run again at the close;
+   its list then is the work. **Done when:** `git grep -i` of the name prints nothing in the
+   tracked tree, and the doc gates exit 0. The check is run by hand at the close: a script
+   that holds the word would fail itself. Not before the close: the mentions stay until then.
+
+### A10. Lane start and order
+
+The lane starts after Plan 0104 closes (0104 removes rows from `apps/flythrough/src/cli/` and
+`run/`, which Phase 1 edits). It may run beside Plans 0101 and 0105: both work in
+`svet-render`'s bake code and neither touches the still path. Expected conflicts are textual
+only: rows of `docs/flythrough.md`, the flag table under `apps/flythrough/src/cli/`, and
+`CHANGELOG.md`; the lane merges main before Phase 6's final shoot so the images carry the
+look main has. "Before Plan 0091" stands (0091 edits `run/frame.rs` and the HUD); Plans 0089
+and 0091 have not started. Phases 1, 2, 4 and 6 render on the GPU under the perf lock.
+
+### A11. Owner questions (none blocks the lane; Phase 5 takes the answers)
+
+1. **The identity figure** (reopens question 5). Recommended: the forest's frame, 8.3 ms at
+   1080p on the RTX 3080 Laptop while the view bakes, since the hero is the forest.
+   Alternative: the older GPU figure, 2.9 to 4.3 ms, on three indoor scenes.
+2. **Badges.** Recommended: three on one line under the tagline (CI, licence, release). The
+   model has none; alternative: none, the licence and CI named in Development.
+3. **A second code example**, a minimal window on `svet-app` and `svet-render`. Recommended:
+   not in this plan; the README points at `apps/flythrough`, and a small `examples/` window is
+   a backlog entry. Alternative: a new example file the README quotes, a phase added here.
+4. **Nine groups** with Outdoors its own. Recommended: yes. Alternative: eight, the outdoors
+   folded into Lighting.
+5. **The scrub and accepted ADRs.** ADR-0071 and ADR-0077 are append-only once accepted; the
+   scrub rewords a name in them and changes no decision. Recommended: reword them like every
+   other file, as the owner ruled. Alternative: leave the two ADRs and accept that the grep
+   prints them.
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
@@ -445,6 +695,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 - **Budget readings:** none in `nfr.md`; the gate's line and the shoot's wall time in the log
 - **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
 - **Outstanding `human` phases:** which, or none
+- **Owed at the close (architect, not dev):** the scrub of A9 rule 3, after Phase 7
 
 ## Followups
 
