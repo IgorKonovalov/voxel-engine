@@ -1,6 +1,6 @@
 # 0108: The start-up readings: a shorter pre-roll, and the cold pipelines split
 
-> **Status:** draft (2026-11-26; awaits the owner's go). Drafted from
+> **Status:** approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
 > [the review of 2026-11-26](../reviews/2026-11-26-work-off-the-render-thread.md) on the owner's
 > "all recommended" (its question 2: the pre-roll reading now as a chore beside Plan 0093, the
 > cold-pipeline split before the next tester archive), with no further interview; the guesses
@@ -302,6 +302,19 @@ enum PreRollMode { Full, Near, Off }   // --pre-roll, default Full
 - **Nothing for the scene switch's join on the render thread** (the backlog's entry; picked
   up with a start-up plan).
 - **No Windows run.** The owner checks Windows once in a while, not per plan.
+
+## Amended 2026-11-26 (owner)
+
+The owner: "go on both, all recommended, do not start until these lanes finish".
+
+- **The go stands.** The lane does not start until the lanes open on 2026-11-26 have
+  finished (Plans 0101, 0105, 0093 and 0106); this replaces "Phases 1 and 2 can run now
+  beside Plan 0093".
+- **Question 1:** if he picks `near` at Phase 2 it becomes the default in a window only;
+  `--headless` keeps `full`, so no golden changes.
+- **Question 2:** the tester build takes the same default as the fly-through's window after
+  Phase 2.
+- **Question 3:** Phase 3 runs right after Phase 2, in the same lane.
 
 ## Implementation log
 

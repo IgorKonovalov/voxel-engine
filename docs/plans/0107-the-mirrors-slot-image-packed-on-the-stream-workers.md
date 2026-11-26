@@ -1,6 +1,6 @@
 # 0107: The mirror's slot image packed on the stream workers
 
-> **Status:** draft (2026-11-26; awaits the owner's go). Drafted from
+> **Status:** approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
 > [the review of 2026-11-26](../reviews/2026-11-26-work-off-the-render-thread.md) on the owner's
 > "all recommended" (its question 1: draft now, Phase 1 the re-read), with no further interview;
 > the guesses and the questions left are under "Risks & open questions", each with a recommended
@@ -466,6 +466,19 @@ many.
   if Phase 5 shows the copy leading.
 - **Nothing for the start-up.** That is [Plan 0108](0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md).
 - **No frame profiler scopes** (Plan 0091); the sync's stage clocks are enough here.
+
+## Amended 2026-11-26 (owner)
+
+The owner: "go on both, all recommended, do not start until these lanes finish".
+
+- **The go stands.** The lane does not start, Phase 1 included, until the lanes open on
+  2026-11-26 have finished (Plans 0101, 0105, 0093 and 0106); this replaces "Phase 1 may run
+  beside them".
+- **Question 1:** after the pick the default is `workers` everywhere, headless and tests
+  included, the bytes being identical by test.
+- **Question 2:** the held images are capped at 64 MiB as a proposal, re-set by Phase 5's
+  refusal count.
+- **Question 3:** Phase 5 reads the RENOIR and the eight-CPU stand-in as well, one run an arm.
 
 ## Implementation log
 
