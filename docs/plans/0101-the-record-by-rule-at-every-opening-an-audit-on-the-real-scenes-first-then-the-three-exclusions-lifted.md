@@ -1,6 +1,6 @@
 # 0101: The record by rule at every opening: an audit on the real scenes first, then the three exclusions lifted
 
-> **Status:** in-progress, Phase 4 (the fix pass; (a) and (b) landed, (c) owed); the close review of 2026-11-26 found two cases where a
+> **Status:** in-progress, Phase 4 (the fix pass; (a) and (b) landed, (c) owed after Phase 5); Phase 5 (the pool's job set under a ruled push) landed; the close review of 2026-11-26 found two cases where a
 > ruled record is not the one a bake writes, both by reading the code, neither covered by a test
 > or by the audit; section "The close review"); Phases 1 to 3 done 2026-11-26 on lane `plan-0101`; approved (owner, 2026-11-24: lane after Plan 0099 closes; drafted 2026-11-24 with no interview; the guesses
 > and the open questions are under "Risks & open questions", each with a recommended option).
@@ -670,7 +670,8 @@ or the difference named (a re-list rules a chunk twice by design).
 | 1: The audit and the re-read, no behaviour change | dev | done: 0 blocks differ in every case on all runs, both forests over the 10 % job line ([readings log](logs/0101.md)) | wip `67062697`; the readings `30e771b9` |
 | 2: The rule at every opening | dev | done: the rule on every ready candidate; CPU tests (1)-(3), two soak-born lavapipe rigs (4) ([readings log](logs/0101.md)) | `85bf694d` |
 | 3: The readings on both adapters, the audit at the tip, and the documents | dev | done but (5): audit 0 differ on four runs, the step under the base, gate 1 443 of 1 443; the bytes not read ([readings log](logs/0101.md)) | `5312afb7` |
-| 4: The fix pass | dev | in progress: (a) the verdict read at the push, (b) the border faces, each red then green; (c) owed ([readings log](logs/0101.md)) | (a) `1c85d787`; (b) committed with this row |
+| 4: The fix pass | dev | in progress: (a) the verdict read at the push, (b) the border faces, each red then green; (c) owed ([readings log](logs/0101.md)) | (a) `1c85d787`; (b) `11445eb6` |
+| 5: The pool counts a ruled chunk awaiting its block as in a job | dev | done: both tests red on `9838fb4d`'s code (test 2 red in release too, `zeroed` 2), green with `ruled` in `sync_pool`'s job set ([readings log](logs/0101.md)) | committed with this row |
 
 ### Notes
 
@@ -742,6 +743,12 @@ each. Empty is fine.)_
   is a slab added to `partial_rig`'s world, and `N` is taken out of the world's store and the
   mirror; `QueueStats::zero_border_relisted` added (its assert written after the red read);
   `list.rs`'s `neighbour` made `pub(super)`.
+- Phase 5: done-when (2) read red in debug on the test's assertion (`C` back in the pool's
+  hands, `split_tests/lister.rs:415`), not at `sync_pool`'s check; red on the same assertion in
+  release, and `stats.zeroed` 2 at the settle with that assertion printed instead (scratch).
+- Phase 5, followup not acted on: `open_step`'s quiet test counts `lp.chunks()` around the
+  opening, so a lockstep opening that only rules chunks sets `quiet_until`; the view census and
+  `counted_idle` miss a ruled chunk awaiting its block for one opening (readings log).
 
 ### Close triggers
 

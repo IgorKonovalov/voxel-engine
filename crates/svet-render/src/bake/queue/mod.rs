@@ -418,8 +418,8 @@ pub struct BakeQueue {
     /// The pool is read again whole at the next opening: at the start, and when the mirror's
     /// or the store's changes went untracked.
     pub(super) pool_stale: bool,
-    /// The jobs' chunks at the last reading of the pool: a chunk joining or leaving a job is
-    /// read again.
+    /// The jobs' chunks and the ruled chunks awaiting their blocks at the last reading of the
+    /// pool: a chunk joining or leaving that set is read again.
     pub(super) pool_jobs: std::collections::HashSet<[i32; 3]>,
     /// The pool's candidates in their order, walked from the camera outward and kept in step
     /// with the pool ([`BakeQueue::pool_insert`], [`BakeQueue::pool_remove`]).
@@ -754,7 +754,15 @@ impl BakeQueue {
     /// joins, changes or leaves moves in the kept order with it.
     pub(super) fn sync_pool(&mut self, run: &BakeRun<'_>, store: &mut Store) {
         let gpu = run.mirror;
-        let in_job: std::collections::HashSet<[i32; 3]> = self.lp.chunks().map(|c| c.0).collect();
+        // A ruled chunk pushed this step ([`BakeQueue::ruled`]) has no block, no job and no
+        // flag until the submit places its zero block: it counts as in a job, as a job's chunk
+        // does until its block lands, and the pool reads it again once it leaves the set.
+        let in_job: std::collections::HashSet<[i32; 3]> = self
+            .lp
+            .chunks()
+            .chain(self.ruled.iter().map(|r| r.0))
+            .map(|c| c.0)
+            .collect();
         match store.take_touched() {
             Some(t) => self.touched.extend(t),
             None => self.pool_stale = true,

@@ -349,6 +349,85 @@ fn a_ruled_verdict_is_read_again_where_its_record_is_written() {
     rig.queue.stop_lister();
 }
 
+/// The rule's rig listing through the pool, stepped until an opening has ruled `C` and the pool
+/// has finished its listing.
+fn ruled_in_the_pools_hands() -> Rig {
+    use super::rule::{C, rock_world, rule_rig};
+    let mut rig = rule_rig(3);
+    rig.queue
+        .start_lister(Arc::new(rock_world([3, 3, 3])))
+        .expect("the pool's threads start");
+    rig.until("C in the pool's hands", |r| r.queue.in_listing(C));
+    assert_eq!(
+        rig.queue.listing_ruled(C),
+        Some(true),
+        "the opening ruled C"
+    );
+    rig.queue.wait_listed();
+    assert_eq!(rig.queue.stats.zeroed, 0, "not pushed yet");
+    rig
+}
+
+/// Plan 0101 Phase 5, done-when (1). A step with no change pushes `C`'s ruled listing and opens:
+/// between the push and the submit that places its block `C` has no block, no job and no flag, and
+/// the opening's sync reads the kept pool against a whole reading. After the step `C` is zeroed
+/// once, out of the pool's hands and not a candidate; it settles with no job and the zero record.
+#[test]
+fn a_pooled_ruled_push_keeps_the_pool_a_whole_reading() {
+    use super::rule::{C, jobs, settle, zero_of_c};
+    let mut rig = ruled_in_the_pools_hands();
+
+    let openings = rig.queue.stats.openings;
+    rig.step();
+    assert!(
+        rig.queue.stats.openings > openings,
+        "the pushing step opened"
+    );
+    assert_eq!(
+        rig.queue.stats.zeroed, 1,
+        "C's zero record was written once"
+    );
+    assert!(rig.queue.zeroed(ChunkCoord(C)), "C is zeroed");
+    assert!(!rig.queue.in_listing(C), "C is out of the pool's hands");
+    assert!(!rig.queue.pool.contains_key(&C), "C is not a candidate");
+
+    settle(&mut rig, "C's zero record");
+    assert_eq!(jobs(&rig), 0, "C settles with no job");
+    assert_eq!(rig.queue.stats.zeroed, 1);
+    let zero = zero_of_c(&mut rig);
+    assert_eq!(
+        rig.store.block_words(ChunkCoord(C)).map(<[u32]>::to_vec),
+        Some(zero),
+        "C holds the zero record"
+    );
+    rig.queue.stop_lister();
+}
+
+/// Plan 0101 Phase 5, done-when (2). Before the step that pushes `C`'s ruled listing, a message
+/// names `C` among the mirror's changes with the column tops as they were (the rule still holds):
+/// the pushing step's opening reads `C` again. After that step `C` is zeroed and out of the
+/// pool's hands, and it settles listed once: one zero record, no job.
+#[test]
+fn a_pooled_ruled_chunk_is_listed_once_under_a_change_that_keeps_the_rule() {
+    use super::rule::{C, jobs, settle};
+    let mut rig = ruled_in_the_pools_hands();
+
+    rig.mirror.changed.push(ChunkCoord(C));
+    rig.step();
+    assert!(rig.queue.zeroed(ChunkCoord(C)), "C is zeroed");
+    assert!(!rig.queue.in_listing(C), "C is out of the pool's hands");
+
+    settle(&mut rig, "C's zero record");
+    rig.queue.wait_listed();
+    for _ in 0..4 {
+        rig.step();
+        rig.queue.wait_listed();
+    }
+    assert_eq!(rig.queue.stats.zeroed, 1, "C was listed and zeroed once");
+    assert_eq!(jobs(&rig), 0, "no job");
+    rig.queue.stop_lister();
+}
+
 /// One step of [`slots_run`]: the samples of the submit it sent (0 for none), whether it was
 /// counted blocked, whether it was counted neither blocked nor sent, and the jobs open after it.
 #[derive(Debug, PartialEq)]
