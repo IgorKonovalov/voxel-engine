@@ -1587,7 +1587,7 @@ entry's set read again; a castle under the sun.
 | 5c: the owner confirms the three | human | replaced by 5d (G4) | |
 | 6a: main merged and the final shoot (G7) | dev | done: main `cbedce57` merged at `3c3e82e2` (two conflicts, both sides kept); 12 of 12 shot in one 272 s hold; both bars hold on the final frames; no flag replaced; readings in [the log](logs/0093.md) | committed with this row |
 | 6: the rewrite | dev | not started; waits on 6a and 6b | |
-| 6b: a minimal window as the second example | dev | not started; waits on 6a | |
+| 6b: a minimal window as the second example | dev | done: `crates/svet-app/examples/minimal_window.rs`, 60 lines neither blank nor comment (66 with blanks), span 30; headless gpu test and README byte-equality test; no resize handling; `scripts/test-changed.test.mjs` assertion moved (svet-app now a dev-dependent of svet-world); readings in [the log](logs/0093.md) | committed with this row |
 | 7: the README on GitHub | none | no phase (owner, 2026-11-26, G5): the orchestrator's check after the push | |
 | 5d: the three picks by the bars, the dig's flash read (replaces 5c) | dev | done: dig 4, walkers 6 (the spider), castle 2; the dig a still of frame 96 by G3's rule; `walkers` and `dig` `--print` differ from the legend line in `--still-at` too (log) | `7e1a79d2` |
 | 6c: the noise sets and the tolerances | dev | not started; waits on 6a | |

@@ -81,8 +81,8 @@ test("the_workspace_sole_marks_name_a_package_a_test_and_a_mechanism", () => {
 
 test("a_world_change_reaches_every_member_that_depends_on_it", () => {
   const set = withDependents(metadata, ["svet-world"]);
-  for (const p of ["svet-world", "svet-sim", "svet-render", "svet-net", "svet-script-wasm", "flythrough", "svet-tester"]) {
+  // svet-app by its dev-dependency (the minimal window example and its test).
+  for (const p of ["svet-world", "svet-sim", "svet-render", "svet-net", "svet-script-wasm", "flythrough", "svet-tester", "svet-app"]) {
     assert.ok(set.includes(p), p);
   }
-  assert.ok(!set.includes("svet-app"));
 });

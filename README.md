@@ -138,6 +138,48 @@ The budgets these claims are held to (frame time per profile, VRAM, edit cost, b
 hardware) are in [`docs/nfr.md`](docs/nfr.md). A figure there without a measurement is a guess
 and says so.
 
+## Use it as a library
+
+<!-- quoted from crates/svet-app/examples/minimal_window.rs, between its readme markers -->
+```rust
+impl App for Demo {
+    fn device_request(&mut self, adapter: &wgpu::Adapter) -> (wgpu::Features, wgpu::Limits) {
+        let limits = svet_render::limits_for(adapter, 16 << 20).expect("a capable adapter");
+        (wgpu::Features::empty(), limits)
+    }
+    fn init(&mut self, gpu: &Gpu) {
+        let (dev, queue, world) = (&gpu.device, &gpu.queue, &world());
+        let mut mirror = GpuWorld::new(dev, world.extent());
+        let mut enc = dev.create_command_encoder(&Default::default());
+        mirror.sync(world, queue, &mut enc).expect("the world fits");
+        queue.submit([enc.finish()]);
+        let mut frame = Frame::new(dev, gpu.size[0], gpu.size[1]);
+        frame.apply_settings(dev, queue, &RenderSettings::profile(Profile::Floor));
+        frame.set_sky(Some(Sky::new(Body::sun(SUN), Body::moon([0.0, 0.0, -1.0]))));
+        let (all, bake) = (world.extent(), BakeSettings::default());
+        let baked = frame.bake_until(dev, queue, &mut mirror, world, all, &bake, &mut |_| {});
+        baked.expect("the light store holds the world");
+        self.0 = Some((mirror, frame, Presenter::new(dev, gpu.surface_format)));
+    }
+    fn frame(&mut self, gpu: &Gpu, input: &Input, dt: f32, out: &wgpu::TextureView) -> Flow {
+        let (mirror, frame, presenter) = self.0.as_mut().expect("init ran");
+        let (lamp, quit) = (LightParams::headlamp(), input.pressed(KeyCode::Escape));
+        frame.set_dt(dt);
+        frame.step(&gpu.device, &gpu.queue, mirror, &EYE, &lamp);
+        let mut enc = gpu.device.create_command_encoder(&Default::default());
+        presenter.encode(&gpu.device, &mut enc, frame.target(), out);
+        gpu.queue.submit([enc.finish()]);
+        if quit { Flow::Exit } else { Flow::Continue }
+    }
+}
+```
+
+```sh
+cargo run --release -p svet-app --example minimal_window
+```
+
+A window opens on a stone floor with an arched wall and a crater under a sunlit sky; Escape closes it.
+
 ## Layout
 
 | Path | Owns |
