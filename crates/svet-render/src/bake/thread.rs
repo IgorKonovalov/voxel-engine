@@ -3,7 +3,8 @@
 //!
 //! The render thread only swaps and tries: [`BakeThread::send`] replaces or merges the waiting
 //! message, [`BakeThread::take`] drains what the bake half made. Neither waits on a step: each
-//! lock is held for a swap, never across a step. The bake thread waits when no message waits
+//! lock is held for a swap, never across a step. A step may hand entries in before it returns
+//! (its [`Hand`]); what it returns follows them. The bake thread waits when no message waits
 //! or when the outbox is at its cap. A panic on it ends the thread; the render thread reads it
 //! as an error at its next call ([`BakeThread::failed`]). Dropping the handle stops and joins.
 
@@ -20,6 +21,10 @@ pub(crate) struct Picked {
     pub(crate) free: Instant,
     pub(crate) took: Instant,
 }
+
+/// A step's hand into the outbox: the entries go in at once, in order, ahead of what the step
+/// returns (the bake thread waits here when the outbox is at its cap).
+pub(crate) type Hand<'a, O> = &'a mut dyn FnMut(Vec<O>);
 
 /// What the outbox weighs an entry by.
 pub(crate) trait Weighed {
@@ -42,7 +47,8 @@ struct Shared<M, O> {
     /// Set as the bake thread ends, by its stop or a panic, under the outbox's lock.
     ended: AtomicBool,
     cap: usize,
-    /// Steps the bake thread has run.
+    /// Steps the bake thread has run: counted as a step's last entries go in, or as one of its
+    /// entries starts to wait at the cap.
     steps: AtomicU64,
 }
 
@@ -65,6 +71,36 @@ impl<M, O> Shared<M, O> {
     }
 }
 
+impl<M, O: Weighed> Shared<M, O> {
+    /// Puts `out` in the outbox, waiting while it is at its cap, and wakes a render thread
+    /// waiting on an entry. The step is counted under the outbox's lock (`counted` once it is):
+    /// as one of its puts starts to wait at the cap, or once its `last` entries are in.
+    fn put(&self, out: Vec<O>, counted: &mut bool, last: bool) {
+        let bytes: usize = out.iter().map(Weighed::bytes).sum();
+        let mut ob = Self::lock(&self.outbox);
+        while ob.bytes > 0 && ob.bytes + bytes > self.cap {
+            if !*counted {
+                self.steps.fetch_add(1, Ordering::Release);
+                *counted = true;
+            }
+            // At the stop the step's entries still go in: the books already hold them, so the
+            // joiner applies them ([`BakeThread::stop_all`]).
+            if self.stop.load(Ordering::Acquire) {
+                break;
+            }
+            ob = self.wake.wait(ob).unwrap_or_else(PoisonError::into_inner);
+        }
+        ob.bytes += bytes;
+        ob.entries.extend(out);
+        if last && !*counted {
+            self.steps.fetch_add(1, Ordering::Release);
+            *counted = true;
+        }
+        drop(ob);
+        self.made.notify_all();
+    }
+}
+
 /// The handle the render thread holds; `S` is the bake half's state, given back at the stop.
 pub(crate) struct BakeThread<S, M, O> {
     shared: Arc<Shared<M, O>>,
@@ -79,15 +115,15 @@ where
     O: Weighed + Send + 'static,
 {
     /// Starts the thread on `side`: each message it takes is stepped with `step`, whose entries
-    /// go to the outbox, which holds at most `cap` bytes before the thread waits (an entry
-    /// larger than the cap goes alone into an empty outbox). `coalesce` merges a waiting
-    /// message with a newer one. The step is told when the thread was free and when it took the
-    /// message ([`Picked`]).
+    /// (those it hands in through its [`Hand`], then those it returns) go to the outbox, which
+    /// holds at most `cap` bytes before the thread waits (an entry larger than the cap goes
+    /// alone into an empty outbox). `coalesce` merges a waiting message with a newer one. The
+    /// step is told when the thread was free and when it took the message ([`Picked`]).
     pub(crate) fn start(
         mut side: S,
         cap: usize,
         coalesce: fn(M, M) -> M,
-        mut step: impl FnMut(&mut S, M, Picked) -> Vec<O> + Send + 'static,
+        mut step: impl FnMut(&mut S, M, Picked, Hand<'_, O>) -> Vec<O> + Send + 'static,
     ) -> std::io::Result<Self> {
         let shared = Arc::new(Shared {
             inbox: Mutex::new(None),
@@ -124,22 +160,11 @@ where
                         }
                     };
                     let took = crate::bake::stopwatch();
-                    let out = step(&mut side, msg, Picked { free, took });
-                    sh.steps.fetch_add(1, Ordering::Release);
-                    let bytes: usize = out.iter().map(Weighed::bytes).sum();
-                    let mut ob = Shared::<M, O>::lock(&sh.outbox);
-                    while ob.bytes > 0 && ob.bytes + bytes > sh.cap {
-                        // At the stop the step's entries still go in: the books already hold
-                        // them, so the joiner applies them ([`BakeThread::stop_all`]).
-                        if sh.stop.load(Ordering::Acquire) {
-                            break;
-                        }
-                        ob = sh.wake.wait(ob).unwrap_or_else(PoisonError::into_inner);
-                    }
-                    ob.bytes += bytes;
-                    ob.entries.extend(out);
-                    drop(ob);
-                    sh.made.notify_all();
+                    let mut counted = false;
+                    let out = step(&mut side, msg, Picked { free, took }, &mut |o| {
+                        sh.put(o, &mut counted, false);
+                    });
+                    sh.put(out, &mut counted, true);
                     free = crate::bake::stopwatch();
                 }
             })?;
@@ -207,7 +232,8 @@ where
         Shared::<M, O>::lock(&self.shared.outbox).bytes
     }
 
-    /// The steps the bake thread has run.
+    /// The steps the bake thread has run: counted as a step's last entries go in, or as one of
+    /// its entries starts to wait at the outbox's cap.
     #[cfg(test)]
     pub(crate) fn steps(&self) -> u64 {
         self.shared.steps.load(Ordering::Acquire)
@@ -334,7 +360,7 @@ mod tests {
                 a.extend(b);
                 a
             },
-            move |seen, m, _| {
+            move |seen, m, _, _| {
                 let _ = gate.lock().expect("one step at a time").recv();
                 seen.push(m);
                 vec![Entry(1)]
@@ -366,7 +392,7 @@ mod tests {
     /// rising; a take makes room and the steps go on.
     #[test]
     fn the_outbox_stops_at_its_cap_and_the_bake_thread_waits() {
-        let t = BakeThread::start((), 1000, |_a: u32, b: u32| b, |_, _, _| vec![Entry(300)])
+        let t = BakeThread::start((), 1000, |_a: u32, b: u32| b, |_, _, _, _| vec![Entry(300)])
             .expect("spawned");
         for _ in 0..10 {
             t.send(0);
@@ -399,8 +425,13 @@ mod tests {
                 self.0.store(false, Ordering::Release);
             }
         }
-        let t = BakeThread::start(Flag(a), 10, |_a: u32, b: u32| b, |_, _, _| vec![Entry(10)])
-            .expect("spawned");
+        let t = BakeThread::start(
+            Flag(a),
+            10,
+            |_a: u32, b: u32| b,
+            |_, _, _, _| vec![Entry(10)],
+        )
+        .expect("spawned");
         t.send(0);
         assert!(within(|| t.steps() == 1));
         t.send(0);
@@ -414,7 +445,7 @@ mod tests {
             (),
             10,
             |_a: u32, b: u32| b,
-            |_, m: u32, _| {
+            |_, m: u32, _, _| {
                 assert!(m < 3, "message {m} breaks the step");
                 Vec::<Entry>::new()
             },

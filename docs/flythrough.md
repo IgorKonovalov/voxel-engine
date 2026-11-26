@@ -464,20 +464,25 @@ With the bake thread on, a frame issues at most one submit and carries any later
 next frame; the teardown's `frames: bake round trip:` line reads the submits issued and read,
 their round trip in frames from the issue to the frame whose message carried the read-back
 (p50, p99, max), the frames that carried a submit and the issuer's peak readback buffers.
-The one exception is an edit's frame: it waits for the step that read its box, applies the
-held block in that frame, and issues the dig's submit behind any carried one, so it may issue
+The one exception is an edit's frame: it waits for the results of the step that read its box
+(its ops and lists; the books' snapshot after that step follows as its own entry and the frame
+does not wait for it, unless the queue traces digs), applies the held block in that frame, and issues the dig's submit behind any carried one, so it may issue
 two. Write lists apply in the order the bake thread made them, so the edit's frame applies
 every list made before the edit's with it, whatever the frame's byte cap. The teardown's
 `frames: bake thread dig wait:` lines, one while chunks in view wait for their tier and one
 after, read those frames: the wait's p50, p99 and max in ms; its parts' p50 and p99 (`rest`,
 the step in progress at the send; `pickup`, to the dig's step taking its message; `boxes`, the
-step to its edit's box taken; `step_rest`, the step's rest; `snapshot`, the books handed back,
-with the dig trace when the queue traces digs; `handback`, to the render thread's take); the
+step to its edit's box taken; `step_rest`, the step's rest; `snapshot`, 0 unless the queue
+traces digs, then the books' snapshot with the dig trace; `handback`, to the render thread's
+take); the
 frame's issue and apply laps; the dig frames by the submits they issued (1, 2, 3 or more); and
 the frames that applied bytes over the cap with those bytes' p50 and max. The `bake thread
 render laps:` line's `wait` lap is the same wait. In either mode the `frames: bake dig call:`
 lines read the dig frames by the same two states, the bake call's p50, p99 and max in ms
-(lockstep's step, or the thread's frame call with its wait) beside the wait.
+(lockstep's step, or the thread's frame call with its wait) beside the wait. The teardown's
+`frames: bake thread snapshot:` line ends with the books' snapshots the bake thread made
+after its steps: their count and ms p50, p99 and max (each step's, on the bake thread, outside
+its stage table).
 
 ### Audio
 

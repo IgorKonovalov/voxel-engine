@@ -1088,6 +1088,19 @@ pub(crate) fn render_laps_line(laps: &[[f32; 8]]) -> Option<String> {
     Some(out)
 }
 
+/// The books' snapshots the bake thread made after its steps (a reading, on the teardown's
+/// `bake thread snapshot:` line): their count and ms p50 / p99 / max.
+pub(crate) fn snapshot_ms_text(ms: &[f32]) -> String {
+    let v = p50_p99_max(ms.iter().map(|m| f64::from(*m)));
+    format!(
+        "{} steps' books, snapshot p50 {:.3} p99 {:.3} max {:.3} ms",
+        ms.len(),
+        v[0],
+        v[1],
+        v[2]
+    )
+}
+
 /// p50 / p99 / max of `v`, the NaNs left out.
 fn p50_p99_max(v: impl Iterator<Item = f64>) -> [f64; 3] {
     let mut v: Vec<f64> = v.filter(|x| !x.is_nan()).collect();

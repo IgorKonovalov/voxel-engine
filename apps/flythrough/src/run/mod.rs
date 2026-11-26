@@ -474,11 +474,13 @@ impl Drop for Run {
         if let Some(line) = self.queue.split_line() {
             println!("frames: {line}");
         }
-        if let Some([n, past, lost, run]) = self.gfx.as_ref().map(|g| g.frame.bake_snapshot_reach())
+        if let Some(g) = self.gfx.as_ref()
+            && let [n, past, lost, run] = g.frame.bake_snapshot_reach()
             && n > 0
         {
             println!(
-                "frames: bake thread snapshot: {n} frames, eye past its reach {past} (longest run {run}), sky over the floor lost {lost}"
+                "frames: bake thread snapshot: {n} frames, eye past its reach {past} (longest run {run}), sky over the floor lost {lost}; {}",
+                queue::snapshot_ms_text(g.frame.bake_snapshot_ms())
             );
         }
         if let Some(g) = self.gfx.as_ref() {

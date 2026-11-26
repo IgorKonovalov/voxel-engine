@@ -85,11 +85,21 @@ impl Frame {
     /// The last live-queue frame's wait for an edit's step by its parts in ms, with the bake
     /// thread on and when that frame carried a box (a reading): the rest of a step in progress at
     /// the send, the pick-up, the dig's step to the end of its `boxes` stage, the step's rest,
-    /// the books' snapshot (with the dig trace when the queue traces digs) and the hand-back;
-    /// then the frame's issue lap (its submits). The parts sum to the wait and the send.
+    /// the books' snapshot (0: the frame waits for the step's lists, not its books; with the
+    /// dig trace when the queue traces digs, when it waits for both) and the hand-back; then the
+    /// frame's issue lap (its submits). The parts sum to the wait and the send.
     pub fn bake_frame_wait_parts(&self) -> Option<([f64; 6], f64)> {
         let link = self.baked.thread.as_ref().filter(|l| l.waited)?;
         Some((link.parts?.ms, link.laps[1]))
+    }
+
+    /// The ms of each books' snapshot the running bake thread made after a step and the render
+    /// thread took, in order (a reading; empty in lockstep, and at most about 65 000).
+    pub fn bake_snapshot_ms(&self) -> &[f32] {
+        self.baked
+            .thread
+            .as_ref()
+            .map_or(&[], |l| l.snapshot_ms.as_slice())
     }
 
     /// The last live-queue frame's apply in ms (with the bake thread on, the render thread's
@@ -234,6 +244,8 @@ impl Frame {
             world: shared,
             #[cfg(test)]
             hook: None,
+            #[cfg(test)]
+            books_hook: None,
         };
         b.lists.cap = Some(THREAD_LIST_CAP);
         match ThreadLink::start(side, Some(THREAD_LIST_CAP), OUTBOX_BYTES) {

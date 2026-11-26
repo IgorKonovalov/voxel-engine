@@ -9,7 +9,7 @@
 //! applies the lists under the cap, and sends the next message with the landing words and the
 //! read-backs that mapped. Nothing it calls waits on a step.
 
-use super::thread::{BakeThread, Picked, Weighed};
+use super::thread::{BakeThread, Hand, Picked, Weighed};
 use super::*;
 use std::collections::VecDeque;
 
@@ -83,11 +83,19 @@ pub(crate) struct BakeSide {
     /// A test's hook, run at the start of every step (a hold, a panic).
     #[cfg(test)]
     pub(crate) hook: Option<Hook>,
+    /// A test's hook, run after a step's results are handed in and before its books' snapshot,
+    /// with the step's message's frame.
+    #[cfg(test)]
+    pub(crate) books_hook: Option<BooksHook>,
 }
 
 /// A test's hook on the bake thread's step.
 #[cfg(test)]
 pub(crate) type Hook = Box<dyn FnMut(&BakeQueue, &FrameMessage) + Send>;
+
+/// A test's hook before a step's books' snapshot.
+#[cfg(test)]
+pub(crate) type BooksHook = Box<dyn FnMut(u64) + Send>;
 
 /// One message to the bake thread: the frame's and the read-backs mapped since the last.
 pub(crate) struct ThreadMsg {
@@ -110,20 +118,37 @@ impl ThreadMsg {
     }
 }
 
-/// One bake step's results: the render-half calls in order, the write lists, the step's
-/// stats or error, and the books' snapshot after it.
-pub(crate) struct Made {
+/// One entry of the bake thread's outbox (ADR-0083): a step's results, handed in when the step
+/// returns, then the books' snapshot after that step as an entry of its own.
+pub(crate) enum Made {
+    Step(Box<Stepped>),
+    Books(Snapshot),
+}
+
+/// One bake step's results: the render-half calls in order, the write lists, the step's stats
+/// or error, the frame of the message it read, and whether its queue traced digs.
+pub(crate) struct Stepped {
     pub(crate) ops: Vec<Op>,
     pub(crate) lists: Vec<WriteList>,
     pub(crate) stats: Result<QueueStats, BakeError>,
-    pub(crate) books: Arc<Books>,
+    pub(crate) frame: u64,
+    /// [`BakeQueue::trace_digs`] as the step ran: an edit's frame then waits for its books too.
+    pub(crate) trace: bool,
     /// When the step ran (a reading of the edit's wait by its parts).
     pub(crate) times: StepTimes,
 }
 
+/// The books after a step, with when their snapshot ended and its ms (a reading).
+pub(crate) struct Snapshot {
+    pub(crate) books: Arc<Books>,
+    pub(crate) end: std::time::Instant,
+    pub(crate) ms: f64,
+}
+
 /// When a step on the bake thread ran: when the thread was free and took its message, where
 /// the step's clock started, the step's milliseconds to the end of its `boxes` stage, the
-/// step's return and the end of the books' snapshot.
+/// step's return, and the end of the part of the hand-back the edit's frame waits for: the
+/// step's return, or under [`BakeQueue::trace_digs`] the end of its books' snapshot.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct StepTimes {
     pub(crate) picked: Picked,
@@ -136,9 +161,10 @@ pub(crate) struct StepTimes {
 /// The parts of an edit's frame's wait, in ms (a reading, ADR-0083's one wait), in order: the
 /// rest of a step in progress at the send (the thread not free), the pick-up (from the send, or
 /// the thread free if later, to the dig's step taking its message), the step to the end of its
-/// `boxes` stage, the step's rest, the books' snapshot (which builds the dig trace under
-/// [`BakeQueue::trace_digs`]), and the hand-back (from the snapshot's end to the render thread
-/// holding the take).
+/// `boxes` stage, the step's rest, the books' snapshot (0 unless the queue traces digs
+/// ([`BakeQueue::trace_digs`]), when the frame waits for the dig's books and their trace), and
+/// the hand-back (from the step's return, or the snapshot's end, to the render thread holding
+/// the take).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct DigWaitParts {
     pub(crate) ms: [f64; 6],
@@ -175,26 +201,33 @@ impl DigWaitParts {
 
 impl Weighed for Made {
     fn bytes(&self) -> usize {
-        let lists: usize = self.lists.iter().map(|l| l.bytes).sum();
-        let input: usize = self
-            .ops
-            .iter()
-            .map(|o| match o {
-                Op::Issue(p) => p.input.len() * FACE_WORDS * 4,
-                _ => 0,
-            })
-            .sum();
-        lists + input + self.books.bytes()
+        match self {
+            Made::Step(s) => {
+                let lists: usize = s.lists.iter().map(|l| l.bytes).sum();
+                let input: usize = s
+                    .ops
+                    .iter()
+                    .map(|o| match o {
+                        Op::Issue(p) => p.input.len() * FACE_WORDS * 4,
+                        _ => 0,
+                    })
+                    .sum();
+                lists + input
+            }
+            Made::Books(b) => b.books.bytes(),
+        }
     }
 }
 
-/// One step on the bake thread: the message's read-backs into a recording half, the step, and
-/// the books' snapshot.
+/// One step on the bake thread: the message's read-backs into a recording half and the step,
+/// whose results are handed in through `hand` when it returns; then the books' snapshot,
+/// returned as an entry of its own.
 pub(crate) fn bake_step(
     side: &mut BakeSide,
     mut m: ThreadMsg,
     cap: Option<usize>,
     picked: Picked,
+    hand: Hand<'_, Made>,
 ) -> Vec<Made> {
     // The step's laps read this thread's clock and `wgpu` call tally (thread-local): its start
     // is the bake thread's, taken when it picks the message up, not the render thread's send.
@@ -226,7 +259,6 @@ pub(crate) fn bake_step(
         "every read-back sent answers a submit the bake half planned"
     );
     let step_end = stopwatch();
-    let books = Arc::new(Books::of(&side.queue, &side.store, frame, eye));
     // The stages from the step's start to the end of `boxes` are laps of one clock, in order;
     // the summaries' later move out of `gone` and `rewindow` can only shorten this sum.
     let boxes_ms = stats
@@ -237,15 +269,28 @@ pub(crate) fn bake_step(
         start,
         boxes_ms,
         step_end,
-        books_end: stopwatch(),
+        books_end: step_end,
     };
-    vec![Made {
+    hand(vec![Made::Step(Box::new(Stepped {
         ops: half.ops,
         lists: half.lists,
         stats,
-        books,
+        frame,
+        trace: side.queue.trace_digs,
         times,
-    }]
+    }))]);
+    #[cfg(test)]
+    if let Some(hook) = side.books_hook.as_mut() {
+        hook(frame);
+    }
+    let at = stopwatch();
+    let books = Arc::new(Books::of(&side.queue, &side.store, frame, eye));
+    let end = stopwatch();
+    vec![Made::Books(Snapshot {
+        books,
+        end,
+        ms: end.duration_since(at).as_secs_f64() * 1e3,
+    })]
 }
 
 /// What the render thread took of the outbox in one frame.
@@ -259,10 +304,21 @@ pub(crate) struct Taken {
     pub(crate) stats: Option<Result<QueueStats, BakeError>>,
 }
 
+/// The bake thread's books' snapshots a [`ThreadLink`] keeps the ms of, about two minutes of
+/// steps at 500 a second.
+const SNAPSHOT_STEPS: usize = 1 << 16;
+
 /// The render thread's handle on the bake thread, and the newest books it took.
 pub(crate) struct ThreadLink {
     thread: BakeThread<BakeSide, ThreadMsg, Made>,
     pub(crate) books: Arc<Books>,
+    /// The newest message frame whose step's lists were taken.
+    pub(crate) lists_frame: u64,
+    /// The newest message frame the applied lists answer (the mailbox answers up to the older of
+    /// this and the books' frame).
+    lists_answered: u64,
+    /// The ms of each books' snapshot taken, in order (a reading; at most [`SNAPSHOT_STEPS`]).
+    pub(crate) snapshot_ms: Vec<f32>,
     /// The caller's dispatch timer ([`BakeSettings::timer`]): a `wgpu` type, kept on the render
     /// thread and put on each submit as it is issued.
     pub(crate) timer: Option<Arc<crate::frame::PassTimer>>,
@@ -317,12 +373,16 @@ impl ThreadLink {
         let last = side.queue.stats;
         let boxes = BoxSender::default();
         side.queue.box_signal = Some(boxes.signal());
-        let thread = BakeThread::start(side, outbox, ThreadMsg::coalesce, move |s, m, p| {
-            bake_step(s, m, cap, p)
+        let thread = BakeThread::start(side, outbox, ThreadMsg::coalesce, move |s, m, p, h| {
+            bake_step(s, m, cap, p, h)
         })?;
+        let frame = books.frame;
         Ok(Self {
             thread,
             books,
+            lists_frame: frame,
+            lists_answered: 0,
+            snapshot_ms: Vec::new(),
             timer,
             settings,
             last,
@@ -351,8 +411,9 @@ impl ThreadLink {
     }
 
     /// The edit's frame's take (ADR-0083's one wait): what the bake thread made, waiting until
-    /// an entry made from the message of `frame` or a later one is among it. `Err` when the
-    /// thread ended first (its panic).
+    /// the results of a step made from the message of `frame` or a later one are among it, and,
+    /// where that step's queue traces digs, its books too. `Err` when the thread ended first (its
+    /// panic).
     /// The wait's parts from `send`, the instant before the frame's send, are kept in
     /// [`ThreadLink::parts`].
     pub(crate) fn take_waiting(
@@ -360,10 +421,31 @@ impl ThreadLink {
         frame: u64,
         send: std::time::Instant,
     ) -> Result<Taken, BakeError> {
-        let (made, found) = self.thread.take_until(|m| m.books.frame >= frame);
+        // The books follow their step's results in the outbox.
+        let mut traced = false;
+        let (made, found) = self.thread.take_until(|m| match m {
+            Made::Step(s) if s.frame >= frame => {
+                traced = s.trace;
+                !s.trace
+            }
+            Made::Books(b) => traced && b.books.frame >= frame,
+            Made::Step(_) => false,
+        });
         let woke = stopwatch();
-        if let Some(m) = made.iter().find(|m| m.books.frame >= frame) {
-            self.parts = Some(DigWaitParts::of(send, woke, &m.times));
+        let step = made.iter().find_map(|m| match m {
+            Made::Step(s) if s.frame >= frame => Some((s.times, s.trace)),
+            _ => None,
+        });
+        if let Some((mut times, trace)) = step {
+            if trace
+                && let Some(end) = made.iter().find_map(|m| match m {
+                    Made::Books(b) if b.books.frame >= frame => Some(b.end),
+                    _ => None,
+                })
+            {
+                times.books_end = end;
+            }
+            self.parts = Some(DigWaitParts::of(send, woke, &times));
         }
         let taken = self.absorb(made);
         if found {
@@ -378,8 +460,18 @@ impl ThreadLink {
     fn absorb(&mut self, made: Vec<Made>) -> Taken {
         let mut out = Taken::default();
         for m in made {
-            out.frames.push(m.books.frame);
-            self.books = m.books;
+            let m = match m {
+                Made::Step(m) => *m,
+                Made::Books(b) => {
+                    self.books = b.books;
+                    if self.snapshot_ms.len() < SNAPSHOT_STEPS {
+                        self.snapshot_ms.push(b.ms as f32);
+                    }
+                    continue;
+                }
+            };
+            out.frames.push(m.frame);
+            self.lists_frame = m.frame;
             out.stats = Some(match (out.stats.take(), m.stats) {
                 (_, Err(e)) | (Some(Err(e)), _) => Err(e),
                 (Some(Ok(a)), Ok(b)) => Ok(b.after(&a)),
@@ -424,7 +516,15 @@ impl ThreadLink {
             msg,
             steps: carried_first(
                 carried,
-                made.into_iter().map(|m| (m.ops, m.lists)).collect(),
+                made.into_iter()
+                    .filter_map(|m| match m {
+                        Made::Step(m) => {
+                            let m = *m;
+                            Some((m.ops, m.lists))
+                        }
+                        Made::Books(_) => None,
+                    })
+                    .collect(),
             ),
         })
     }
@@ -556,15 +656,17 @@ pub(crate) fn mapped(half: &mut dyn RenderHalf) -> Vec<ReadBack> {
 /// The render half's frame with the bake thread on: its panic, if it ended by one; else the
 /// calls the last frame carried and each step's, replayed on `half` in order up to and with the
 /// first submit (the rest carried to the next frame), each step's lists taken, the lists
-/// applied under the cap into `out`, the mailbox answered up to what the applied lists were
-/// made from, and `msg` sent with the landing words written and the read-backs that mapped. The
-/// stats are the steps' taken, or the newest's with no per-step count when none was.
+/// applied under the cap into `out`, the mailbox answered up to the older of what the applied
+/// lists were made from and the books held, and `msg` sent with the landing words written and
+/// the read-backs that mapped. The stats are the steps' taken, or the newest's with no per-step
+/// count when none was.
 ///
 /// A frame whose message holds an edit's box (ADR-0083's one wait) sends first, with the
-/// read-backs mapped so far, then waits for a list made from that message or a later one, and
-/// replays and applies as any frame does, the dig step's submit with it (behind any carried):
-/// the box's held block is in the pool when the frame returns. The landing words it writes go
-/// with the next frame's message.
+/// read-backs mapped so far, then waits for the results of the step made from that message or
+/// a later one (not for its books, unless the queue traces digs), and replays and applies as
+/// any frame does, the dig step's submit with it (behind any carried): the box's held block is
+/// in the pool when the frame returns. The landing words it writes go with the next frame's
+/// message.
 pub(crate) fn render_frame(
     link: &mut ThreadLink,
     half: &mut dyn RenderHalf,
@@ -638,15 +740,17 @@ pub(crate) fn render_frame(
     mark(1);
     let _ = lists.apply(landed_at, out);
     mark(2);
-    // The mailbox answers from the books once the lists made from its messages are applied; a
-    // step that made none answers its message once nothing waits.
+    // The mailbox answers from the books once the lists made from its messages are applied and
+    // the books held were made after them: a read finds a box in the mailbox or in the books,
+    // never in neither. A step that made no list answers its message once nothing waits.
     let mut answered = lists.newest;
     if lists.waiting.is_empty()
         && let Some(f) = all_empty
     {
         answered = answered.max(f);
     }
-    inbox.answered(answered);
+    link.lists_answered = link.lists_answered.max(answered);
+    inbox.answered(link.lists_answered.min(link.books.frame));
     if let Some(mut msg) = pending.take() {
         let read_backs = mapped(half);
         issued_at(link, &read_backs);

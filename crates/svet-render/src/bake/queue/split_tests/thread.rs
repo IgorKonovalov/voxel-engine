@@ -4,11 +4,13 @@
 
 use super::*;
 use crate::bake::{
-    BakeSide, Hook, OUTBOX_BYTES, Op, THREAD_LIST_CAP, ThreadLink, carried_first, render_frame,
-    replay, replay_a_frame, seconds_since, stopwatch,
+    BakeSide, BooksHook, Hook, OUTBOX_BYTES, Op, THREAD_LIST_CAP, ThreadLink, carried_first,
+    render_frame, replay, replay_a_frame, seconds_since, stopwatch,
 };
 use std::sync::Mutex;
 use std::sync::mpsc;
+
+mod books;
 
 /// The rig with its bake half on the thread: the mirror, the settings, the mailbox and the
 /// recording half stay here.
@@ -27,10 +29,38 @@ impl ThreadRig {
         Self::sized(hook, outbox, CHUNKS[0], CHUNKS[0], |_| {})
     }
 
+    /// The rig with a hook before each step's books' snapshot too, `prep` run on the queue
+    /// before the thread takes it.
+    fn with_books(
+        hook: Option<Hook>,
+        books_hook: BooksHook,
+        prep: impl FnOnce(&mut BakeQueue),
+    ) -> Self {
+        Self::built(
+            hook,
+            Some(books_hook),
+            OUTBOX_BYTES,
+            CHUNKS[0],
+            CHUNKS[0],
+            prep,
+        )
+    }
+
     /// The rig over [`world_of`]`(size)`, its first `held` chunks in the mirror, with `prep`
     /// run on the queue before the thread takes it.
     fn sized(
         hook: Option<Hook>,
+        outbox: usize,
+        size: i32,
+        held: i32,
+        prep: impl FnOnce(&mut BakeQueue),
+    ) -> Self {
+        Self::built(hook, None, outbox, size, held, prep)
+    }
+
+    fn built(
+        hook: Option<Hook>,
+        books_hook: Option<BooksHook>,
         outbox: usize,
         size: i32,
         held: i32,
@@ -46,6 +76,7 @@ impl ThreadRig {
             shadow: std::mem::take(&mut rig.shadow),
             world: world.clone(),
             hook,
+            books_hook,
         };
         let link = ThreadLink::start(side, Some(THREAD_LIST_CAP), outbox).expect("spawned");
         Self {
@@ -79,12 +110,36 @@ impl ThreadRig {
         )
     }
 
+    /// One frame, then waits up to a second for the bake thread to take its message or to have
+    /// put an entry in the outbox (a step's results and its books are two entries, so under a
+    /// small outbox cap the second can wait for the next frame's take).
+    fn frame_taken(&mut self) {
+        self.frame().expect("the step runs");
+        within(|| self.link.peek(|m| m.is_none()) || self.link.outbox_bytes() > 0);
+    }
+
     /// One frame, then waits up to a second for the bake thread to have stepped `steps` times.
     fn frame_stepped(&mut self, steps: u64) {
         self.frame().expect("the step runs");
         assert!(
             within(|| self.link.steps() >= steps),
             "step {steps} within a second"
+        );
+    }
+
+    /// Takes the outbox with no message sent, waiting up to a second for the books of message
+    /// `frame` or a later one (the step's results already taken: none comes with them).
+    fn books_of(&mut self, frame: u64) {
+        let at = stopwatch();
+        while self.link.books.frame < frame && seconds_since(at) < 1.0 {
+            let taken = self.link.take();
+            assert!(taken.steps.is_empty(), "no message sent, no step");
+            std::thread::yield_now();
+        }
+        assert!(
+            self.link.books.frame >= frame,
+            "the books of message {frame} within a second (hold {})",
+            self.link.books.frame
         );
     }
 
@@ -183,8 +238,8 @@ fn the_outbox_is_bounded_and_the_bake_side_waits() {
     let mut t = ThreadRig::new(None, CAP);
     // The world's blocks first, taken as they come (a step's lists can pass this small cap);
     // then each step makes only its books' snapshot.
-    for s in 1..=400 {
-        t.frame_stepped(s);
+    for _ in 0..400 {
+        t.frame_taken();
         if t.link.books.idle && t.lists.waiting.is_empty() {
             break;
         }
@@ -691,8 +746,8 @@ fn hold_armed() -> (Hook, Arc<std::sync::atomic::AtomicU64>, mpsc::Sender<()>) {
 
 /// Frames until the queue's books read idle with no list waiting (at most 400).
 fn drain(t: &mut ThreadRig) {
-    for s in 1..=400 {
-        t.frame_stepped(s);
+    for _ in 0..400 {
+        t.frame_taken();
         if t.link.books.idle && t.lists.waiting.is_empty() {
             break;
         }
@@ -701,9 +756,9 @@ fn drain(t: &mut ThreadRig) {
     assert!(t.link.books.idle, "the queue drains within 400 frames");
 }
 
-/// Whether the writes since `from` hold `c`'s block's words (the books' place) and its table
-/// word.
-fn block_and_table(t: &ThreadRig, from: usize, c: [i32; 3]) -> bool {
+/// Whether the writes `from .. to` hold `c`'s block's words (the place of the books held) and
+/// its table word.
+fn block_and_table(t: &ThreadRig, from: usize, to: usize, c: [i32; 3]) -> bool {
     let (first, words) = *t
         .link
         .books
@@ -713,7 +768,7 @@ fn block_and_table(t: &ThreadRig, from: usize, c: [i32; 3]) -> bool {
     let mut table = Store::new(64 << 20);
     table.start_queue(t.rig.mirror.window(), t.rig.queue.settings.cell);
     let table = table.table_word(ChunkCoord(c)) * 4;
-    let applied = &t.applied[from..];
+    let applied = &t.applied[from..to];
     applied
         .iter()
         .any(|a| a.kind == W_POOL && a.offset == first * 4 && a.bytes as u64 == words * 4)
@@ -725,9 +780,9 @@ fn block_and_table(t: &ThreadRig, from: usize, c: [i32; 3]) -> bool {
 /// Done when (1) of Plan 0099 Phase 3b (ADR-0083's one wait). The slab drained, then every
 /// step held by a hook: 100 frames with no box return within 2 s and apply nothing (Phase 3's
 /// (1) beside it). A box across chunks 0 and 1 is then carved and the hook let go from a second
-/// thread 100 ms on: the box's frame returns only after that, with the books of the step that
-/// read its message taken, both chunks' held blocks and table words applied in that frame, and
-/// that step's submit issued in it.
+/// thread 100 ms on: the box's frame returns only after that, with the results of the step that
+/// read its message taken, both chunks' held blocks and table words applied in that frame (the
+/// place read from that step's books, taken after it), and that step's submit issued in it.
 #[test]
 fn the_edits_frame_waits_for_its_list_and_no_other_frame_does() {
     use std::sync::atomic::Ordering::SeqCst;
@@ -762,13 +817,15 @@ fn the_edits_frame_waits_for_its_list_and_no_other_frame_does() {
     let box_frame = t.rig.half.frame;
     assert!(waited >= 0.1, "returned after the release: {waited} s");
     assert!(
-        t.link.books.frame >= box_frame,
-        "the box's step taken: books of message {} at frame {box_frame}",
-        t.link.books.frame
+        t.link.lists_frame >= box_frame,
+        "the box's step taken: lists of message {} at frame {box_frame}",
+        t.link.lists_frame
     );
+    let after = t.applied.len();
+    t.books_of(box_frame);
     for c in [[0, 0, 0], [1, 0, 0]] {
         assert!(
-            block_and_table(&t, before, c),
+            block_and_table(&t, before, after, c),
             "chunk {c:?}'s held block and table word in the edit's frame"
         );
     }
@@ -825,8 +882,10 @@ fn a_dig_into_a_fading_chunk_shows_its_held_block() {
     });
     t.frame().expect("the edit's frame returns with its list");
     release.join().expect("released");
+    let after = t.applied.len();
+    t.books_of(t.rig.half.frame);
     let (first, words) = *t.link.books.blocks.get(&A).expect("chunk 0 keeps a block");
-    let shows = t.applied[before..]
+    let shows = t.applied[before..after]
         .iter()
         .filter(|a| a.kind == W_POOL && a.offset == first * 4)
         .count();
@@ -862,14 +921,23 @@ fn a_dig_into_a_fading_chunk_shows_its_held_block() {
     );
 }
 
-/// Done when (1) of Plan 0099 Phase 3d. The slab drained, the step before the dig's held 20 ms
-/// by the hook, and the box sent while it is held: the edit's frame's wait by its parts
-/// (`DigWaitParts`) sums to the wait lap within 0.5 ms, and the hold is in the first part (the
-/// rest of the step in progress at the send).
+/// Done when (1) of Plan 0099 Phase 3d, as Phase 3f restates it (its (3)). The slab drained,
+/// the step before the dig's held 50 ms by the hook, and the box sent while it is held: the
+/// edit's frame's wait by its parts (`DigWaitParts`) sums to the wait lap within 0.5 ms, the
+/// hold is in the first part (the rest of the step in progress at the send), and the `snapshot`
+/// part is 0 (the frame waits for the step's lists, not its books). With the queue tracing
+/// digs, the same edit's frame returns holding the dig's books.
 #[test]
 fn the_waits_parts_sum_to_the_wait() {
+    for trace in [false, true] {
+        waits_parts(trace);
+    }
+}
+
+/// [`the_waits_parts_sum_to_the_wait`] with the queue's dig trace off or on.
+fn waits_parts(trace: bool) {
     use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
-    const HOLD_MS: f64 = 20.0;
+    const HOLD_MS: f64 = 50.0;
     let held = Arc::new(AtomicU64::new(u64::MAX));
     let h = held.clone();
     let hook: Hook = Box::new(move |_, m| {
@@ -877,7 +945,7 @@ fn the_waits_parts_sum_to_the_wait() {
             std::thread::sleep(std::time::Duration::from_secs_f64(HOLD_MS * 1e-3));
         }
     });
-    let mut t = ThreadRig::new(Some(hook), OUTBOX_BYTES);
+    let mut t = ThreadRig::with_books(Some(hook), Box::new(|_| {}), |q| q.trace_digs = trace);
     drain(&mut t);
     held.store(t.rig.half.frame + 1, SeqCst);
     let at = stopwatch();
@@ -889,13 +957,15 @@ fn the_waits_parts_sum_to_the_wait() {
     t.carve([60, 20, 4], [67, 23, 7]);
     let sent_after = seconds_since(at) * 1e3;
     t.frame().expect("the edit's frame returns with its list");
+    let box_frame = t.rig.half.frame;
     let parts = t.link.parts.expect("the edit's frame's parts");
     let wait = t.link.laps[5];
     assert!(t.link.waited, "the edit's frame waited");
     println!(
-        "wait {wait:.3} ms, parts {:?} sum {:.3}, sent {sent_after:.3} ms into the hold",
+        "trace {trace}: wait {wait:.3} ms, parts {:?} sum {:.3}, sent {sent_after:.3} ms into the hold, books of {} at {box_frame}",
         parts.ms,
-        parts.sum()
+        parts.sum(),
+        t.link.books.frame
     );
     assert!(
         (parts.sum() - wait).abs() < 0.5,
@@ -914,6 +984,15 @@ fn the_waits_parts_sum_to_the_wait() {
         "no other part holds the hold: {:?}",
         parts.ms
     );
+    if trace {
+        assert!(
+            t.link.books.frame >= box_frame,
+            "traced: the edit's frame holds the dig's books ({} at {box_frame})",
+            t.link.books.frame
+        );
+    } else {
+        assert_eq!(parts.ms[4], 0.0, "the snapshot is not in the wait");
+    }
 }
 
 /// Done when (2) of Plan 0099 Phase 3b. A panic in the step that takes the box is the box
@@ -961,11 +1040,13 @@ fn a_wait_ends_on_a_panic_and_a_full_outbox_does_not_hold_it() {
     t.frame().expect("the edit's frame returns");
     assert!(seconds_since(at) < 2.0);
     assert!(
-        t.link.books.frame >= t.rig.half.frame,
+        t.link.lists_frame >= t.rig.half.frame,
         "the box's step taken"
     );
+    let after = t.applied.len();
+    t.books_of(t.rig.half.frame);
     assert!(
-        block_and_table(&t, before, [0, 0, 0]),
+        block_and_table(&t, before, after, [0, 0, 0]),
         "the dig's held block and table word applied"
     );
 }
