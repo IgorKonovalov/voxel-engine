@@ -1,6 +1,6 @@
 # 0101: The record by rule at every opening: an audit on the real scenes first, then the three exclusions lifted
 
-> **Status:** a fix pass is owed, Phase 4 (the close review of 2026-11-26 found two cases where a
+> **Status:** in-progress, Phase 4 (the fix pass; (a) landed); the close review of 2026-11-26 found two cases where a
 > ruled record is not the one a bake writes, both by reading the code, neither covered by a test
 > or by the audit; section "The close review"); Phases 1 to 3 done 2026-11-26 on lane `plan-0101`; approved (owner, 2026-11-24: lane after Plan 0099 closes; drafted 2026-11-24 with no interview; the guesses
 > and the open questions are under "Risks & open questions", each with a recommended option).
@@ -574,7 +574,8 @@ v0.78.0.
 |---|---|---|---|
 | 1: The audit and the re-read, no behaviour change | dev | done: 0 blocks differ in every case on all runs, both forests over the 10 % job line ([readings log](logs/0101.md)) | wip `67062697`; the readings `30e771b9` |
 | 2: The rule at every opening | dev | done: the rule on every ready candidate; CPU tests (1)-(3), two soak-born lavapipe rigs (4) ([readings log](logs/0101.md)) | `85bf694d` |
-| 3: The readings on both adapters, the audit at the tip, and the documents | dev | done but (5): audit 0 differ on four runs, the step under the base, gate 1 443 of 1 443; the bytes not read ([readings log](logs/0101.md)) | committed with this row |
+| 3: The readings on both adapters, the audit at the tip, and the documents | dev | done but (5): audit 0 differ on four runs, the step under the base, gate 1 443 of 1 443; the bytes not read ([readings log](logs/0101.md)) | `5312afb7` |
+| 4: The fix pass | dev | in progress: (a) the verdict read at the push, red then green ([readings log](logs/0101.md)) | (a) committed with this row |
 
 ### Notes
 
@@ -635,6 +636,13 @@ each. Empty is fine.)_
   unchanged (no index by column).
 - Phase 3: the gate's first CPU try failed `the_first_flush_of_the_streamed_window_is_cheap`'s
   1000 ms wall-clock bar (1452.8 ms) at load1 49.4; passed on the re-run at 0.48.
+- Phase 4 (a), review finding 1: the test read red on `2ad483fa` (`111a85d7` plus the review's
+  docs), not on `111a85d7`; its rig is `split_tests/rule.rs`'s `rule_rig` with the pool started,
+  not `lister.rs`'s lone-voxel rig; the rule rig's helpers made `pub(super)`; `step.rs` touched
+  (passes the shadow to `take_listed`).
+- Phase 4 (a): red in debug on `sync_pool`'s whole-reading check (`queue/mod.rs:803`), not on
+  the test's assertion; red on the assertion in release. A pooled ruled push trips that check
+  in debug whether or not the rule still holds (readings log); not acted on.
 
 ### Close triggers
 

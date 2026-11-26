@@ -338,6 +338,13 @@ impl BakeQueue {
         }
     }
 
+    /// A test's read: whether the pool holds `c`'s listing, and the rule's verdict its opening
+    /// read on it.
+    #[cfg(test)]
+    pub(in crate::bake) fn listing_ruled(&self, c: [i32; 3]) -> Option<bool> {
+        self.listing.get(&c).map(|l| l.ruled)
+    }
+
     /// A test's read: the candidates in the pool's hands in the order they were sent.
     #[cfg(test)]
     pub(in crate::bake) fn listing_order(&self) -> Vec<[i32; 3]> {
@@ -352,6 +359,7 @@ impl BakeQueue {
     /// lists it again if it is back); once a box waits the rest wait for the next step.
     pub(in crate::bake) fn take_listed(
         &mut self,
+        gpu: &Shadow,
         store: &mut Store,
         eye: [i32; 3],
     ) -> Result<(), BakeError> {
@@ -371,6 +379,14 @@ impl BakeQueue {
             }
             let l = self.listing.remove(&c).expect("collected above");
             if self.pool.get(&c) != Some(&(l.class, l.coarse)) {
+                continue;
+            }
+            // The rule's verdict was read on the shadow of the step that sent the candidate; the
+            // re-list reads only chunks already zeroed, so a change since is read here, on this
+            // step's shadow, where the record would be written (ADR-0085). Where it does not hold
+            // now the listing is dropped and the chunk stays a candidate: a later opening lists
+            // it by a job.
+            if l.ruled && !self.rule_holds(gpu, ChunkCoord(c), gpu.light_radius()) {
                 continue;
             }
             for (on, set) in [

@@ -11,13 +11,13 @@ use super::*;
 use crate::bake::job::BAKE_SKY_ON;
 
 /// The rig's one chunk with rock (a slab at the bottom of it).
-const C: [i32; 3] = [1, 1, 1];
+pub(super) const C: [i32; 3] = [1, 1, 1];
 /// `C`'s reach box's top voxel at light radius 1: `(1 + 1 + 1) * 64 - 1`. A column top at it
 /// or under it is not over the box ([`super::super::rule::buried`]).
-const BOX_TOP: i32 = 191;
+pub(super) const BOX_TOP: i32 = 191;
 
 /// The window `dims` chunks with a slab of rock in `C`.
-fn rock_world(dims: [i32; 3]) -> World {
+pub(super) fn rock_world(dims: [i32; 3]) -> World {
     let mut t = MaterialTable::new();
     let rock = t.push(Material::named("rock"));
     let w = World::generate(ChunkExtent::new([0, 0, 0], dims), &UniformSource(AIR), &t);
@@ -30,7 +30,7 @@ fn rock_world(dims: [i32; 3]) -> World {
 
 /// The rule's rig: a streamed world (the residency the mirror's full chunks) `z` chunks high,
 /// every chunk mirrored, the camera in `C`, the sky on, every column top over the reach boxes.
-fn rule_rig(z: i32) -> Rig {
+pub(super) fn rule_rig(z: i32) -> Rig {
     let mut rig = Rig::sized(None, 3, 3);
     rig.world = rock_world([3, 3, z]);
     rig.mirror.dims = [3, z];
@@ -62,7 +62,7 @@ fn provisional_rig() -> Rig {
 /// [`rule_rig`] four chunks high with no streamer hold (every column final) and a full radius
 /// of 0 under the partial reach mode: `C`'s reach crosses the full radius, and it bakes from the
 /// chunks resident once one in its reach is not.
-fn partial_rig() -> Rig {
+pub(super) fn partial_rig() -> Rig {
     let mut rig = rule_rig(4);
     rig.view.full_radius = Some(0);
     rig.queue.reach_mode = ReachMode::Partial;
@@ -70,7 +70,7 @@ fn partial_rig() -> Rig {
 }
 
 /// The jobs placed so far: every block placed but the zero records (only `C` has faces).
-fn jobs(rig: &Rig) -> u64 {
+pub(super) fn jobs(rig: &Rig) -> u64 {
     rig.queue.stats.baked - rig.queue.stats.zeroed
 }
 
@@ -83,7 +83,7 @@ fn landings(rig: &Rig) -> u64 {
 }
 
 /// Steps until `C` holds a block, nothing is in a job or in flight and no fade runs.
-fn settle(rig: &mut Rig, what: &str) {
+pub(super) fn settle(rig: &mut Rig, what: &str) {
     rig.until(what, |r| {
         r.store.block(ChunkCoord(C)).is_some()
             && r.queue.lp.open.is_empty()
@@ -95,7 +95,7 @@ fn settle(rig: &mut Rig, what: &str) {
 
 /// The rule's zero record of `C`'s faces as the rig's step writes it (the sky on, no key light),
 /// with the light summary the store writes from its records at the put (the sun stamp kept).
-fn zero_of_c(rig: &mut Rig) -> Vec<u32> {
+pub(super) fn zero_of_c(rig: &mut Rig) -> Vec<u32> {
     let classes = rig.queue.classes(rig.world.materials());
     let faces = rig.queue.list(&rig.world, ChunkCoord(C), &classes).0;
     let s = &rig.queue.settings;
@@ -108,7 +108,7 @@ fn zero_of_c(rig: &mut Rig) -> Vec<u32> {
     zero
 }
 
-fn flags_of_c(rig: &Rig) -> [bool; 4] {
+pub(super) fn flags_of_c(rig: &Rig) -> [bool; 4] {
     [
         rig.queue.provisional.contains(&C),
         rig.queue.partial.contains(&C),

@@ -311,7 +311,11 @@ impl BakeQueue {
         self.laps.lap(S_DIGS);
         // With the bake thread on, what the listing pool finished is pushed every step, ahead
         // of the gate that reads it ([`BakeQueue::take_listed`]).
-        self.take_listed(store, view.eye.map(|v| (v / 64.0).floor() as i32))?;
+        self.take_listed(
+            run.mirror,
+            store,
+            view.eye.map(|v| (v / 64.0).floor() as i32),
+        )?;
         self.laps.lap(S_LIST);
         let pooled = view.samples.is_none() && self.lists_off_the_loop();
         let level = if pooled { POOLED_LEVEL * cap } else { 2 * cap };

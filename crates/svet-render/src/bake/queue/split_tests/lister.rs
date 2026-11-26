@@ -315,6 +315,40 @@ fn the_thread_plans_to_its_depth_and_lockstep_to_two() {
     assert_eq!(blocked, STEPS - full_at.expect("two are planned"));
 }
 
+/// Plan 0101 Phase 4, done-when (1). The rule's rig (`C` buried, light radius 1) listing through
+/// the pool: an opening rules `C` and hands its listing to the pool, which finishes it. Before the
+/// step that pushes it, a message lowers a footprint column's top (column (2, 2)) to `C`'s reach
+/// box, where the rule does not hold. After that step `C` is not zeroed and holds no zero record, and
+/// it settles with one job's block.
+#[test]
+fn a_ruled_verdict_is_read_again_where_its_record_is_written() {
+    use super::rule::{BOX_TOP, C, jobs, rock_world, rule_rig, settle};
+    let mut rig = rule_rig(3);
+    rig.queue
+        .start_lister(Arc::new(rock_world([3, 3, 3])))
+        .expect("the pool's threads start");
+    rig.until("C in the pool's hands", |r| r.queue.in_listing(C));
+    assert_eq!(
+        rig.queue.listing_ruled(C),
+        Some(true),
+        "the opening ruled C"
+    );
+    rig.queue.wait_listed();
+    assert_eq!(rig.queue.stats.zeroed, 0, "not pushed yet");
+
+    rig.mirror.tops.insert([2, 2], BOX_TOP);
+    rig.mirror.changed.push(ChunkCoord([2, 2, 2]));
+    rig.step();
+    assert_eq!(rig.queue.stats.zeroed, 0, "no zero record was written");
+    assert!(!rig.queue.zeroed(ChunkCoord(C)), "C is not zeroed");
+
+    settle(&mut rig, "C's job");
+    assert_eq!(jobs(&rig), 1, "C settles with one job's block");
+    assert_eq!(rig.queue.stats.zeroed, 0);
+    assert!(!rig.queue.zeroed(ChunkCoord(C)));
+    rig.queue.stop_lister();
+}
+
 /// One step of [`slots_run`]: the samples of the submit it sent (0 for none), whether it was
 /// counted blocked, whether it was counted neither blocked nor sent, and the jobs open after it.
 #[derive(Debug, PartialEq)]
