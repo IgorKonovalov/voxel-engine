@@ -107,14 +107,15 @@ fn to_dig(h: [f32; 4], d: f32) -> f32 {
 /// default slice, coarse 8 near 2) bakes the floor of 3 x 3 chunks in the first frames, the
 /// dig at frame [`DIG_AT`], then [`DIG_READ`] frames: the shots of frame `DIG_AT - 1` and of
 /// every frame after the dig. At frame `DIG_AT - 1` every chunk of the 3 x 3 holds a store
-/// block, else the rig is at fault (a dig into baked ground is the case read). The queue's
-/// whole-dig count after the dig's step is printed.
+/// block, else the rig is at fault (a dig into baked ground is the case read). Every frame
+/// waits on the device after its step, so which step reads a bake read-back is the same on
+/// every run. The queue's whole-dig count after the dig's step is printed.
 fn dig_run() -> Option<(Vec<DigShot>, World)> {
     dig_run_with(|_, _, _, _| {})
 }
 
-/// [`dig_run`], with `each` called after every frame's step (its index, the device, the
-/// queue and the frame).
+/// [`dig_run`], with `each` called after every frame's step and the device's wait (its index,
+/// the device, the queue and the frame).
 fn dig_run_with(
     mut each: impl FnMut(usize, &wgpu::Device, &wgpu::Queue, &Frame),
 ) -> Option<(Vec<DigShot>, World)> {
@@ -153,6 +154,9 @@ fn dig_run_with(
             );
         }
         f.step(&device, &queue, &gpu, &cam, &LightParams::headlamp());
+        // The device waited each frame: the next step's read-backs are all in, whatever the
+        // adapter's pace, so the queue's bake order is the same on every run.
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
         each(i, &device, &queue, &f);
         if i + 1 == DIG_AT {
             let bare: Vec<[i32; 2]> = (0..9)

@@ -112,12 +112,13 @@ impl ThreadRig {
         )
     }
 
-    /// One frame, then waits up to a second for the bake thread to take its message or to have
-    /// put an entry in the outbox (a step's results and its books are two entries, so under a
-    /// small outbox cap the second can wait for the next frame's take).
+    /// One frame, then the wait for its step ([`ThreadLink::wait_step`]): the bake thread has
+    /// stepped the frame's message whole, or waits at the outbox's cap (a step's results and
+    /// its books are two entries, so under a small outbox cap the second can wait for the next
+    /// frame's take).
     fn frame_taken(&mut self) {
         self.frame().expect("the step runs");
-        within(|| self.link.peek(|m| m.is_none()) || self.link.outbox_bytes() > 0);
+        self.link.wait_step();
     }
 
     /// One frame, then waits up to a second for the bake thread to have stepped `steps` times.
@@ -255,14 +256,15 @@ fn the_outbox_is_bounded_and_the_bake_side_waits() {
     let mut last = u64::MAX;
     let mut flat = 0;
     let at = stopwatch();
-    // Flat over 200 sends a millisecond apart: longer than any step of this world.
+    // Each send waits for its step: with the thread idle a send makes one step, so a send that
+    // makes none found the thread waiting at the cap. Flat over 200 such sends.
     while flat < 200 {
         assert!(
             seconds_since(at) < 1.8,
             "the steps stop rising within 1.8 s"
         );
         send(&mut t);
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        t.link.wait_step();
         let s = t.link.steps();
         flat = if s == last { flat + 1 } else { 0 };
         last = s;
@@ -278,10 +280,8 @@ fn the_outbox_is_bounded_and_the_bake_side_waits() {
         t.link.outbox_bytes()
     );
     t.frame().expect("the frame takes the outbox");
-    assert!(
-        within(|| t.link.steps() > last),
-        "room made, the steps go on"
-    );
+    t.link.wait_step();
+    assert!(t.link.steps() > last, "room made, the steps go on");
 }
 
 /// Done when (3) of Plan 0099 Phase 3 (Phase 3a), its first part. Dropping the render side's
@@ -398,7 +398,10 @@ const OPENING_HELD: i32 = 3;
 /// then the other 32 arrive, every one a ready candidate. With `post`, a hook on the bake
 /// thread stops the first opening after its second listing until the render side has carved
 /// chunk 0's slab top and sent that frame's message (its box), as an edit in the window does
-/// while a step runs; then both steps are run and taken.
+/// while a step runs; then both steps are run and taken. Every frame waits for its step: the
+/// drain and the frames with no box by [`ThreadLink::wait_step`]; with `post`, the frames
+/// before the box by the step's end (the hook before its books' snapshot) or the listing's
+/// ask, whichever the step reaches, since a step held at the ask has not ended.
 fn first_opening(post: bool) -> Opening {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
     let listed = Arc::new(AtomicUsize::new(0));
@@ -406,14 +409,17 @@ fn first_opening(post: bool) -> Opening {
     // At each step's start once armed: the frame of the message it reads, and the candidates
     // the step before it listed.
     let counts = Arc::new(Mutex::new(Vec::<(u64, usize)>::new()));
-    let (ask, asked) = mpsc::channel::<()>();
+    // The bake thread's word to the test: a listing asks (`true`), or a step reached its books
+    // (`false`).
+    let (ask, asked) = mpsc::channel::<bool>();
+    let ended = ask.clone();
     let (ack, acked) = mpsc::channel::<()>();
     let acked = Mutex::new(acked);
     let (l, a) = (listed.clone(), armed.clone());
     let once = AtomicBool::new(post);
     let on_list = move || {
         if a.load(SeqCst) && l.fetch_add(1, SeqCst) + 1 == 2 && once.swap(false, SeqCst) {
-            ask.send(()).expect("the test listens");
+            ask.send(true).expect("the test listens");
             acked.lock().expect("one listing").recv().expect("acked");
         }
     };
@@ -425,8 +431,16 @@ fn first_opening(post: bool) -> Opening {
                 .push((m.frame, l.swap(0, SeqCst)));
         }
     });
-    let mut t = ThreadRig::sized(
+    let a = armed.clone();
+    let on_books: BooksHook = Box::new(move |_| {
+        if post && a.load(SeqCst) {
+            // The test has stopped listening once the box's frames are past.
+            let _ = ended.send(false);
+        }
+    });
+    let mut t = ThreadRig::built(
         Some(on_step),
+        Some(on_books),
         OUTBOX_BYTES,
         OPENING_SIZE,
         OPENING_HELD,
@@ -441,7 +455,7 @@ fn first_opening(post: bool) -> Opening {
             break;
         }
         t.frame().expect("the step runs");
-        within(|| t.link.peek(|m| m.is_none()));
+        t.link.wait_step();
     }
     assert!(drained(&t), "the held chunks drain");
     armed.store(true, SeqCst);
@@ -460,10 +474,7 @@ fn first_opening(post: bool) -> Opening {
     for _ in 0..400 {
         t.frame().expect("the step runs");
         if post {
-            if asked
-                .recv_timeout(std::time::Duration::from_millis(50))
-                .is_ok()
-            {
+            if asked.recv().expect("the bake thread runs") {
                 // The step that listed twice waits (not yet counted): an edit, and the frame's
                 // message sent. The edit's frame waits for the box's step (Phase 3b), so the
                 // step is let go from a second thread once the box is stamped.
@@ -480,8 +491,9 @@ fn first_opening(post: bool) -> Opening {
                 t.frame().expect("the frame returns");
                 box_frame = Some(t.rig.half.frame);
                 release.join().expect("released");
+                t.link.wait_step();
                 assert!(
-                    within(|| t.link.steps() >= steps + 2),
+                    t.link.steps() >= steps + 2,
                     "the cut step and the box's step run"
                 );
                 // A step counts before its results reach the outbox: frames until the box's
@@ -491,12 +503,12 @@ fn first_opening(post: bool) -> Opening {
                     if t.link.books.frame >= box_frame.unwrap_or(0) {
                         break;
                     }
-                    std::thread::yield_now();
+                    t.link.wait_step();
                 }
                 break;
             }
         } else {
-            within(|| t.link.peek(|m| m.is_none()));
+            t.link.wait_step();
             // A step's count is filed at the next step's start.
             if first(&counts).is_some() {
                 break;
@@ -1031,11 +1043,12 @@ fn a_wait_ends_on_a_panic_and_a_full_outbox_does_not_hold_it() {
     let mut last = u64::MAX;
     let mut flat = 0;
     let at = stopwatch();
+    // Each send waits for its step: a send that makes none found the thread at the cap.
     while flat < 200 {
         assert!(seconds_since(at) < 1.8, "the steps stop within 1.8 s");
         let msg = t.rig.message();
         t.link.send(msg, Vec::new());
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        t.link.wait_step();
         let s = t.link.steps();
         flat = if s == last { flat + 1 } else { 0 };
         last = s;

@@ -218,10 +218,12 @@ where
         self.shared.arrived.notify_all();
     }
 
-    /// What the bake half made since the last call, in order.
+    /// What the bake half made since the last call, in order. The outbox left empty, no put
+    /// waits at its cap.
     pub(crate) fn take(&self) -> Vec<O> {
         let mut ob = Shared::<M, O>::lock(&self.shared.outbox);
         ob.bytes = 0;
+        ob.at_cap = false;
         let out = std::mem::take(&mut ob.entries);
         drop(ob);
         self.shared.room.notify_all();
@@ -238,6 +240,7 @@ where
         loop {
             if !ob.entries.is_empty() {
                 ob.bytes = 0;
+                ob.at_cap = false;
                 let took = std::mem::take(&mut ob.entries);
                 let found = took.iter().any(&mut done);
                 out.extend(took);
@@ -384,7 +387,6 @@ pub(crate) fn panic_text(p: &(dyn std::any::Any + Send)) -> String {
 mod tests {
     use super::*;
     use crate::bake::{seconds_since, stopwatch};
-    use std::time::Duration;
 
     struct Entry(usize);
     impl Weighed for Entry {
@@ -447,27 +449,27 @@ mod tests {
     }
 
     /// With the render thread not taking, the outbox stops at its cap and the step count stops
-    /// rising; a take makes room and the steps go on.
+    /// rising; a take makes room and the steps go on. Each send is followed by the wait for the
+    /// step ([`BakeThread::wait_step`]): three steps fill 900 of the 1000 bytes, the fourth
+    /// waits at the cap (counted as it starts to wait), and from then on the wait returns with
+    /// the thread at the cap, so a send makes no step.
     #[test]
     fn the_outbox_stops_at_its_cap_and_the_bake_thread_waits() {
         let t = BakeThread::start((), 1000, |_a: u32, b: u32| b, |_, _, _, _| vec![Entry(300)])
             .expect("spawned");
         for _ in 0..10 {
             t.send(0);
-            std::thread::sleep(Duration::from_millis(2));
+            t.wait_step();
         }
-        assert!(within(|| t.steps() >= 4));
-        std::thread::sleep(Duration::from_millis(20));
+        assert!(t.steps() >= 4);
         let held = t.steps();
         t.send(0);
-        std::thread::sleep(Duration::from_millis(20));
+        t.wait_step();
         assert_eq!(t.steps(), held, "the step count stops at the cap");
         assert!(t.outbox_bytes() <= 1000);
         assert_eq!(t.take().len(), 3);
-        assert!(
-            within(|| t.steps() > held),
-            "room made, the waiting step lands"
-        );
+        t.wait_step();
+        assert!(t.steps() > held, "room made, the waiting step lands");
         drop(t);
     }
 

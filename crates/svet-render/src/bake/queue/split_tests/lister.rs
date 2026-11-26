@@ -3,17 +3,16 @@
 
 use super::*;
 
-/// Steps `rig` until its queue is empty, sleeping a little while the listing pool holds
-/// candidates (its threads run beside the rig's steps); the frames it took.
+/// Steps `rig` until its queue is empty, each step followed by the wait for every listing it
+/// sent to the pool ([`BakeQueue::wait_listed`]; at once with no pool), so the next step finds
+/// them done; the frames it took.
 fn drain(rig: &mut Rig) -> u32 {
     for frame in 0..4000 {
         if rig.read().empty() && rig.queue.listing.is_empty() {
             return frame;
         }
-        if !rig.queue.listing.is_empty() {
-            std::thread::sleep(std::time::Duration::from_micros(200));
-        }
         rig.step();
+        rig.queue.wait_listed();
     }
     panic!("the queue drains within 4000 frames");
 }
