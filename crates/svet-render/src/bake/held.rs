@@ -41,10 +41,20 @@ const HELD_FACES: usize = 8;
 /// Bricks of margin about the touched bricks the opacity grid holds: a ray's reach and one.
 const GRID_MARGIN: i32 = (HELD_REACH + 8) / 8;
 
-/// The held value's share of its base under [`DigEstimate::Depth`] from the share of the rays
-/// that reach the base's height: the share itself (Plan 0105 Phase 4's rule on its CPU table).
-fn depth_form(reach: f32) -> f32 {
-    reach
+/// The held value's share of its base under [`DigEstimate::Depth`] from the share `s` of the
+/// rays that reach the base's height: `s^e`, with `e` 1 up to one of a face's
+/// [`HELD_RINGS`] x [`HELD_AZ`] rays, 1/2 from two of them, and linear in `s` between, so the
+/// form is continuous and rises with `s` (Plan 0105 Phase 4c).
+fn depth_form(s: f32) -> f32 {
+    let one = 1.0 / (HELD_RINGS * HELD_AZ) as f32;
+    let e = if s <= one {
+        1.0
+    } else if s >= 2.0 * one {
+        0.5
+    } else {
+        1.0 - 0.5 * (s - one) / one
+    };
+    s.powf(e)
 }
 
 /// The value the record takes for a held value `v`: under [`DigEstimate::Depth`] a value under
@@ -786,6 +796,32 @@ mod tests {
         assert_eq!(held(40, DigEstimate::Depth), 0.0, "40 down under depth");
         let depth8 = held(8, DigEstimate::Depth);
         assert!(depth8 > 0.0, "8 down under depth {depth8}");
+    }
+
+    /// The depth form: the share up to one ray in twelve, its root from two, `s^0.75` at 1/8,
+    /// 0 at 0, and never falling over the shares a direction's mean over 8 faces of 12 rays
+    /// takes (k/96).
+    #[test]
+    fn the_depth_form_slides_from_the_share_to_its_root_between_one_and_two_rays_in_twelve() {
+        let near = |s: f32, want: f32| {
+            let got = depth_form(s);
+            assert!(
+                (got - want).abs() < 5e-4,
+                "depth_form({s}) {got}, want {want}"
+            );
+        };
+        near(1.0 / 12.0, 1.0 / 12.0);
+        near(1.0 / 8.0, 0.210);
+        near(1.0 / 6.0, 0.408);
+        near(1.0 / 3.0, 0.577);
+        assert_eq!(depth_form(0.0), 0.0);
+        let mut last = 0.0;
+        for k in 0..=96 {
+            let v = depth_form(k as f32 / 96.0);
+            assert!(v >= last, "falls at {k}/96: {v} after {last}");
+            last = v;
+        }
+        assert_eq!(depth_form(1.0), 1.0);
     }
 
     /// The byte a value takes in the record (`visibility_words`' rounding).

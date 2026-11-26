@@ -98,8 +98,9 @@ impl BakeQueue {
         }
         let classes = self.classes(run.world.materials());
         let listed = self.list_dug(run, &store.words, &boxes, &dug, &classes);
-        for ((c, near), (faces, held, trace)) in dug.into_iter().zip(listed) {
+        for ((c, near), (faces, held, trace, ns)) in dug.into_iter().zip(listed) {
             self.held_trace.extend(trace);
+            self.stats.held_ns += ns;
             let coord = ChunkCoord(c);
             if let Some(m) = self.prepared.remove(&c) {
                 self.prepared_bytes -= m.masks.bytes();
@@ -169,7 +170,8 @@ impl BakeQueue {
     /// The dug chunks' listings, across threads (a `B` press touches tens of chunks, listed as
     /// the pre-roll's are), each with its touched bricks' held visibilities under
     /// [`BakeQueue::dig_store_hold`] ([`held_visibilities`], made against the world from the
-    /// blocks as the edit found them, `words`), else none.
+    /// blocks as the edit found them, `words`), else none, and the call's time in ns (a reading,
+    /// [`QueueStats::held_ns`]; 0 for none).
     fn list_dug(
         &self,
         run: &BakeRun<'_>,
@@ -177,7 +179,7 @@ impl BakeQueue {
         boxes: &[[[i32; 3]; 2]],
         dug: &[([i32; 3], Vec<u16>)],
         classes: &Arc<Vec<u8>>,
-    ) -> Vec<(ChunkFaces, Held, Vec<HeldPart>)> {
+    ) -> Vec<(ChunkFaces, Held, Vec<HeldPart>, u64)> {
         let threads = std::thread::available_parallelism()
             .map_or(4, std::num::NonZero::get)
             .clamp(1, 16);
@@ -193,6 +195,7 @@ impl BakeQueue {
                             .map(|(c, near)| {
                                 let faces = self.list(run.world, ChunkCoord(*c), classes).0;
                                 let mut trace = Vec::new();
+                                let mut ns = 0u64;
                                 let held = if hold {
                                     let mut solid = Opaque::about(
                                         run.world,
@@ -202,7 +205,8 @@ impl BakeQueue {
                                         cell,
                                         estimate,
                                     );
-                                    held_visibilities(
+                                    let t = stopwatch();
+                                    let held = held_visibilities(
                                         &mut solid,
                                         words,
                                         boxes,
@@ -212,11 +216,14 @@ impl BakeQueue {
                                         cell,
                                         estimate,
                                         traced.then_some(&mut trace),
-                                    )
+                                    );
+                                    ns = u64::try_from(stopwatch().duration_since(t).as_nanos())
+                                        .unwrap_or(u64::MAX);
+                                    held
                                 } else {
                                     Vec::new()
                                 };
-                                (faces, held, trace)
+                                (faces, held, trace, ns)
                             })
                             .collect::<Vec<_>>()
                     })

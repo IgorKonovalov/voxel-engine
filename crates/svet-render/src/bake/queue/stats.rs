@@ -83,6 +83,10 @@ pub struct QueueStats {
     pub dig_bricks: u64,
     /// Block-less chunks an edit's box touched, taken as whole digs since the queue started.
     pub digs_whole: u64,
+    /// The held estimate's CPU time since the queue started, in nanoseconds: the calls of
+    /// `held_visibilities` at the edits, summed over the listing threads (a reading; nothing
+    /// reads it back).
+    pub held_ns: u64,
     /// Places the pool refused since the queue started: each a job or a provisional block left
     /// waiting for an eviction to free room.
     pub pool_full: u64,

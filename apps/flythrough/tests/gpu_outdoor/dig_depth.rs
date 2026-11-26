@@ -476,14 +476,27 @@ mod dig_depth {
         /// The read's table: a row a frame, then the peak over settled (D+0 to D+[`AFTER`]),
         /// its frame, write, and each term at the peak against the settled frame's; and, in
         /// lockstep, the held parts' summary by face kind and base source.
-        /// The held value under four forms against the landed record, a part each, in bytes of
+        /// The held value under five forms against the landed record, a part each, in bytes of
         /// the record (Plan 0105 Phase 4's rule): today's `max(base sqrt(open), floor)`, Phase
-        /// 3's `base sqrt(open)`, and over the share that reaches the base's height its root and
-        /// the share itself; a part's value is the mean of its kept faces at the cell's old
-        /// record and its dig faces at the form. Per form: parts over at all, over by more than
-        /// one byte, the largest excess.
+        /// 3's `base sqrt(open)`, and over the share `s` that reaches the base's height its root,
+        /// the share itself and `s^e` (`slide`, Phase 4c's depth form: `e` 1 up to 1/12, 1/2 from
+        /// 1/6, linear between); a part's value is the mean of its kept faces at the cell's old
+        /// record and its dig faces at the form, and under the four depth forms (all but
+        /// today's) a value under one byte is 0, as the depth arm writes it. Per form: parts over
+        /// at all, over by more than one byte, the largest excess.
         fn forms_row(r: &DigRead) -> String {
-            let mut forms = [(0usize, 0usize, 0i32); 4];
+            let slide = |s: f32| {
+                let one = 1.0 / 12.0;
+                let e = if s <= one {
+                    1.0
+                } else if s >= 2.0 * one {
+                    0.5
+                } else {
+                    1.0 - 0.5 * (s - one) / one
+                };
+                s.powf(e)
+            };
+            let mut forms = [(0usize, 0usize, 0i32); 5];
             let mut n_landed = 0usize;
             for (p, rec) in &r.parts {
                 let Some(l) = rec[1] else {
@@ -491,10 +504,11 @@ mod dig_depth {
                 };
                 n_landed += 1;
                 let base = p.own.map_or(p.up, |o| o.min(p.up));
-                let ests = [(base * p.open.sqrt()).max(0.02), base * p.open.sqrt(), base * p.reach.sqrt(), base * p.reach];
+                let ests = [(base * p.open.sqrt()).max(0.02), base * p.open.sqrt(), base * p.reach.sqrt(), base * p.reach, base * slide(p.reach)];
                 let (nn, no) = (f32::from(p.new_faces), f32::from(p.old_faces));
                 for (k, est) in ests.into_iter().enumerate() {
                     let v = (no * p.own.unwrap_or(0.0) + nn * est) / (nn + no).max(1.0);
+                    let v = if k > 0 && v < 1.0 / 255.0 { 0.0 } else { v };
                     let over = (v * 255.0).round() as i32 - (l[0] * 255.0).round() as i32;
                     let e = &mut forms[k];
                     e.0 += usize::from(over > 0);
@@ -502,8 +516,8 @@ mod dig_depth {
                     e.2 = e.2.max(over);
                 }
             }
-            let mut row = format!("    forms over landed (parts {n_landed}; over at all / over by more than one byte / largest, bytes):");
-            for (name, e) in ["today", "phase3", "root", "share"].iter().zip(forms) {
+            let mut row = format!("    forms over landed (parts {n_landed}; depth forms with the byte cut; over at all / over by more than one byte / largest, bytes):");
+            for (name, e) in ["today", "phase3", "root", "share", "slide"].iter().zip(forms) {
                 row += &format!(" {name} {} / {} / {:+}", e.0, e.1, e.2);
             }
             row
@@ -660,11 +674,13 @@ mod dig_depth {
         /// The bars' line (Plan 0105, amended 2026-11-26): the frames from D+0 to the first on the
         /// job's record against `S` (`fs`); the mean's and the p95's largest excess, over all
         /// those frames and over those whose lighting pixels all read a record (record or stale
-        /// record, no cast); B1 (2 m and deeper: mean at most 4, p95 at most 8) or B2's first
-        /// clause (1 m: mean at most 4); B3, the lowest mean under `S`; the check frame against
+        /// record, no cast); B1 (2 m and deeper: mean at most 4, p95 at most 8) or B2 (1 m: mean
+        /// at most 4 over, and the lowest mean at most 4 under, the second judged at `down` and
+        /// `wide` only); B3, the lowest mean under `S`; the check frame against
         /// D+60 (`check`, valid within [`CHECK_LEVELS`]); `S`'s mean beside D+60's; the
         /// exposure at D-1, each window frame and D+60; the adapted level about the switch; the
-        /// fades at D-1. `f60` is the frames against D+60.
+        /// fades at D-1; the held estimate's CPU time from D-1 to D+60 (`QueueStats::held_ns`).
+        /// `f60` is the frames against D+60.
         fn bars_line(r: &DigRead, fs: &[Figs], check: &Figs, sf: &Figs, f60: &[Figs], site: &str, mode: &str) -> String {
             let after = fs.len() - 1; // the last is D+60
             let land = (1..after).find(|&i| r.writes[i] == "job");
@@ -684,7 +700,7 @@ mod dig_depth {
                 if r.depth >= 20 {
                     format!("B1 {}", if m <= 4.0 && p <= 8.0 { "pass" } else { "MISS" })
                 } else {
-                    format!("B2 mean {}", if m <= 4.0 { "pass" } else { "MISS" })
+                    format!("B2 mean {}, under {}", if m <= 4.0 { "pass" } else { "MISS" }, if lo >= -4.0 { "pass" } else { "MISS" })
                 }
             };
             let frames: Vec<String> = win
@@ -705,7 +721,7 @@ mod dig_depth {
             let m = &r.manual;
             let fades: Vec<String> = r.fades.1.iter().map(|(c, s)| format!("{c:?} [{}]", s.join(" "))).collect();
             format!(
-                "{site} {mode} {} depth {:.1} m against S: window D+0..{} ({}); mean max {mx:+.1} at {}, p95 max {px:+.0}: {}; record-only frames {} of {}: mean max {}, p95 max {}: {}; B3 lowest mean {lo:+.1} at {}; peak mean against D+60 {peak60:+.1}; check frame against D+60 {:+.2} ({}); S luma {:.1}, D+60 luma {:.1}; exposure D-1 {:.4e} S {:.4e} check {:.4e} D+60 {:.4e}; adapted log2 D+60 {:.4} S {:.4}, after the switch back previous {:.4e} current {:.4e} adapted {:.4}; D+0 step {:.2} ms (dig {:.2} ms); fades at D-1 {}, touched chunks {}\n    frames against S (mean/p95, exposure): {}",
+                "{site} {mode} {} depth {:.1} m against S: window D+0..{} ({}); mean max {mx:+.1} at {}, p95 max {px:+.0}: {}; record-only frames {} of {}: mean max {}, p95 max {}: {}; B3 lowest mean {lo:+.1} at {}; peak mean against D+60 {peak60:+.1}; check frame against D+60 {:+.2} ({}); S luma {:.1}, D+60 luma {:.1}; exposure D-1 {:.4e} S {:.4e} check {:.4e} D+60 {:.4e}; adapted log2 D+60 {:.4} S {:.4}, after the switch back previous {:.4e} current {:.4e} adapted {:.4}; D+0 step {:.2} ms (dig {:.2} ms); held estimate {:.3} ms (D-1 to D+60); fades at D-1 {}, touched chunks {}\n    frames against S (mean/p95, exposure): {}",
                 r.label,
                 r.depth as f64 / 10.0,
                 r.frames[end].label,
@@ -733,6 +749,7 @@ mod dig_depth {
                 m.back.adapted_log2,
                 r.frames[1].q.stages.total_ms,
                 r.frames[1].q.dig_ns / 1e6,
+                r.frames[after].q.held_ns.saturating_sub(r.frames[0].q.held_ns) as f64 / 1e6,
                 r.fades.0,
                 fades.join(", "),
                 frames.join("; ")
