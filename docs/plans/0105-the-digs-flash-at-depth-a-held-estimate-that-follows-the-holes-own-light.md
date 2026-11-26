@@ -886,6 +886,10 @@ every face and brings back parts over their landed light at 2 m.
 
 The owner took option (a) of the question under "Phase 4's two misses": **the 1 m dig stays within 4 levels of its settled look, on either side.** It may start up to 4 levels dark where today's dig starts 3 levels bright; B2 reads as restated in that section, and Phase 4c is judged against it. The earlier wording (within 4 levels of today's frames) is withdrawn.
 
+## Amended 2026-11-26 (owner, Phase 4c's miss goes to the window)
+
+Phase 4c read the 1 m dig at `down` 4.53 levels under `S` at its first frame, against B2's floor of 4 (reading 16), and the architect had said no other form over the same rays is left. The owner's answer: **"take it to the window"**. The form stays as Phase 4c built it; no further architect round runs before the window. B2's under clause at 1 m is judged by his eye in Phase 6, with the measured series (D+0 to D+5) printed in the run's text; the headless figure stays in the log as a miss by 0.53, not restated as a pass. Phase 4c's five remaining holds are taken as readings (reading 17). If the window refuses the shallow dig's dark start, the next step is the architect's (a mechanism near the mouth), not a tuned anchor.
+
 ## Data shapes
 
 ```rust
