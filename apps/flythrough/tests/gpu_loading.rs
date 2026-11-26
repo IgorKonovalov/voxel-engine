@@ -256,8 +256,10 @@ fn a_benchmark_warms_up_from_the_first_world_frame() {
     assert_eq!(on.0 + on.1, 129.0, "world frames only");
 }
 
-/// The showcase headless on lavapipe at 64 x 36 with the screen on, the pre-roll's near ring
-/// at 0 and no coarse pass, switched in process after its frame 0 (`--switch-at 0`; the
+/// The showcase headless on lavapipe at 64 x 36 with the screen on and a 0.05 ms slice (one
+/// start-up step a loading frame, so every stage with a step is named by a loading frame,
+/// whatever the machine's pace), the pre-roll's near ring at 0 and no coarse pass, switched
+/// in process after its frame 0 (`--switch-at 0`; the
 /// showcase's next source is the outdoor hills, trees sparse by default): after the
 /// showcase's frame 0 a loading frame names the next world and the one it leaves (`switch
 /// splash drawn: loading outdoor, trees sparse, switching from showcase`), then the new run's
@@ -286,6 +288,8 @@ fn a_source_switch_shows_the_loading_frames_before_the_new_world() {
             "0",
             "--loading-screen",
             "on",
+            "--load-slice",
+            "0.05",
         ])
         .env("RUST_LOG", "flythrough=info")
         .output()
