@@ -251,6 +251,11 @@ export function commandsOf(id, entry, { check = false, dir: dirAt, out: outAt, .
   return { dir, out, clear: ["rm", "-rf", dir], render: wrap(argv, wrapOpts), bare: argv, encode };
 }
 
+/** `to` relative to `from`, with `/` between parts on every platform: the manifest's paths and
+ * the index's hrefs are written with `/`, and `path.relative` joins with `\` on Windows. `p` is
+ * the path flavour (`path.win32` in a test). */
+export const relPosix = (from, to, p = path) => p.relative(from, to).split(p.sep).join("/");
+
 const quote = (w) => (/^[A-Za-z0-9_./,:=@%+-]+$/.test(w) ? w : `'${w.replaceAll("'", "'\\''")}'`);
 export const shell = (argv) => argv.map(quote).join(" ");
 
@@ -523,7 +528,7 @@ function makeSheet(id, entry, failures) {
   if (r.status !== 0) throw new Error(`ffmpeg could not tile ${id}: ${r.stderr}`);
   fs.writeFileSync(path.join(ROOT, CANDIDATES, `${id}.txt`), legend.join("\n") + "\n");
   const tileCount = fs.readdirSync(tiles).filter((f) => f.endsWith(".png")).length;
-  return { sheet: path.relative(ROOT, sheet), tiles: tileCount, lines: legend.length };
+  return { sheet: relPosix(ROOT, sheet), tiles: tileCount, lines: legend.length };
 }
 
 const esc = (s) => String(s).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
@@ -536,7 +541,7 @@ function writeIndex(manifest) {
     const cells = entry.candidates.map((_, i) => {
       const n = i + 1;
       const c = candidateCommands(id, entry, n);
-      const rel = (p) => path.relative(CANDIDATES, p);
+      const rel = (p) => relPosix(CANDIDATES, p);
       const media = entry.kind === "loop" && fs.existsSync(path.join(ROOT, `${c.dir}.webp`))
         ? `<a href="${rel(`${c.dir}.webp`)}"><img src="${rel(`${c.dir}.webp`)}" alt="${id} ${n}"></a>`
         : `<a href="${rel(c.tilePng)}"><img src="${rel(c.tilePng)}" alt="${id} ${n}"></a>`;
@@ -596,7 +601,7 @@ function finishCandidate(id, entry, n, r) {
 /** After the hold: check the frames a render wrote and encode them. */
 function encodeOne(id, entry, check) {
   const c = commandsOf(id, entry, { check });
-  const log = path.relative(ROOT, path.join(ROOT, `${c.dir}.log`));
+  const log = relPosix(ROOT, path.join(ROOT, `${c.dir}.log`));
   const pngs = fs.existsSync(path.join(ROOT, c.dir)) ? fs.readdirSync(path.join(ROOT, c.dir)).filter((f) => f.endsWith(".png")) : [];
   const want = entry.source === "flythrough" ? framesOf(entry).length : null;
   if (pngs.length === 0 || (want !== null && pngs.length !== want)) {
