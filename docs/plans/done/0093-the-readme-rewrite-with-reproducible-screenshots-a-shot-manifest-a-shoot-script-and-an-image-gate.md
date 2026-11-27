@@ -1,6 +1,11 @@
 # 0093: The README rewrite with reproducible screenshots: a shot manifest, a shoot script that re-renders every image in one command, an image gate, and the owner's pick from contact sheets
 
-> **Status:** in-progress (lane started 2026-11-26; Phase 1 landed). Approved 2026-11-19 (drafted from the Bonsai second pass, section 2, and the
+> **Status:** done, closed 2026-11-27 (v0.79.1): the README is rewritten around twelve images the
+> engine renders from `docs/images/shots.json` by one command, its commands and its two code
+> examples are checked, and the image gate is in CI; closed on the owner's word without his
+> second look, so the `dig` still (near black), the unjudged `walkers` loop and the default
+> picks are his to correct from the backlog ("The README's images after the unattended
+> close"). The history: lane started 2026-11-26. Approved 2026-11-19 (drafted from the second pass over another voxel engine's source, section 2, and the
 > owner's "more screenshots through the doc"; the owner: "all recommended", every owner question
 > on its recommendation: after 0087, beside 0089, before 0091; canopy shot now; one caption line;
 > the frame-time figure; the hero from the sheet). **Refreshed 2026-11-26** against main
@@ -13,14 +18,14 @@
 > **Related ADRs:** none. The one choice with a rejected alternative (the README's images come
 > from the fly-through binary and the clip example, not from a grown `hero` example) is a
 > testbed flag, cheap to revisit, and is recorded in Decision below. Builds on
-> [ADR-0054](../adrs/0054-the-tester-build-is-a-launcher-that-runs-the-flythrough-per-scene.md) (the
+> [ADR-0054](../../adrs/0054-the-tester-build-is-a-launcher-that-runs-the-flythrough-per-scene.md) (the
 > scenes and camera paths the shots reuse) and
-> [ADR-0009](../adrs/0009-testbed-hud-as-embedded-bitmap-font-overlay-pass.md) (the HUD the
+> [ADR-0009](../../adrs/0009-testbed-hud-as-embedded-bitmap-font-overlay-pass.md) (the HUD the
 > pass-list shot shows).
 
 ## TL;DR
 
-The README is rewritten after Bonsai's: an identity line with one measured figure, the
+The README is rewritten after a reference README: an identity line with one measured figure, the
 quickstart in the first screen, the features in eight groups of 3 to 5 bullets with a still
 after each, a gallery, a wishlist, and everything about layout, checks and process moved to
 `docs/development.md`. Every image in it is engine output with the HUD off (the HUD shot
@@ -39,8 +44,8 @@ change, refreshing the README is `node scripts/shoot-images.mjs` and a commit.
 ## Context & problem
 
 The README today (main 901a9e26) opens on one good GIF and honest figures, then fifteen dense
-bullets without an image, a crates table, a checks list and process. Bonsai's
-(`scallyw4g/bonsai`, read 2026-11-19) puts an image every ten lines, groups its features, puts
+bullets without an image, a crates table, a checks list and process. An outside project's
+README (read 2026-11-19) puts an image every ten lines, groups its features, puts
 the binaries first and keeps process out. The owner wants ours shot through with images in that
 shape, and the second-pass report's section 2 lists what to borrow.
 
@@ -426,16 +431,14 @@ section wins; the phases, their owners and their order stand. Main at `aa8a76a3`
 
 ### A1. What the model does (read today)
 
-The model is Bonsai's README (`scallyw4g/bonsai`, `readme.md` on `master`, 246 lines, fetched
-2026-11-26 through the GitHub API). This sentence is the amendment's only use of the name; the
-rules below stand without it (A9).
+The model is an outside project's README (246 lines, read 2026-11-26). It is not named (A9);
+the rules below stand without it.
 
 - **Wording.** First person, warm, short: most sentences under 20 words. The opening is three
   short paragraphs: what it is, the one remarkable claim with a number and a comparison a
-  reader can picture, and what a user can do with it. Quoted: "The view distance is the entire
-  world, all the time." and "Yes, you read that right." Feature bullets are noun phrases of two
-  to six words in the field's own terms (quoted: "Hot Shader & Game-code Reloading",
-  "Procedural sky with a smooth horizon and directional sun"); one bullet in thirty explains a
+  reader can picture, and what a user can do with it. It states its
+  claim flatly and then answers the reader's doubt in four words. Feature bullets are noun phrases of two
+  to six words in the field's own terms (a reload feature in five words, a sky in eight); one bullet in thirty explains a
   mechanism. No process, no decision records, no internal vocabulary.
 - **Sections.** A welcome with the opening; a version note; Getting Started (what a build
   needs) holding Quickstart (the release binaries first, then four linked headings: getting
@@ -715,7 +718,7 @@ compares cell means of the decoded files, not pixels; a shot is taken of a settl
 headless start the fly-through gains here; the script holds the GPU lock per batch of renders,
 not per entry. Phase 2's remainder is Phases 2b to 2d below; Phase 3 changes in two places.
 
-### B1. What Phase 2 read (RTX 3080 Laptop, [the log](logs/0093.md), Phase 2)
+### B1. What Phase 2 read (RTX 3080 Laptop, [the log](../logs/0093.md), Phase 2)
 
 - The shoot works and re-encoding its frames gives the same bytes. `--check` after it: `hero`
   0.117263 against 0.007, the two clips 0 against 0.
@@ -884,10 +887,10 @@ Phase 2d stopped on "`--check` right after the shoot exits 0": `spider-walk` rea
 against a tolerance of 0. Three rulings: a tolerance is fixed from a noise set of at least
 six renders, never from one pair; a loop is judged by its cell share over every frame, the
 worst frame printed beside it and not judged; the clip example's run-to-run difference is
-noise this check carries and a finding for [the backlog](../backlog.md), not for this plan.
+noise this check carries and a finding for [the backlog](../../backlog.md), not for this plan.
 Phase 2d's remainder is Phases 2e and 2f below; 2d's row stays as it reads.
 
-### C1. What Phase 2d read (RTX 3080 Laptop, [the log](logs/0093.md), Phase 2d)
+### C1. What Phase 2d read (RTX 3080 Laptop, [the log](../logs/0093.md), Phase 2d)
 
 - The cell share, the batches and the settled start work: a shoot of 317 s with one hold of
   56 s; the hero 0.002478 against 0.004; `walker-walk` 0 against 0.
@@ -1016,7 +1019,7 @@ Three rulings: a render whose frames are the noise set's frames is not a wrong p
 the loops' wrong set is the loop started one frame late and `--facing` 15 degrees off; a
 loop's tolerance is twice its largest pair; the hero's patch is most likely one far crown's
 light, inside the tolerance, read once more for free in Phase 2f and parked in
-[the backlog](../backlog.md). No reading is owed first; Phase 2f runs as amended in D4.
+[the backlog](../../backlog.md). No reading is owed first; Phase 2f runs as amended in D4.
 
 ### D1. Ruling 1: what a loop's wrong pictures are
 
@@ -1058,7 +1061,7 @@ of the smallest wrong share. The hero's noise is a spread over 28 pairs and keep
 
 Rejected: **0.003 and 0.0007 by C2's rounding** (2.5 % and 5 % over one set's largest
 pair, one cell of headroom for the walker, with a fourth state unread); **more renders
-until the states are counted** (holds spent on the [backlog's](../backlog.md) clip finding,
+until the states are counted** (holds spent on the [backlog's](../../backlog.md) clip finding,
 which this plan carries and does not chase).
 
 ### D3. Ruling 3: the hero's patch does not block; one free reading, and B3's note applies
@@ -1288,7 +1291,7 @@ into the manifest, the final shoot) are Phases 5b and 6a's. Its Done when stands
 1. **F1's reading** of the ten lines: right as written?
 2. **The group assignments** of F1. Recommended: as listed.
 3. **A castle under the sun**, if Phase 5b finds no flag that lights it. Recommended: keep
-   the nave as picked and park the castle on a hill in [the backlog](../backlog.md), since
+   the nave as picked and park the castle on a hill in [the backlog](../../backlog.md), since
    it needs the castle placed outdoors, which this plan excludes. Alternative: a plan for it
    and the `castle` slot left out of the README until then.
 
@@ -1345,7 +1348,7 @@ this lane; the lane merges main as main stands when Phase 6a starts.
 - **The hero's patch.** A patch in two states inside a tolerance that stands on its set and
   under its ceiling is a line in the log and a known limit, as D3 ruled. Phase 6a's third
   stop named the stepped pre-roll, which is not in the tree; it does not apply. The limit
-  is in [the backlog](../backlog.md) with the follow-up.
+  is in [the backlog](../../backlog.md) with the follow-up.
 - **A set that cannot be made stable (the one new rule).** A set whose largest pair breaks
   its ceiling was a stop for the architect. Tonight it is handled in the phase: the image
   ships, since no bar on the image failed; the entry's `tolerance` stays `null`; the entry
@@ -1556,7 +1559,7 @@ and the ceremony. The owner asked for a tag, so the close bumps the version (the
 the reviewer's call; "none" is not open). Then the orchestrator merges into main, runs
 G6's grep there, pushes, tags, and does G5's check. Outstanding `human` phases: none.
 
-Left for the owner, none of it blocking, all in [the backlog](../backlog.md) under "The
+Left for the owner, none of it blocking, all in [the backlog](../../backlog.md) under "The
 README's images after the unattended close": his corrections to Phase 5d's default picks;
 his glance at the page on GitHub; the dig's re-shoot once Plan 0105 is in main; the
 stepped pre-roll on the entries once Plan 0106's flag is in main, with any unjudged
@@ -1574,7 +1577,7 @@ question: the picture is the picked one.
 
 ### G9. Ruling 1: `lamp-cave`'s reading is noise, and its set of six was too small
 
-Read from [the log](logs/0093.md) (Phases 6c and 6d) and from `live/p6c/`, `live/p6d/` and
+Read from [the log](../logs/0093.md) (Phases 6c and 6d) and from `live/p6c/`, `live/p6d/` and
 the renders' own logs under `live/r/p6c/`.
 
 - **By the plan's measure it is on the noise side.** A wrong picture is a render of something
@@ -1607,7 +1610,7 @@ the renders' own logs under `live/r/p6c/`.
   pixel's source.
 - **Attribution is owed, not by this plan.** A settled start that prints the same counts and
   gives another picture is a finding about `--settled-start` and what a still may claim, not
-  about the README. [The backlog](../backlog.md) has it, dated today, beside D3's entry, with
+  about the README. [The backlog](../../backlog.md) has it, dated today, beside D3's entry, with
   the reading that would attribute it; the plan that takes the stepped pre-roll onto the
   entries (G8's list) reads it.
 
@@ -1724,7 +1727,7 @@ question: the pictures are the picked ones.
 
 ### G12. Ruling 1: `spider-walk`'s reading is noise, with a thinner margin than `lamp-cave`'s
 
-Read from [the log](logs/0093.md) (Phase 6d2), `live/p6d2/` and the frames themselves.
+Read from [the log](../logs/0093.md) (Phase 6d2), `live/p6d2/` and the frames themselves.
 
 - **By the plan's line it is on the noise side.** 0.004395 is 1/18 of the smallest wrong
   share (the loop one frame late, 0.079048) and 1/6 of the ceiling (0.026349); the largest
@@ -1745,7 +1748,7 @@ Read from [the log](logs/0093.md) (Phase 6d2), `live/p6d2/` and the frames thems
   the set had seen the furthest state; six renders had not.
 - **Not the settled start's finding.** The `clip` example starts no live queue and no
   settle (C3); the load at this hold was the night's lowest (load1 2.21). It is the clip
-  example's entry in [the backlog](../backlog.md), extended today. `lamp-cave`'s third
+  example's entry in [the backlog](../../backlog.md), extended today. `lamp-cave`'s third
   state (the third check, 0.001239 against the committed file, another PNG than r7's) goes
   to the settled start's entry.
 
@@ -1851,27 +1854,27 @@ rest.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the still flags and the idempotence reading | dev | done; readings in [the log](logs/0093.md) | `420bcf16` |
+| 1: the still flags and the idempotence reading | dev | done; readings in [the log](../logs/0093.md) | `420bcf16` |
 | 2: the manifest and the shoot script | dev | stopped: `--check` after the shoot over tolerance on `hero` (log) | `5bc46942` (wip) |
-| 2b: the settled start | dev | done; readings in [the log](logs/0093.md) | `66f3bd66` |
-| 2c: the check's quantity, read | dev | done: C 8, L 4; the hero 0.004; readings in [the log](logs/0093.md) | `f5f3632c` |
+| 2b: the settled start | dev | done; readings in [the log](../logs/0093.md) | `66f3bd66` |
+| 2c: the check's quantity, read | dev | done: C 8, L 4; the hero 0.004; readings in [the log](../logs/0093.md) | `f5f3632c` |
 | 2d: the check, the batches, the shoot | dev | stopped: `--check` after the shoot over tolerance on `spider-walk` (log) | `3ece99fb` (wip) |
 | 2e: the noise sets, read | dev | stopped: both loops' `--filter off` reads 0, under their noise; the hero 0.004 (log) | `bceef9a9` |
-| 2f: the tolerances, the worst frame, the shoot | dev | done; readings in [the log](logs/0093.md) | `30213ffa` |
-| 3: the image gate, fragments, CI | dev | done; readings in [the log](logs/0093.md) | `5b3fdd71` |
-| 4: candidates and contact sheets | dev | done; sheets under `target/shots/candidates/`; readings in [the log](logs/0093.md) | `19603a3f` |
+| 2f: the tolerances, the worst frame, the shoot | dev | done; readings in [the log](../logs/0093.md) | `30213ffa` |
+| 3: the image gate, fragments, CI | dev | done; readings in [the log](../logs/0093.md) | `5b3fdd71` |
+| 4: candidates and contact sheets | dev | done; sheets under `target/shots/candidates/`; readings in [the log](../logs/0093.md) | `19603a3f` |
 | 5: the owner picks | human | done 2026-11-26: seven picks, three re-shoots, no drop (F1, verbatim) | recorded by the architect |
-| 5b: the re-shoot round (dig, walkers, castle) | dev | done but walkers 4 (settled start fails near the crystals); no sun reaches the nave; the default body is the spider; page and readings in [the log](logs/0093.md) | `383fb994` |
+| 5b: the re-shoot round (dig, walkers, castle) | dev | done but walkers 4 (settled start fails near the crystals); no sun reaches the nave; the default body is the spider; page and readings in [the log](../logs/0093.md) | `383fb994` |
 | 5c: the owner confirms the three | human | replaced by 5d (G4) | |
-| 6a: main merged and the final shoot (G7) | dev | done: main `cbedce57` merged at `3c3e82e2` (two conflicts, both sides kept); 12 of 12 shot in one 272 s hold; both bars hold on the final frames; no flag replaced; readings in [the log](logs/0093.md) | `e485b931` |
-| 6: the rewrite | dev | done but three clauses: the `svet-world` fence not run by a doctest (no `crates/` edit on this track; run outside the tree), the old `hero.png` and GIFs not removed (in `frozen`, Phase 6c owns the manifest), the E1 and E4 commands not run (no GPU); readings in [the log](logs/0093.md) | `59864b55` |
-| 6b: a minimal window as the second example | dev | done: `crates/svet-app/examples/minimal_window.rs`, 60 lines neither blank nor comment (66 with blanks), span 30; headless gpu test and README byte-equality test; no resize handling; `scripts/test-changed.test.mjs` assertion moved (svet-app now a dev-dependent of svet-world); readings in [the log](logs/0093.md) | `dda39537` |
+| 6a: main merged and the final shoot (G7) | dev | done: main `cbedce57` merged at `3c3e82e2` (two conflicts, both sides kept); 12 of 12 shot in one 272 s hold; both bars hold on the final frames; no flag replaced; readings in [the log](../logs/0093.md) | `e485b931` |
+| 6: the rewrite | dev | done but three clauses: the `svet-world` fence not run by a doctest (no `crates/` edit on this track; run outside the tree), the old `hero.png` and GIFs not removed (in `frozen`, Phase 6c owns the manifest), the E1 and E4 commands not run (no GPU); readings in [the log](../logs/0093.md) | `59864b55` |
+| 6b: a minimal window as the second example | dev | done: `crates/svet-app/examples/minimal_window.rs`, 60 lines neither blank nor comment (66 with blanks), span 30; headless gpu test and README byte-equality test; no resize handling; `scripts/test-changed.test.mjs` assertion moved (svet-app now a dev-dependent of svet-world); readings in [the log](../logs/0093.md) | `dda39537` |
 | 7: the README on GitHub | none | no phase (owner, 2026-11-26, G5): the orchestrator's check after the push | |
 | 5d: the three picks by the bars, the dig's flash read (replaces 5c) | dev | done: dig 4, walkers 6 (the spider), castle 2; the dig a still of frame 96 by G3's rule; `walkers` and `dig` `--print` differ from the legend line in `--still-at` too (log) | `7e1a79d2` |
-| 6c: the noise sets and the tolerances | dev | done: 76 renders in four holds (1798 s, the longest 631 s), eleven tolerances, `walkers` unjudged (twice its largest pair over the ceiling; G2 read as covering it); `--check` exit 0; files beyond the list: the image gate's seeded fixture and its README; readings in [the log](logs/0093.md) | `23871869` |
-| 6d: the tip | dev | stopped: the second `--check` exits 1, `lamp-cave` 0.002345 over its 0 (log); Phase 6's owed doctest item (`29fee52d`, the window fence marked `rust ignore` and `readme_example.rs` with it, beyond the item's file) and old images removed (`150ad734`); README commands headless exit 0; no draft; gate tier 1464 passed, 1128 s; readings in [the log](logs/0093.md) | committed with this row (wip) |
-| 6d2: `lamp-cave`'s set read again, the third check | dev | stopped: the third `--check` exits 1, `spider-walk` 0.004395 over its 0.004 (log); thirteen `lamp-cave` renders, two groups (12 and r7), largest pair 0.002345, tolerance 0.005 (G10); `dig` and `chapel` 0; readings in [the log](logs/0093.md) | committed with this row (wip) |
-| 6d3: every set takes the checks' renders, the final check (closes 6d) | dev | done: eleven tolerances by G13 (hero 0.02, hall 0.003, canopy 0.006, skylight 0.006, spider-walk 0.01, castle 0.003, hud 0.03; lamp-cave, walker-walk, dig, chapel unchanged), `walkers` unjudged; final `--check` exit 0, no entry over, one 275 s hold; readings in [the log](logs/0093.md) | committed with this row |
+| 6c: the noise sets and the tolerances | dev | done: 76 renders in four holds (1798 s, the longest 631 s), eleven tolerances, `walkers` unjudged (twice its largest pair over the ceiling; G2 read as covering it); `--check` exit 0; files beyond the list: the image gate's seeded fixture and its README; readings in [the log](../logs/0093.md) | `23871869` |
+| 6d: the tip | dev | stopped: the second `--check` exits 1, `lamp-cave` 0.002345 over its 0 (log); Phase 6's owed doctest item (`29fee52d`, the window fence marked `rust ignore` and `readme_example.rs` with it, beyond the item's file) and old images removed (`150ad734`); README commands headless exit 0; no draft; gate tier 1464 passed, 1128 s; readings in [the log](../logs/0093.md) | committed with this row (wip) |
+| 6d2: `lamp-cave`'s set read again, the third check | dev | stopped: the third `--check` exits 1, `spider-walk` 0.004395 over its 0.004 (log); thirteen `lamp-cave` renders, two groups (12 and r7), largest pair 0.002345, tolerance 0.005 (G10); `dig` and `chapel` 0; readings in [the log](../logs/0093.md) | committed with this row (wip) |
+| 6d3: every set takes the checks' renders, the final check (closes 6d) | dev | done: eleven tolerances by G13 (hero 0.02, hall 0.003, canopy 0.006, skylight 0.006, spider-walk 0.01, castle 0.003, hud 0.03; lamp-cave, walker-walk, dig, chapel unchanged), `walkers` unjudged; final `--check` exit 0, no entry over, one 275 s hold; readings in [the log](../logs/0093.md) | committed with this row |
 
 ### Notes
 
@@ -1989,3 +1992,36 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 - Plan 0091's close adds the `profiler` entry to the manifest and the HUD group's second image.
 - Plan 0094 (Plan 0086's grain follow-up) re-shoots `canopy` and `hero` with one command.
+
+## Close review (architect, fresh session, 2026-11-27)
+
+Closed clean at v0.79.1: no blocker and no major; what the review found is in
+[the backlog](../../backlog.md) under "The README's images after the unattended close".
+
+- **The gate tier, run by the review:** 1464 passed, 247 skipped, 1038.7 s, loaded (the
+  reading is in `docs/nfr.md` section 7). Clippy, fmt, the doctests (the README's fence
+  runs; the window fence is ignored), `cargo deny`, the script tests and every doc gate
+  exit 0 on the bumped tree.
+- **The README against W1 to W9:** holds. The longest prose sentence is 21 words (the
+  licence's standard paragraph aside), the opening 84 words, no bullet over 12 words, at
+  most 77 words between two images, no internal numbering. Every flag is a row of
+  `docs/flythrough.md`; the 8.3 ms figure is the forest's wall p50 row of `docs/nfr.md`
+  section 2. No claim read against the code is false; two say a little more than it.
+- **The dig as a still (G3):** accepted. The rule read a slow decay after the dig as a
+  flash, since two renders were identical and any excess counted. The still is the
+  cautious arm and the caption says what it is. What it shows is a near-black frame; that
+  is the owner's pick as he worded it, and the backlog names the fallback.
+- **The window fence as `rust ignore` (G11):** accepted; `readme_example.rs` asserts the
+  fence byte-equal to the example's span, and the headless test runs the example.
+- **`hero.rs`'s default path, the settled start's light states, the loaded readings:**
+  accepted as backlog entries. The tolerances were read under load, which widens a noise
+  set and never narrows it; the README's speed figure is Plan 0099's quiet reading.
+- **`walkers` unjudged:** accepted at the close. Its picture is gated in size, manifest
+  and alt text, and `--check` renders it; the backlog says what would judge it.
+- **The level:** a patch. No crate's public API changed; "none" was not open (G8).
+- **The scrub (G6):** done before the status flip; the gate prints nothing. ADR-0071 held
+  no mention: its hits were another project's handle with the same first letters, which
+  the pattern given to the orchestrator leaves alone. ADR-0077 carries a dated line.
+- **`--pre-roll-stepped` was in the tree at the final shoot** (main `cbedce57`), though G2
+  was ruled before that merge; the entries were shot without it, as ruled. The backlog
+  marks that follow-up ready.

@@ -34,7 +34,7 @@ wants to see. The look plans (0086's fixes, 0081's detail layer, 0090's calibrat
 M10 sky and water plans) are judged by the owner's eye in the window, so that loop is the
 plans' pace.
 
-Bonsai registers each shader for hot reload (`external/bonsai_stdlib/src/shader.cpp`,
+Another voxel engine registers each shader for hot reload (its standard library's `shader.cpp`,
 `RegisterShaderForHotReload`) and recompiles it when its file changes. Our fly-through already
 has the pattern for a different file: the model viewer polls the `.rig` and the `.vox` mtimes
 and rebuilds on a change, keeping the last error until one succeeds (`apps/flythrough/src/

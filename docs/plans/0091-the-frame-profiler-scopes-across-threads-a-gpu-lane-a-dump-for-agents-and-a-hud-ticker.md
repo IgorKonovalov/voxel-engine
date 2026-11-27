@@ -45,8 +45,8 @@ every load), the sync's `alloc` stage (p99 7.4 to 8.8 ms, a perf profile named `
 `BufferViewMut::drop` at about 3 % each), the RTX's submits under their slice (a lap on the
 dispatch), the first-block fade's CPU under `chain`, the queue step's `filter` cost, the loading
 frames' stutter (a pre-roll bake step of 70 to 140 ms), and the spider mover's tick at twice
-its guess (a profile of `Walkers::tick` at 64 spiders). The Bonsai comparison of 2026-11-19
-(`docs/backlog.md`, "Ideas from Bonsai") showed the shape that answers them: per-thread scope
+its guess (a profile of `Walkers::tick` at 64 spiders). The comparison with another voxel engine of 2026-11-19
+(`docs/backlog.md`, "Ideas from another voxel engine") showed the shape that answers them: per-thread scope
 trees per frame, a frame ticker with click-to-freeze, a hot-function list, a jobs view, an
 allocation count on the status bar, and `WARN_TIMED_FUNCTION` for a scope with a budget.
 
