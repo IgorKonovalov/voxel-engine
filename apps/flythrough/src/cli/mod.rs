@@ -85,11 +85,11 @@
 //! the world sees each cavern's far wall through the rock; `X` cycles the three, and the
 //! autopilot never changes it); `--census` prints the world's brick census (`World::brick_census`) on exit,
 //! after any bench; `--sync-budget` sets the mirror's upload bytes per frame and `--sync-ms` its
-//! upload time per frame (default none; 0 is none); `--workers N` sets the streamer's
+//! sync time per frame on a streamed world (default 6, ADR-0089; 0 is none); `--workers N` sets the streamer's
 //! generation workers (default half the logical cores, at least 1); `--mirror-pack
 //! inline|workers` packs a streamed world's new mirror records on the render thread or copies
 //! them from the stream workers' slot images (ADR-0056; `U` flips it, the banner's and the
-//! HUD's `mirror pack inline` row name it; default `inline`); `--mirror-budget`
+//! HUD's `mirror pack workers` row name it; default `workers`); `--mirror-budget`
 //! sets the VRAM the mirror reserves for its pool, masks and records at startup (ADR-0013;
 //! default 3072 MiB streamed, and on the level what its bricks, the dig headroom and its chunks
 //! need, with records for the residency's ball when streaming), and while streaming the full
@@ -783,13 +783,13 @@ pub struct Args {
     /// and exit 0.
     pub library: bool,
     pub(crate) sync_budget: u64,
-    /// `--sync-ms`: the mirror's upload time per frame; `None` (the default, or `--sync-ms 0`)
-    /// for no limit.
+    /// `--sync-ms`: the streamed mirror's sync time per frame, 6 ms by default
+    /// (`crate::streaming::SYNC_MS`); `None` (`--sync-ms 0`) for no limit.
     pub(crate) sync_time: Option<std::time::Duration>,
     /// `--workers`: the streamer's generation workers; `None` for `setup::default_workers`.
     pub(crate) workers: Option<usize>,
     /// `--mirror-pack`: where a streamed world's new mirror records are packed, on the render
-    /// thread or from the stream workers' slot images (ADR-0056); `inline` by default.
+    /// thread or from the stream workers' slot images (ADR-0056); `workers` by default.
     pub(crate) mirror_pack: svet_render::Packing,
     /// `--mirror-budget`: the mirror's VRAM reservation in bytes.
     pub(crate) mirror_budget: Option<u64>,

@@ -62,21 +62,21 @@ fn the_workers_flag_parses_and_refuses_zero() {
     assert!(parse_args_from(argv(&["--workers"])).is_err());
 }
 
-/// `--sync-ms MS` sets the mirror's upload time per frame (default none); `--sync-ms 0`
-/// is no time budget; a non-number or a missing value is refused. The banner's row names the
-/// budget, or none.
+/// `--sync-ms MS` sets the streamed mirror's sync time per frame (default 6 ms, ADR-0089);
+/// `--sync-ms 0` is no time budget; a non-number or a missing value is refused. The banner's
+/// row names the budget, or none.
 #[test]
 fn the_sync_ms_flag_parses_and_zero_is_no_budget() {
     let ms = std::time::Duration::from_millis;
     let a = parse_args_from(argv(&[])).expect("no flags parse");
-    assert_eq!(a.sync_time, None);
-    assert_eq!(a.render_settings().build.sync_budget_time, None);
-    let a = parse_args_from(argv(&["--sync-ms", "5"])).expect("--sync-ms 5 parses");
-    assert_eq!(a.sync_time, Some(ms(5)));
+    assert_eq!(a.sync_time, Some(ms(6)));
     assert_eq!(
         crate::hud::mirror_sync_row(a.sync_time),
-        "mirror sync 5 ms a frame"
+        "mirror sync 6 ms a frame"
     );
+    assert_eq!(a.render_settings().build.sync_budget_time, Some(ms(6)));
+    let a = parse_args_from(argv(&["--sync-ms", "5"])).expect("--sync-ms 5 parses");
+    assert_eq!(a.sync_time, Some(ms(5)));
     let a = parse_args_from(argv(&["--sync-ms", "0"])).expect("--sync-ms 0 parses");
     assert_eq!(a.sync_time, None);
     assert_eq!(crate::hud::mirror_sync_row(None), "mirror sync unbudgeted");

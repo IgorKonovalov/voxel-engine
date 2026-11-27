@@ -6,13 +6,17 @@ use crate::test_support::argv;
 use crate::toggles::TOGGLES;
 use svet_render::Packing;
 
-/// `--mirror-pack` takes `inline`, the default, and `workers`, and refuses another word; the
-/// modes start at the flag's packing and the HUD's row and the banner's read
-/// `mirror pack inline` and `mirror pack workers`; `U` flips the packing back and forth.
+/// `--mirror-pack` takes `inline` and `workers`, the default (ADR-0089), and refuses another
+/// word; the modes start at the flag's packing, `workers` with no flag, and the HUD's row and
+/// the banner's read `mirror pack inline` and `mirror pack workers`; `U` flips the packing
+/// back and forth.
 #[test]
 fn the_mirror_pack_flag_names_both_packings() {
     let pack = |v: &[&str]| parse_args_from(argv(v)).expect("parses").mirror_pack;
-    assert_eq!(pack(&[]), Packing::Inline);
+    assert_eq!(pack(&[]), Packing::Workers);
+    assert_eq!(Packing::default(), Packing::Workers);
+    let m = parse_args_from(argv(&[])).unwrap().start_modes(0.0);
+    assert_eq!(m.row(hud::HudRow::Mirror), "mirror pack workers");
     assert_eq!(pack(&["--mirror-pack", "inline"]), Packing::Inline);
     assert_eq!(pack(&["--mirror-pack", "workers"]), Packing::Workers);
     assert!(parse_args_from(argv(&["--mirror-pack", "render"])).is_err());

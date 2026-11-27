@@ -269,7 +269,7 @@ pub fn mirror_pack_row(p: svet_render::Packing) -> String {
 }
 
 /// The streamed mirror's sync budget in the start-up banner (`--sync-ms`):
-/// `mirror sync 6 ms a frame`, or `mirror sync unbudgeted` with none (the default).
+/// `mirror sync 6 ms a frame`, or `mirror sync unbudgeted` under `--sync-ms 0`.
 pub fn mirror_sync_row(t: Option<std::time::Duration>) -> String {
     match t {
         Some(d) => format!("mirror sync {} ms a frame", d.as_millis()),
