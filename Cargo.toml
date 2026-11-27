@@ -25,7 +25,7 @@ default-members = [
 [workspace.package]
 # Single source of truth for the engine version. Member crates inherit it via
 # `version.workspace = true`; bumped once per plan at the architect close.
-version = "0.80.0"
+version = "0.82.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/IgorKonovalov/svet"
@@ -68,16 +68,16 @@ pollster = "=1.0.1"
 sofar = { version = "=0.4.0", default-features = false }
 # Engine crates other engine crates depend on. The exact version tracks
 # [workspace.package].version above; bump both together.
-svet-app = { path = "crates/svet-app", version = "=0.80.0" }
-svet-assets = { path = "crates/svet-assets", version = "=0.80.0" }
-svet-audio = { path = "crates/svet-audio", version = "=0.80.0" }
-svet-entity = { path = "crates/svet-entity", version = "=0.80.0" }
-svet-net = { path = "crates/svet-net", version = "=0.80.0" }
-svet-render = { path = "crates/svet-render", version = "=0.80.0" }
-svet-sim = { path = "crates/svet-sim", version = "=0.80.0" }
+svet-app = { path = "crates/svet-app", version = "=0.82.0" }
+svet-assets = { path = "crates/svet-assets", version = "=0.82.0" }
+svet-audio = { path = "crates/svet-audio", version = "=0.82.0" }
+svet-entity = { path = "crates/svet-entity", version = "=0.82.0" }
+svet-net = { path = "crates/svet-net", version = "=0.82.0" }
+svet-render = { path = "crates/svet-render", version = "=0.82.0" }
+svet-sim = { path = "crates/svet-sim", version = "=0.82.0" }
 # Without its default `host` feature, so a guest takes only the bindings (`guest`).
-svet-script-wasm = { path = "crates/svet-script-wasm", version = "=0.80.0", default-features = false }
-svet-world = { path = "crates/svet-world", version = "=0.80.0" }
+svet-script-wasm = { path = "crates/svet-script-wasm", version = "=0.82.0", default-features = false }
+svet-world = { path = "crates/svet-world", version = "=0.82.0" }
 # The Windows readers of the tester's system report and the fly-through's peak memory: the OS
 # version, the processor and memory facts, the registry and the process's memory counters. A
 # Windows-only dependency, at the version the lockfile already carries.

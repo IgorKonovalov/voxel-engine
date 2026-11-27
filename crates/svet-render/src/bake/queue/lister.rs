@@ -7,7 +7,7 @@
 //! message the opening had read when it sent the candidate: a change in a later message stales
 //! it as it would stale a job listed in its own step.
 
-use super::list::{Held, list_chunk};
+use super::list::{Held, list_chunk_read, not_held_full};
 use super::*;
 use std::collections::VecDeque;
 use std::sync::mpsc;
@@ -89,9 +89,9 @@ struct Req {
     held: Held,
 }
 
-/// One listing back from the pool: the chunk's faces and whether its own masks were prepared,
-/// or the text of the panic that ended it.
-type Done = (u64, [i32; 3], Result<(ChunkFaces, bool), String>);
+/// One listing back from the pool: the chunk's faces, whether its own masks were prepared and
+/// the neighbours it read absent ([`list_chunk_read`]), or the text of the panic that ended it.
+type Done = (u64, [i32; 3], Result<((ChunkFaces, bool), u8), String>);
 
 /// The threads the pool keeps: the logical cores less the stream workers' half and the render
 /// and bake threads, at least one, so the process runs no more busy threads than it has cores.
@@ -128,7 +128,7 @@ impl Lister {
                             let Ok(r) = req else { return };
                             let listed =
                                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                    list_chunk(
+                                    list_chunk_read(
                                         &world,
                                         r.coord,
                                         &r.classes,
@@ -179,6 +179,8 @@ pub(in crate::bake) struct Listing {
     audit: Option<usize>,
     /// Its faces, once back and not yet pushed (a box waited).
     listed: Option<(ChunkFaces, bool)>,
+    /// The neighbours its listing read absent, a bit per face, once back.
+    absent: u8,
 }
 
 impl BakeQueue {
@@ -305,6 +307,7 @@ impl BakeQueue {
                     missed: self.rule_missed_checked.get(&c).copied(),
                     audit: self.audit_checked.get(&c).copied(),
                     listed: None,
+                    absent: 0,
                 },
             );
         }
@@ -323,7 +326,7 @@ impl BakeQueue {
             let listed = listed.map_err(|m| BakeError::Thread(format!("a listing thread: {m}")))?;
             // A listing an edit's box dropped, or one sent again since, is not this one.
             if let Some(l) = self.listing.get_mut(&c).filter(|l| l.seq == seq) {
-                l.listed = Some(listed);
+                (l.listed, l.absent) = (Some(listed.0), listed.1);
             }
         }
         Ok(())
@@ -387,6 +390,15 @@ impl BakeQueue {
             // now the listing is dropped and the chunk stays a candidate: a later opening lists
             // it by a job.
             if l.ruled && !self.rule_holds(gpu, ChunkCoord(c), gpu.light_radius()) {
+                continue;
+            }
+            // A ruled record notes open the faces whose neighbour this step's shadow does not
+            // hold full, and is listed again when one arrives ([`BakeQueue::push_listed`]). The
+            // pool read the neighbours from the world's store a step or more before: one it read
+            // absent (its faces listed as against rock) that this shadow holds full arrived, or
+            // left the store, in between, and no arrival would list the record again. Such a
+            // listing is dropped, as above.
+            if l.ruled && l.absent & !not_held_full(gpu, ChunkCoord(c)) != 0 {
                 continue;
             }
             for (on, set) in [

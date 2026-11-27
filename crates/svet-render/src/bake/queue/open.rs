@@ -23,7 +23,6 @@ impl BakeQueue {
         let order = self.order;
         self.score_and_census(run, store, view, eye);
         let steps = self.steps;
-        let recent = |at: Option<&u64>| at.is_some_and(|&at| steps - at < QUEUE_RECHECK);
         let checks = if view.samples.is_some() {
             QUEUE_CHECKS_UNSLICED
         } else {
@@ -36,8 +35,9 @@ impl BakeQueue {
         // can bake comes first; those whose reach or lights are not ready (a streamed world's
         // edge) cannot starve the refinement behind them, each class counting its own checks.
         // Under the score's refine weight the class is in the key: one count of checks runs
-        // over the sorted list, and a candidate found blocked is skipped for QUEUE_RECHECK
-        // steps, so the next openings check the candidates behind it.
+        // over the sorted list, and a candidate found blocked is skipped until what blocked it
+        // changes or QUEUE_RECHECK steps pass, so the next openings check the candidates
+        // behind it.
         let tiered = !matches!(
             order,
             QueueOrder::Score {
@@ -115,25 +115,34 @@ impl BakeQueue {
                 }
             }
             if tiered {
-                if checked[usize::from(class)] >= checks || recent(self.blocked.get(&c)) {
+                if checked[usize::from(class)] >= checks || self.blocked.recent(&c, steps) {
                     continue;
                 }
                 checked[usize::from(class)] += 1;
             } else {
-                if recent(self.blocked.get(&c)) {
+                if self.blocked.recent(&c, steps) {
                     continue;
                 }
                 checked[0] += 1;
             }
             let coord = ChunkCoord(c);
-            let Some((partial, provisional)) = self.bakeable(run, coord, lr, view, eye) else {
-                reach += 1;
-                self.blocked.insert(c, self.steps);
-                continue;
+            let (partial, provisional) = match self.bakeable(run, coord, lr, view, eye) {
+                Ok(v) => v,
+                Err(by) => {
+                    reach += 1;
+                    self.blocked.insert(c, Blocked { at: steps, by });
+                    continue;
+                }
             };
             if !gpu.lights_ready_near(coord, lr) {
                 lights += 1;
-                self.blocked.insert(c, self.steps);
+                self.blocked.insert(
+                    c,
+                    Blocked {
+                        at: steps,
+                        by: Blocker::Lights,
+                    },
+                );
                 continue;
             }
             self.blocked.remove(&c);
@@ -328,7 +337,6 @@ impl BakeQueue {
         self.laps.lap(S_CANDIDATES);
         let census = self.census_every_opening || std::mem::take(&mut self.census_due);
         let steps = self.steps;
-        let recent = |at: Option<&u64>| at.is_some_and(|&at| steps - at < QUEUE_RECHECK);
         if census {
             let t = stopwatch();
             self.entered
@@ -357,7 +365,7 @@ impl BakeQueue {
             self.view_reach_census(run, eye, view, &cands);
             self.stats.unbaked = cands
                 .iter()
-                .filter(|k| k.class == 0 && !recent(self.blocked.get(&k.c)))
+                .filter(|k| k.class == 0 && !self.blocked.recent(&k.c, steps))
                 .count() as u64;
             self.stats.census_ms = seconds_since(t) * 1e3;
         }
@@ -404,7 +412,7 @@ impl BakeQueue {
 
     /// Withdraws the passed jobs ([`BakeQueue::withdraw`]) when a candidate in the near shell or
     /// the view cone is ready: up to the opening's count of checks of those candidates, nearest
-    /// first, each not checked in the last [`QUEUE_RECHECK`] steps. A step with a sample count
+    /// first, each not skipped as blocked ([`BlockedMarks::recent`]). A step with a sample count
     /// (the pre-roll) withdraws nothing: the camera has passed nothing yet, and the coarse pass
     /// opens chunks in every direction, so withdrawing there takes back most of what it opens.
     pub(in crate::bake) fn withdraw_passed(
@@ -461,22 +469,20 @@ impl BakeQueue {
             if checked >= checks {
                 break;
             }
-            if self
-                .blocked
-                .get(&c)
-                .is_some_and(|&at| steps - at < QUEUE_RECHECK)
-            {
+            if self.blocked.recent(&c, steps) {
                 continue;
             }
             checked += 1;
             let coord = ChunkCoord(c);
-            if self.bakeable(run, coord, lr, view, eye).is_some()
-                && gpu.lights_ready_near(coord, lr)
-            {
-                ready = true;
-                break;
-            }
-            self.blocked.insert(c, steps);
+            let by = match self.bakeable(run, coord, lr, view, eye) {
+                Ok(_) if gpu.lights_ready_near(coord, lr) => {
+                    ready = true;
+                    break;
+                }
+                Ok(_) => Blocker::Lights,
+                Err(by) => by,
+            };
+            self.blocked.insert(c, Blocked { at: steps, by });
         }
         if !ready {
             return;

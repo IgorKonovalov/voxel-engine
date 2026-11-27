@@ -112,7 +112,13 @@ fn the_reads_count_a_box_in_flight() {
     let beside = [-1, 0, 0];
     for r in [&mut held, &mut eager] {
         r.queue.faceless.insert(beside);
-        r.queue.blocked.insert(beside, Default::default());
+        r.queue.blocked.insert(
+            beside,
+            Blocked {
+                at: 0,
+                by: Blocker::Lights,
+            },
+        );
     }
     let base = held.half.frame.max(eager.half.frame).max(6) - 6;
     next_message_is(&mut held, base + 7);

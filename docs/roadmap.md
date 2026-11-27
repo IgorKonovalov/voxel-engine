@@ -918,6 +918,28 @@ against the baked store: no probe or store term takes sun or sky light.
   it for two frames (seen by no one on purpose); blind, the owner read the binary of the day
   before as flashing slightly less and accepted the closing one, cause not found; the forest
   at depth is asserted by name on the RTX 3080 Laptop alone. All four are in the backlog.
+- **The start on a streamed world** ([Plan 0109](plans/done/0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md),
+  closed 2026-11-27, v0.81.0; no ADR): the live queue skipped a chunk it found not ready for 30
+  steps whatever happened to what blocked it, so every streamed start waited 25 steps or more
+  for nothing. A blocked mark now names its blocker and drops when the mirror's notes name it
+  changed; the switched start's pre-roll reads 5 to 10 steps against 32 to 97 (lavapipe), and
+  the pre-roll waits for a near chunk's block, not for the catch-up it is owed. The owner at
+  his window kept today's start: no bound, and final light before the first frame "not
+  needed". **Left open** (the backlog): a due catch-up waits behind every ready first bake;
+  the mirror's notes cost the render thread a whole read at a window move; the step's cost on
+  a streamed start is attributed only in part.
+- **The start-up readings** ([Plan 0108](plans/done/0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md),
+  closed 2026-11-27, v0.82.0; no ADR): `--pre-roll full|near|off` ends the light pre-roll at
+  the near chunks and leaves the coarse pass to the live queue behind the first frame. The
+  owner at his window picked `near` where the world is streamed and `full` in a bounded scene
+  ("better to avoid patches and wait longer"); headless runs keep `full`, so no golden moved.
+  The forest's first frame comes at 1.2 to 1.9 s where it came at 6.3 to 9.0. The start-up
+  pipelines build on scoped threads (`Frame::with_build_threads`): both drivers compile in
+  parallel, and a cold start reads 37 s against 59 on the RTX and 12 s against 17 on the
+  RENOIR at 4 threads. The 3 s to the first frame stays a proposal: the cave, the RENOIR's
+  hall and every cold start miss it. **Left open** (the backlog): a census of the pipelines a
+  default start needs, the default-off arms built behind the first frame, the window's start
+  2.5 s behind the headless one.
 - **A surface detail layer** ([Plan 0081](plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
   drafted 2026-11-16, awaits the owner's go; ADR-0063 proposed): grass, moss, strands,
   fungus caps, flowers, pebbles and snow tufts as a procedural shell marched in the hit pass

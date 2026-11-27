@@ -89,7 +89,7 @@ impl BakeQueue {
 
     /// After a sliced opening that pushed a full job on a chunk with no block: counts it in
     /// [`QueueStats::starved_openings`] if, among up to `checks` candidates of the order from
-    /// `next` not found blocked in the last [`QUEUE_RECHECK`] steps, one with no block outside
+    /// `next` not skipped as blocked ([`BlockedMarks::recent`]), one with no block outside
     /// [`BakeQueue::full_first`] is ready and was left unpushed. Nothing with no coarse pass,
     /// or with every blank chunk's first pass coarse.
     pub(in crate::bake) fn note_starved(
@@ -117,16 +117,13 @@ impl BakeQueue {
             if class != 0
                 || self.pool.get(&c) != Some(&(class, coarse))
                 || self.full_first_at(c, eye)
-                || self
-                    .blocked
-                    .get(&c)
-                    .is_some_and(|&at| steps - at < QUEUE_RECHECK)
+                || self.blocked.recent(&c, steps)
             {
                 continue;
             }
             looked += 1;
             let coord = ChunkCoord(c);
-            if self.bakeable(run, coord, lr, view, eye).is_some()
+            if self.bakeable(run, coord, lr, view, eye).is_ok()
                 && run.mirror.lights_ready_near(coord, lr)
             {
                 self.stats.starved_openings += 1;
@@ -204,14 +201,7 @@ impl BakeQueue {
             // Its faces were listed with each neighbour the store did not hold read as rock: the
             // neighbours the shadow does not hold full are noted, and the chunk is listed again
             // when one of them is (ADR-0085).
-            let open = (0..6).fold(0u8, |m, f| {
-                let n = ChunkCoord(neighbour(coord, f));
-                if gpu.is_mirrored(n) && !gpu.is_lod(n) {
-                    m
-                } else {
-                    m | 1 << f
-                }
-            });
+            let open = not_held_full(gpu, coord);
             if open != 0 {
                 self.zeroed_open.insert(c, open);
             }
@@ -321,18 +311,30 @@ pub(in crate::bake) fn list_chunk(
     own: Option<&PreparedMasks>,
     held: &Held,
 ) -> (ChunkFaces, bool) {
+    list_chunk_read(world, coord, classes, own, held).0
+}
+
+/// [`list_chunk`] and the neighbours it read absent (neither held nor in the store, so read as
+/// rock), a bit per face: the listing pool's, whose push reads the shadow a step later
+/// ([`BakeQueue::take_listed`]).
+pub(in crate::bake) fn list_chunk_read(
+    world: &World,
+    coord: ChunkCoord,
+    classes: &[u8],
+    own: Option<&PreparedMasks>,
+    held: &Held,
+) -> ((ChunkFaces, bool), u8) {
     {
         let Some(own) = own else {
-            return (
-                list_world_chunk(world, coord, classes).unwrap_or_default(),
-                false,
-            );
+            let (faces, absent) = list_world_chunk_read(world, coord, classes).unwrap_or_default();
+            return ((faces, false), absent);
         };
         let store = world.store();
         let held: [_; 6] = std::array::from_fn(|f| match &held[f] {
             Some(m) => Some(Err(m.clone())),
             None => store.get(ChunkCoord(neighbour(coord, f))).map(Ok),
         });
+        let absent = (0..6).fold(0u8, |m, f| m | u8::from(held[f].is_none()) << f);
         let locks: Vec<_> = held
             .iter()
             .map(|h| match h {
@@ -349,6 +351,19 @@ pub(in crate::bake) fn list_chunk(
                 Err(m) => m.masks.get(slot),
             })
         });
-        (faces, true)
+        ((faces, true), absent)
     }
+}
+
+/// The faces of `coord` whose neighbour `gpu` does not hold full (absent or LOD), a bit per face:
+/// where a ruled record's border waits for an arrival ([`BakeQueue::zeroed_open`]).
+pub(in crate::bake) fn not_held_full(gpu: &Shadow, coord: ChunkCoord) -> u8 {
+    (0..6).fold(0u8, |m, f| {
+        let n = ChunkCoord(neighbour(coord, f));
+        if gpu.is_mirrored(n) && !gpu.is_lod(n) {
+            m
+        } else {
+            m | 1 << f
+        }
+    })
 }

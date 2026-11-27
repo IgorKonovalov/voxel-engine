@@ -39,6 +39,8 @@ pub(crate) struct Books {
     pub(crate) blocked: HashSet<[i32; 3]>,
     /// Chunks in a job, with dig bricks, in ring 3, or due a refinement or a catch-up.
     pub(crate) busy: HashSet<[i32; 3]>,
+    /// Chunks whose only work is their catch-up ([`BakeQueue::only_catching_up`]).
+    pub(crate) catching_up: HashSet<[i32; 3]>,
     /// The store's counts with no GPU words read ([`Store::stats`]).
     pub(crate) store_stats: StoreStats,
     /// The words of the blocks in the columns under the step's eye, its chunk's summary and
@@ -58,14 +60,20 @@ impl Books {
     /// The snapshot of `q` and `store` after the step that read `frame`, with the words under
     /// `eye` (voxels).
     pub(crate) fn of(q: &BakeQueue, store: &Store, frame: u64, eye: [f32; 3]) -> Self {
-        let busy =
-            q.lp.chunks()
-                .map(|c| c.0)
-                .chain(q.digs.keys().copied())
-                .chain(q.reach.iter().copied())
-                .chain(q.partial_due.iter().copied())
-                .chain(q.provisional_due.iter().copied())
-                .collect();
+        let jobs: HashSet<[i32; 3]> = q.lp.chunks().map(|c| c.0).collect();
+        let catching_up = q
+            .provisional
+            .iter()
+            .copied()
+            .filter(|&c| q.only_catching_up(store, c, jobs.contains(&c)))
+            .collect();
+        let busy = jobs
+            .into_iter()
+            .chain(q.digs.keys().copied())
+            .chain(q.reach.iter().copied())
+            .chain(q.partial_due.iter().copied())
+            .chain(q.provisional_due.iter().copied())
+            .collect();
         let lesser = store
             .blocks
             .keys()
@@ -95,6 +103,7 @@ impl Books {
             sealed: q.sealed.held().collect(),
             blocked: q.blocked.keys().copied().collect(),
             busy,
+            catching_up,
             store_stats: store.stats(0, 0, 0),
             around,
             around_summary,
@@ -114,7 +123,8 @@ impl Books {
                 + self.faceless.len()
                 + self.sealed.len()
                 + self.blocked.len()
-                + self.busy.len())
+                + self.busy.len()
+                + self.catching_up.len())
                 * set
             + (self.ages.0.len() + self.ages.1.len()) * 4
             + self

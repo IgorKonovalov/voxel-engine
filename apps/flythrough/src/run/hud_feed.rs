@@ -430,7 +430,7 @@ pub(crate) fn write_queue_banner_row(out: &mut String, args: &Args, words: &str)
     }
     let _ = write!(
         out,
-        ", full-first {}, budget {}, missing light {}, reach {}, digs +{} ms{}, ring 3 {}, bake thread {}; {words} (Tab: the light queue page)",
+        ", full-first {}, budget {}, missing light {}, reach {}, digs +{} ms{}, ring 3 {}, pre-roll {}, bake thread {}; {words} (Tab: the light queue page)",
         FullFirstWords(args.full_first()),
         args.bake.budget,
         args.bake.missing_light.name(),
@@ -438,6 +438,7 @@ pub(crate) fn write_queue_banner_row(out: &mut String, args: &Args, words: &str)
         args.bake.edit_ms,
         StretchWords(args.bake.ring1_stretch, ", "),
         if args.bake.dig_reach { "on" } else { "off" },
+        args.pre_roll().name(),
         if args.bake_thread() { "on" } else { "off" },
     );
 }
@@ -600,6 +601,7 @@ impl Run {
                 self.queue.line_split_p50[1],
             ],
         );
+        let _ = write!(queue, "; pre-roll {}", args.pre_roll().name());
         queue.push_str(if args.bake_thread() {
             "; bake thread on"
         } else {

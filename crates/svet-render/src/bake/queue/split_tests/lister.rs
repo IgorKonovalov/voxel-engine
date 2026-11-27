@@ -427,6 +427,119 @@ fn a_pooled_ruled_chunk_is_listed_once_under_a_change_that_keeps_the_rule() {
     rig.queue.stop_lister();
 }
 
+/// The border rig of the rule's tests (`C`'s and `D`'s slabs, the partial reach) listing through
+/// the pool from a world of its own built alike: the rig and the pool's world. With `n_away`,
+/// [`super::rule::N`] is out of both stores and the mirror; the chunk it held.
+fn pooled_border_rig(n_away: bool) -> (Rig, Arc<World>, Chunk) {
+    use super::rule::{N, partial_rig, rock_world, slab_in_d, take_n};
+    let mut rig = partial_rig();
+    let pooled = Arc::new(rock_world([3, 3, 4]));
+    slab_in_d(&rig.world);
+    slab_in_d(&pooled);
+    let n = take_n(&rig.world);
+    take_n(&pooled);
+    if n_away {
+        rig.mirror.absent.insert(N);
+    } else {
+        rig.world.store().insert(ChunkCoord(N), n.clone());
+        pooled.store().insert(ChunkCoord(N), n.clone());
+    }
+    rig.queue
+        .start_lister(pooled.clone())
+        .expect("the pool's threads start");
+    (rig, pooled, n)
+}
+
+/// `N` put back in both stores and the mirror, named among the mirror's changes.
+fn n_arrives(rig: &mut Rig, pooled: &World, n: &Chunk) {
+    use super::rule::N;
+    rig.world.store().insert(ChunkCoord(N), n.clone());
+    pooled.store().insert(ChunkCoord(N), n.clone());
+    rig.mirror.absent.remove(&N);
+    rig.mirror.changed.push(ChunkCoord(N));
+}
+
+/// Steps until `C` holds a block and nothing is open, then eight steps more, each step followed
+/// by the wait for the listings it sent; `C`'s record against the zero record of its faces as a
+/// listing in the step reads the world now (lockstep's).
+fn settled_c_is_lockstep(rig: &mut Rig, what: &str) {
+    use super::rule::{C, jobs, settle, zero_of_c};
+    settle(rig, what);
+    for _ in 0..8 {
+        rig.step();
+        rig.queue.wait_listed();
+    }
+    settle(rig, what);
+    assert_eq!(jobs(rig), 0, "{what}: no job");
+    assert!(rig.queue.zeroed(ChunkCoord(C)), "{what}: C is zeroed");
+    let zero = zero_of_c(rig);
+    let words = rig.store.words.get(&C).expect("C's record");
+    let differ = words.iter().zip(&zero).filter(|(a, b)| a != b).count();
+    assert_eq!(
+        (words.len(), differ),
+        (zero.len(), 0),
+        "{what}: C's record is the zero record of its faces with N present (length, words that differ)"
+    );
+}
+
+/// The border of a ruled record under the bake thread, a neighbour arriving. `C` is ruled and
+/// listed by the pool with [`super::rule::N`] in neither store nor mirror (its faces listed with
+/// `N` read as rock). Before the step that pushes the listing, `N` arrives in the store and the
+/// mirror: the shadow that step reads holds `N` full, so the listing's border is not the one the
+/// record would note open. `C` settles with the zero record of its faces with `N` present, as
+/// lockstep gives.
+#[test]
+fn a_pooled_ruled_record_lists_the_border_of_a_neighbour_arriving_before_its_push() {
+    use super::rule::C;
+    let (mut rig, pooled, n) = pooled_border_rig(true);
+    rig.until("C in the pool's hands", |r| r.queue.in_listing(C));
+    assert_eq!(
+        rig.queue.listing_ruled(C),
+        Some(true),
+        "the opening ruled C"
+    );
+    rig.queue.wait_listed();
+    assert!(!rig.queue.zeroed(ChunkCoord(C)), "not pushed yet");
+
+    n_arrives(&mut rig, &pooled, &n);
+    settled_c_is_lockstep(&mut rig, "N arrived before the push");
+    rig.queue.stop_lister();
+}
+
+/// The border of a ruled record under the bake thread, a neighbour leaving. [`super::rule::N`]
+/// leaves the world's store while the mirror still holds it, and `C` is ruled and listed by the
+/// pool (its faces listed with `N` read as rock) and its listing taken while the shadow holds
+/// `N` full. The mirror lets `N` go a few steps on, and later `N` arrives again: `C` settles with
+/// the zero record of its faces with `N` present, as lockstep gives.
+#[test]
+fn a_pooled_ruled_record_lists_the_border_of_a_neighbour_that_left_the_store() {
+    use super::rule::{C, N, take_n};
+    let (mut rig, pooled, n) = pooled_border_rig(false);
+    take_n(&rig.world);
+    take_n(&pooled);
+    rig.until("C in the pool's hands", |r| r.queue.in_listing(C));
+    assert_eq!(
+        rig.queue.listing_ruled(C),
+        Some(true),
+        "the opening ruled C"
+    );
+    rig.queue.wait_listed();
+    for _ in 0..4 {
+        rig.step();
+        rig.queue.wait_listed();
+    }
+
+    rig.mirror.absent.insert(N);
+    rig.mirror.changed.push(ChunkCoord(N));
+    for _ in 0..4 {
+        rig.step();
+        rig.queue.wait_listed();
+    }
+    n_arrives(&mut rig, &pooled, &n);
+    settled_c_is_lockstep(&mut rig, "N left the store and arrived again");
+    rig.queue.stop_lister();
+}
+
 /// One step of [`slots_run`]: the samples of the submit it sent (0 for none), whether it was
 /// counted blocked, whether it was counted neither blocked nor sent, and the jobs open after it.
 #[derive(Debug, PartialEq)]
