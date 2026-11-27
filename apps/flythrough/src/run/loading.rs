@@ -17,7 +17,9 @@ use crate::now;
 use crate::run::hud_feed::HUD_SCALE;
 use crate::run::hud_lines::{band_census_line, field_line, field_pass_line};
 use crate::run::queue::{COARSE_PRE_ROLL_MS, PRE_ROLL_SAMPLES, queue_view_angles};
-use crate::run::{ARMS_UNITS, BUILD_UNITS, GfxPlan, Run, build_gfx};
+use crate::run::{
+    ARMS_SET, ARMS_UNITS, BUILD_UNITS, ENTITY_SET, GfxPlan, Run, build_gfx, timed_prepare,
+};
 use crate::setup::{Gfx, castle_banner, start_camera};
 use crate::streaming::NEAR_D2;
 use std::sync::Arc;
@@ -498,7 +500,9 @@ impl Run {
                 // A walker may be placed on any frame, so the entity pipelines are built
                 // before the first world frame, and the frame that draws the first part
                 // builds none.
-                gfx.frame.prepare_entities(&gpu.device);
+                timed_prepare(&gfx.frame, ENTITY_SET, || {
+                    gfx.frame.prepare_entities(&gpu.device)
+                });
                 diag(format_args!("entity pipelines built"));
                 loading.progress.next();
                 if self.light_arms_at_start() {
@@ -508,7 +512,9 @@ impl Run {
                 }
             }
             Stage::Arms(next) => {
-                gfx.frame.prepare_light_arms(&gpu.device);
+                timed_prepare(&gfx.frame, ARMS_SET, || {
+                    gfx.frame.prepare_light_arms(&gpu.device)
+                });
                 diag(format_args!("light pass arms built"));
                 loading.progress.next();
                 *next

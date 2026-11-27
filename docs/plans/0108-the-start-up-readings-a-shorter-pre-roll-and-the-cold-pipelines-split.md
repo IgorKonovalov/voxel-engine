@@ -1,6 +1,6 @@
 # 0108: The start-up readings: a shorter pre-roll, and the cold pipelines split
 
-> **Status:** in-progress (Phase 1 landed 2026-11-27; Phase 2, the owner's look, next). Approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
+> **Status:** in-progress (Phases 1 and 3 landed 2026-11-27; Phase 2, the owner's look, next; Phase 4 after it). Approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
 > [the review of 2026-11-26](../reviews/2026-11-26-work-off-the-render-thread.md) on the owner's
 > "all recommended" (its question 2: the pre-roll reading now as a chore beside Plan 0093, the
 > cold-pipeline split before the next tester archive), with no further interview; the guesses
@@ -343,9 +343,9 @@ Readings: [`logs/0108.md`](logs/0108.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: `--pre-roll`, and what the first frames show | dev | done; stop not met (forest: `near` about 5 s sooner on both adapters) | committed with this row |
+| 1: `--pre-roll`, and what the first frames show | dev | done; stop not met (forest: `near` about 5 s sooner on both adapters) | e6721462 |
 | 2: the owner looks at the start (skipped if 1 stops) | human | not started | |
-| 3: the cold pipelines on 1, 2 and 4 threads | dev | not started | |
+| 3: the cold pipelines on 1, 2 and 4 threads | dev | done, before Phase 2; line not met (N = 4 cuts the cold span 43 % RTX, 38 % RENOIR); stand-in N = 2 sooner | committed with this row |
 | 4: the picks written down | dev | not started | |
 
 ### Notes
@@ -359,6 +359,10 @@ each. Empty is fine.)_
 - Phase 1: the starts ran `--frames 8`, not 3: `first frame light:` is the census of the first opening after the pre-roll, which the bake thread reached at frame 1 to 4 on the forest and 18 to 43 on the hall; the hall's counts come from the stills' runs.
 - Phase 1: `load_stages` (run.json) not read: `--report` needs `--path` or `--queue-rule-reading`; the pre-roll's stage ms are the `bake queue:` line's work times.
 - Phase 1: stills in two passes; the sheets show the second, whose frame counts come from the first pass's own rate (the first landed at 0.74 to 0.81, 1.5 and 3.7 s on the RTX). The sheets are untracked under `live/`.
+- Phase 3: run before Phase 2 (the owner asleep; Phase 3 reads nothing of Phase 2's).
+- Phase 3: `gpu_frame`'s test builds the frame's start-up set only, not the entity set (with it, 11.9 s on lavapipe); it asserts 12 listed pipelines of the 13 a frame creates (the exposure pass's is built beside the table).
+- Phase 3: files beyond the list: `frame/marcher.rs` (one hit pipeline a job), `frame/mod.rs` (`Frame::with_build_threads`, `build_threads`, `pipeline_build_times`). The exposure, sky, FSR 2 and bake pipelines are not split.
+- Phase 3: the line reads `pipelines on 1 thread` at 1. One more start an adapter than written: `N` = 1 under `taskset -c 0-7`, beside the stand-in's `N` = 2.
 
 ### Close triggers
 

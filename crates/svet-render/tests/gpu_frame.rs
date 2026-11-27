@@ -370,6 +370,50 @@ fn a_new_frame_builds_thirteen_pipelines_and_no_upscale_or_sharpen_pass() {
     assert_eq!(built, 13);
 }
 
+/// A frame whose start-up pipelines are created on 4 threads renders the first frame of the
+/// one-chunk floor byte for byte as one created on 1 does, and both create the same pipelines
+/// once each: the 13 a new frame builds (by the process's pipeline count across each
+/// creation; 12 of them the start-up build's, the hit pass's three and every non-lazy pass of
+/// the table, the other the exposure pass's), each listed in `pipeline_build_times` under a
+/// label of its own. The entity set's build is left out: on lavapipe it takes the test past
+/// the soak line.
+#[test]
+fn the_passes_built_on_four_threads_are_the_passes_built_on_one() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let gpu = mirrored(&device, &queue);
+    let light = LightParams::headlamp();
+    let build = |threads: usize| {
+        let made = svet_render::debug::compute_pipelines_created();
+        let mut frame = Frame::with_build_threads(&device, [64, 48], [64, 48], threads);
+        let created = svet_render::debug::compute_pipelines_created() - made;
+        assert_eq!(frame.build_threads(), threads);
+        assert_eq!(created, 13, "{threads} threads: the frame's creation");
+        // The 13 less the exposure pass's, which the frame builds beside the table.
+        assert_eq!(frame.pipeline_build_times().len(), 12, "{threads} threads");
+        let mut labels: Vec<&str> = frame
+            .pipeline_build_times()
+            .iter()
+            .map(|(label, _)| *label)
+            .collect();
+        println!("{threads} threads: {:?}", frame.pipeline_build_times());
+        labels.sort_unstable();
+        let before = labels.len();
+        labels.dedup();
+        assert_eq!(labels.len(), before, "{threads} threads: a label twice");
+        frame.step(&device, &queue, &gpu, &camera(), &light);
+        let image = svet_render::debug::read_rgba8(&device, &queue, frame.target());
+        (labels, image)
+    };
+    let (one_labels, one) = build(1);
+    let (four_labels, four) = build(4);
+    assert_eq!(four_labels, one_labels);
+    assert_eq!(one_labels.len(), 12);
+    assert!(one.iter().any(|&b| b != 0), "the first frame is not blank");
+    assert!(four == one, "the first frames differ");
+}
+
 /// With no upscaler a frame renders at its output size: settings asking for scale 1.5 with
 /// the upscaler off read back scale 1, the internal size is the output size and the frame
 /// does not upscale; the same settings under FSR 2 render at 1.5 (43 x 24 for 64 x 36).

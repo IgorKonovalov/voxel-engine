@@ -24,7 +24,13 @@ pub(crate) struct LoadingArgs {
     /// `--pre-roll-stepped`: the pre-roll waits on the device before each step and has no
     /// box and no cap, so its outcome does not depend on the machine's pace. Headless only.
     pub(crate) pre_roll_stepped: bool,
+    /// `--pipeline-threads N`: the start-up build creates its pipelines on `N` scoped threads
+    /// (`svet_render::Frame::with_build_threads`), 1 to [`MAX_PIPELINE_THREADS`].
+    pub(crate) pipeline_threads: usize,
 }
+
+/// The most threads `--pipeline-threads` takes (the engine's start-up build's cap).
+pub(crate) const MAX_PIPELINE_THREADS: usize = 8;
 
 impl Default for LoadingArgs {
     fn default() -> Self {
@@ -34,6 +40,7 @@ impl Default for LoadingArgs {
             fade_ms: LOADING_FADE_MS,
             quit_at: None,
             pre_roll_stepped: false,
+            pipeline_threads: 1,
         }
     }
 }
@@ -81,6 +88,18 @@ pub(crate) fn loading_flags() -> Vec<Flag<Parsing>> {
             "step the start-up and the in-process rebuilds behind loading frames [on in a window, off headless]",
             |p: &mut Parsing, v| {
                 p.args.loading.screen = Some(v.on_off()?);
+                Ok(())
+            },
+        ),
+        Flag::value(
+            &["--pipeline-threads"],
+            "N",
+            "create the start-up pipelines (the frame's, the entity set's, the light pass arms') on N threads, 1 to 8 [1]",
+            |p: &mut Parsing, v| {
+                p.args.loading.pipeline_threads = v.parse_if(
+                    |n: &usize| (1..=MAX_PIPELINE_THREADS).contains(n),
+                    "a thread count from 1 to 8",
+                )?;
                 Ok(())
             },
         ),
@@ -167,6 +186,37 @@ mod tests {
         assert_eq!(a.loading.slice_ms, 0.5);
         assert!(parse_args_from(argv(&["--load-slice", "0"])).is_err());
         assert!(parse_args_from(argv(&["--load-slice", "inf"])).is_err());
+    }
+
+    /// `--pipeline-threads` takes 1 to 8 and defaults to 1; 0, 9 and a word are refused. The
+    /// `start-up:` line names the count (`1 thread`, `4 threads`), the build, its pipelines
+    /// with their times in build order, and its wall time.
+    #[test]
+    fn the_pipeline_threads_take_one_to_eight_and_the_start_up_line_names_them() {
+        let threads = |a: &[&str]| parse_args_from(argv(a)).map(|r| r.loading.pipeline_threads);
+        assert_eq!(threads(&[]), Ok(1));
+        for n in 1..=8 {
+            assert_eq!(threads(&["--pipeline-threads", &n.to_string()]), Ok(n));
+        }
+        for bad in ["0", "9", "four", "-1"] {
+            let Err(e) = threads(&["--pipeline-threads", bad]) else {
+                panic!("--pipeline-threads {bad} parsed");
+            };
+            assert!(e.contains("from 1 to 8"), "{bad}: {e}");
+        }
+        let times = [("hit", 310.4), ("hit field", 295.0), ("temporal", 1204.6)];
+        assert_eq!(
+            crate::run::start_up_text(1, crate::run::FRAME_SET, &times, 1810.2),
+            "start-up: pipelines on 1 thread: the frame's 3 in 1810 ms (hit 310, hit field 295, temporal 1205)"
+        );
+        assert_eq!(
+            crate::run::start_up_text(4, crate::run::ENTITY_SET, &times[..2], 612.0),
+            "start-up: pipelines on 4 threads: the entity set's 2 in 612 ms (hit 310, hit field 295)"
+        );
+        assert_eq!(
+            crate::run::start_up_text(4, crate::run::ARMS_SET, &[], 0.0),
+            "start-up: pipelines on 4 threads: the light pass arms' 0 in 0 ms ()"
+        );
     }
 
     /// `--pre-roll-stepped` is off by default, parses with `--headless` and is refused

@@ -116,9 +116,22 @@ impl Frame {
     /// A frame for an image presented at `output` pixels that renders at `internal` pixels
     /// under FSR 2 ([`Frame::set_upscaler_kind`]); without FSR 2 it renders at `output`.
     pub fn with_sizes(device: &wgpu::Device, internal: [u32; 2], output: [u32; 2]) -> Self {
+        Self::with_build_threads(device, internal, output, 1)
+    }
+
+    /// [`Frame::with_sizes`], with its start-up pipelines (the frame's own here, then
+    /// [`Frame::prepare_entities`]'s and [`Frame::prepare_light_arms`]'s) created on `threads`
+    /// scoped threads, 1 to 8 (clamped; 1 builds on the calling thread). Each pipeline is
+    /// built once whatever the count; [`Frame::pipeline_build_times`] reads their times.
+    pub fn with_build_threads(
+        device: &wgpu::Device,
+        internal: [u32; 2],
+        output: [u32; 2],
+        threads: usize,
+    ) -> Self {
         let [width, height] = output;
         Self {
-            pipes: Pipelines::new(device),
+            pipes: Pipelines::new(device, threads),
             binds: BindCache::default(),
             targets: Targets::new(
                 device,
@@ -640,6 +653,19 @@ impl Frame {
     /// that uses it.
     pub fn prepare_entities(&self, device: &wgpu::Device) {
         self.pipes.prepare_entities(device);
+    }
+
+    /// The threads the frame's start-up pipelines are created on ([`Frame::with_build_threads`]).
+    pub fn build_threads(&self) -> usize {
+        self.pipes.threads
+    }
+
+    /// Each pipeline the frame's start-up builds have created so far (its creation, then
+    /// [`Frame::prepare_entities`] and [`Frame::prepare_light_arms`]), by label, with its wall
+    /// time in ms, in build order: a reading of the driver's compile times. A pipeline built
+    /// on its first use is not listed.
+    pub fn pipeline_build_times(&self) -> Vec<(&'static str, f64)> {
+        self.pipes.build_times()
     }
 
     /// Builds the light pass's pipelines with the default-off arms compiled in (the ones

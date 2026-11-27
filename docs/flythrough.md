@@ -523,6 +523,7 @@ time from one step's pick-up to the next's, beside the frames' wall over the sam
 | Flag | Does |
 |------|------|
 | `--loading-screen on\|off` | Step the start-up (the entity pipelines, the level's upload or the streamed near residency, the light pre-roll, the field's fill) from the frame loop behind loading frames: a turning voxel cube, a bar that only moves forward, the scene, the stage and its count; the menu's in-process rebuilds (`source`, `trees`, `--switch-at`) load the same way; off runs it all before the first frame [on in a window, off headless] |
+| `--pipeline-threads N` | Create the start-up pipelines (the frame's, the entity set's, the light pass arms') on N scoped threads, 1 to 8, each pipeline once; each build prints `start-up: pipelines on N threads: <build> <count> in <ms> ms (<pipeline> <ms>, ...)` [1] |
 | `--loading-fade MS` | Fade the loading frame out over the first world frames; 0 cuts [250] |
 
 With the screen on, the window's first frame is a still loading frame (the background, the
