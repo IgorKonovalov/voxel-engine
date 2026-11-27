@@ -5,8 +5,9 @@ Thank you for testing the voxel engine. This archive holds two programs:
 
   svet-tester   the launcher: a small window with a menu
   flythrough    the engine's test scene viewer, which the launcher starts for each run
+  assets        the viewer's material table, its voxel models and its structures
 
-Keep both in the same folder. Nothing is installed, and nothing is sent anywhere: you send
+Keep the three in the same folder. Nothing is installed, and nothing is sent anywhere: you send
 the report yourself (see "Sending the report").
 
 

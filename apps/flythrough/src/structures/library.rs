@@ -166,11 +166,12 @@ impl PartialEq for Library {
     }
 }
 
-/// The library's directory `args` name: `--structures-dir`'s or [`super::LIBRARY`].
+/// The library's directory `args` name: `--structures-dir`'s or `structures/` in
+/// [`crate::assets::root`].
 pub fn dir_of(args: &crate::cli::Args) -> PathBuf {
     args.structures_dir
         .clone()
-        .unwrap_or_else(|| PathBuf::from(super::LIBRARY))
+        .unwrap_or_else(|| crate::assets::path("structures"))
 }
 
 /// The library `args` name ([`dir_of`]) against the world's `table`, its start-up line

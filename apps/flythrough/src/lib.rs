@@ -6,6 +6,7 @@
 //! [`app`] runs it.
 
 pub mod app;
+pub mod assets;
 mod audio;
 mod autopilot;
 pub mod castle;
