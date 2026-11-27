@@ -273,6 +273,70 @@ In order, one brief each: **2b**, **2c**, **2d**, **3a**, **3b**; **2e** if the 
 
 **Recorded, the recommended option taken** (none a stability question): the pre-roll waits for a block and not for a catch-up (Ruling 6, Phase 2d: the arm the plan already called "as built", made true in every run); the radius rule's walk goes to the backlog (Ruling 8); Phases 3 and 6 cut in two. **Left to the owner:** the two questions of Phase 4.
 
+## Amended 2026-11-27, second (architect, Phase 2c's rows)
+
+Phases 2b, 2c and 2d came back (`6eff62e9`, `023633c9`, `796e0202`). Read for this: their sections of `docs/plans/logs/0109.md`, `Frame::bake_settled` and `bake_held_for_start` (`frame/baked.rs`), the outdoor source's spawns (`apps/flythrough/src/outdoor.rs`), and [Plan 0108](0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md). Nothing was run. Every figure below is the log's: the RTX host, headless at 64x36, a dev-profile build, the bake thread off unless said, the host loaded (load1 4.7 to 14.6).
+
+### Ruling 9: Phase 2e is struck by its own condition; the missing bound is parked
+
+- **From the rows.** Provisional against final: 0 of 94 near chunks differ at the default spawn (7699 cells) and 0 of 95 at `--spawn inside` (8610 cells), every word equal, the control 0. Phase 2e's condition ("0 cells at both spawns") is met: **struck**. W4 and the second question leave Phase 4.
+- **From the rows, Ruling 5 confirmed.** After frame 0 no opening reached class 1 in 45 s: 0 of 359 with the thread off, 0 of 223 with it on, every one with a class 0 candidate ready; the 94 near catch-ups were due from 21.5 s (off) and 25.8 s (on) and none opened. The thread does not change the rule; it opens more first bakes in the same wall (3007 against 575).
+- **Not established.** Whether any pose reads a difference. `--spawn inside` stands about 3 m into the tunnel (`INSIDE_RUN`, 29 voxels at a slope of about 1 in 4), under a few metres of hill; whether a footprint column rises more than the light reach (4 chunks, 25.6 m) above one of its near chunks is unmeasured, and by the constants it looks unlikely (derived, not read: the chamber itself lies 15 m under its own column). So 0 of 95 there does not test Ruling 7's "when not".
+- **Where it goes.** `docs/backlog.md`, "A due catch-up waits behind every ready first bake, with no bound": what would reopen it and the reading that finds such a start. Nothing is built for a case no run has shown.
+
+### Ruling 10: Phase 2d is accepted; its new read is defended by the CPU tests only
+
+- **From the rows.** Seven runs after the change and no near stage ran long (105 to 118 chunks; lavapipe 29.5 to 30.8 s where Phase 2's held run read 54.3 s); 0 catch-ups queued in any pre-roll, so no run entered Ruling 6's race and `held_for_start` decided nothing in a run. The two tests (`split_tests/start.rs`) are red on the base and each broken by hand both ways: accepted as the defence. The lavapipe run that held is one of three before and none of three after: consistent with the fix, not proof of it.
+- **The files beyond the list** (`split_tests.rs`, `split_tests/rule.rs`, `split_tests/start.rs`) and the extra wait-on run are accepted.
+- **`Frame::bake_settled` with no caller: kept, no change owed.** It is the render crate's public read of "this chunk's light has no work left" beside `bake_queue().settled`, a consumer's loading frame is its reader, and `bake_held_for_start` is documented against it.
+
+### Phase 4, restated again (supersedes "Phase 4, restated" above; W4 and its question are gone)
+
+**What the tree does at a start on a streamed world**, after Phase 2d: the first frame waits until the camera's chunk and the near shell hold their light at the full count (94 or 95 of the 125 near chunks hold any at the two spawns). Those blocks are provisional, and at both spawns read they are bit-identical to the final ones. Nothing near the camera is baked again in the first 45 s, thread on or off. What changes in view after frame 0 is light landing on chunks beyond the near shell (8900 to 9000 candidates waiting at frame 0).
+
+| arm | launch | seconds to the first frame (`first frame after`) | what it waits for |
+|---|---|---|---|
+| **W1, as built** | the defaults | 24.4 to 29.7 at the default spawn (four runs), 20.5 at `--spawn inside` (one) | the near shell's blocks, provisional |
+| **W2, final light** | `--column-wait on` | 54.3 to 66.6 (five runs, both spawns; the same line moves 11 s run to run) | the same blocks, final: at both spawns the same words as W1's |
+| **W3, the camera's chunk only** | `--near 0 --coarse 0` | 5 to 6 pre-roll steps, about 1 s of pre-roll (Phase 2's switched runs; the direct start's first frame is unread) | 1 block; the near shell lands in view |
+
+So W2 costs about 30 to 40 s more than W1 and, where read, shows the same light at frame 0; what it buys is that no block is ever baked twice by the stream, at a pose no run has found where that would be seen. That is the reading, not the answer.
+
+**What the window will not reproduce, and what it is the first reading of:**
+
+- **The seconds.** No start has been timed in a window (Plan 0106 said so; still true). The pre-roll is lockstep with the thread on or off (ADR-0083), and Phase 2b's two thread-on pre-rolls read 21.0 and 23.8 s against 21.0 to 27.3 s off, inside the spread; but the render size, the build and the loading frames' pace are the window's. The terminal's `first frame after` is the figure; the table is what to expect within a factor, not a bar.
+- **The first launch of a new binary** pays the cold pipelines (51 s against 1.3 s, Ruling 8). Each arm's `loading:` line says which it was; the first launch is not the arm's time.
+- **Everything after frame 0.** The headless rows are thread off at about 100 ms a frame; the window runs the thread on, which opened about five times the first bakes in the same wall (3007 against 575 in 45 s). W3's "33 to 133 blocks by frame 30" is thread off and means nothing at a window's frame rate. How fast the surroundings fill in is what the owner sees, not what a row says.
+- **Lavapipe's figures** (near stage about 30 s, first frame 56 to 61 s) are not the window's adapter.
+- **Unread with the thread on:** W2, W3, `--spawn inside`, and any run on the tree after Phase 2d (its read takes the books' `catching_up` set under the thread; only the CPU tests have exercised it). Phase 4a reads these once, headless, before the owner sits down: a start that panics in front of him costs more than three minutes of the lock.
+
+**The window** (opened only on the owner's word; Linux, `--source outdoor`, the default spawn and `--spawn inside`; one launch an arm; the terminal beside the window with its lines visible; **no `--pre-roll-drain`, no `--settled-start`, no held camera**). Per arm it must show: the `loading:` line (pipelines warm or cold), the `pre-roll:` lines and `first frame after`; the banner's queue row reading `bake thread on`; then the first frame itself (what is lit, what is dark), 30 s standing still, and 30 s walking away from the spawn.
+
+**Asked** (a stability question, the owner's; not answered here): **which start, W1, W2 or W3.** Arm B as first written (the camera's own chunk still unlit at the first frame) is not built; W3 is its nearest built relative. A pick other than W1 is a default change and is written then as Phase 5 by the architect: W2 reverses the owner's `column_wait` pick of 2026-11-18 (a dated outcome on ADR-0070's amendment); W3 is the near list's default and meets Plan 0108's `--pre-roll` setting, so the two are picked in one sitting. Phase 4's **Done when** stands.
+
+### Phase 4a: the window's lines read once headless with the bake thread on
+- **Owner skill:** dev
+- **What:** A reading, no code change, no print: the lane's tip, in the build profile the window will be launched in (built outside the lock). On the RTX, `--headless --source outdoor --frames 600 --render 64x36 --loading-screen on --bake-thread on`, four runs: (1) as is; (2) `--column-wait on`; (3) `--near 0 --coarse 0`; (4) `--spawn inside`. A warm-up launch of the binary first if its pipelines are cold (not counted).
+- **Files touched:** `docs/plans/logs/0109.md`.
+- **Done when:** the log holds, per run: the exit code, the `loading:` line's pipelines ms, the `pre-roll:` lines (steps, chunks, ms; the near stage's chunks and ms; the column wait's three counts), `first frame after`, and the `light:` line reading the thread on. Two sentences, as figures with no verdict: whether (1) and (4) fall inside 20.5 to 29.7 s and (2) inside 54.3 to 66.6 s; and (3)'s first frame, which is that arm's first direct reading. Lock: about 3 minutes (about 31, 70, 10 and 25 s as the earlier rows project), projected from the first run; a run past 3 minutes is stopped and reported.
+- **Stops (report, change nothing):** a panic or a non-zero exit; `the pre-roll did not end in 120 s`; a flag pair refused. Any of these returns here before the window.
+- **Does not gate** 3a or 3b and is not gated by them; it gates Phase 4.
+
+### What proceeds now
+
+**3a** (running), **3b** (readings; they do not gate Phase 4), **4a** (any time before the window), then **Phase 4** on the owner's word, then **5** if he picks W2 or W3 (or asks for B), then **6a**, **6b** on the tree his answer leaves.
+
+**Plan 0108 may start now, in its own lane stacked on this lane's branch** (at `796e0202` or later, so its streamed readings hold Phases 1, 1b and 2d; its amendment of 2026-11-26 asked for exactly that). The two lanes share the perf lock and nothing else until this plan's Phase 6 (`docs/nfr/07-startup-and-build.md`). What its lane is told, from these rows:
+
+- **Struck:** "about 80 more pre-roll steps land the view about 20 s sooner in lockstep, 9 s with the thread". No row here reads it, and the pre-roll is lockstep either way: the thread does not shorten it.
+- **In its place.** On the RTX headless the default pre-roll on the outdoor source is 131 to 151 steps and 21.0 to 27.3 s, of which the near stage is 15.3 to 21.4 s (105 or 118 chunks, two modes) and the coarse pass ends on its 5 s box in every run. So `--pre-roll near` can save about the box, 5 s, on this source; the near stage is the start. `--near 0 --coarse 0` reads 5 to 6 steps and about 1 s.
+- A near block at frame 0 is provisional and, at both spawns read, bit-identical to its final one; no catch-up lands in the first 45 s. Its `first frame light:` counts are first bakes waiting, not re-bakes.
+- Lavapipe past about 30 frames after full residency is tainted by the radius rule (Ruling 8): its streamed readings stay on the RTX or on `--frames 3`.
+- These figures are dev profile, loaded, thread off; its own are release, warm, thread on, and are not compared with these for equality. The cold pipelines (51 s against 1.3 s) are its Phase 3.
+- Its Phase 2 and this plan's Phase 4 are one sitting: `--pre-roll near|off` and W3 are neighbours of one question.
+
+**Recorded, the recommended option taken** (none a stability question): Phase 2e struck and the bound parked (Ruling 9); Phase 2d accepted, `bake_settled` kept (Ruling 10); Phase 4a added; Plan 0108's lane may start. **Left to the owner:** which start.
+
 ## Data shapes
 
 ```rust
