@@ -1,6 +1,6 @@
 # 0111: The stagger in flight on streamed scenes: read quiet after Plan 0107, then cut
 
-> **Status:** in-progress (2026-11-27: Phases 1 to 5 landed; the owner answered Phase 5's questions, all recommended; 6a next). Was: approved (2026-11-27, owner: "go, recommended": it starts after Plan 0107 merges and does not wait for Plan 0091; he takes Phase 3's window runs in a ten-minute quiet slot; if stop line 1 fires a tester README note is enough). Was: draft (2026-11-27; the owner's go on drafting: "go both"; he approves the draft
+> **Status:** in-progress (2026-11-28: 6d done, the flip restored by the architect's ruling (the amendment "6d's stop rule"); 6e next). Was: in-progress (2026-11-28: 6d's stop rule fired as written and its defaults are reverted; at the architect). Was: in-progress (2026-11-27: Phases 1 to 5 landed; the owner answered Phase 5's questions, all recommended; 6a next). Was: approved (2026-11-27, owner: "go, recommended": it starts after Plan 0107 merges and does not wait for Plan 0091; he takes Phase 3's window runs in a ten-minute quiet slot; if stop line 1 fires a tester README note is enough). Was: draft (2026-11-27; the owner's go on drafting: "go both"; he approves the draft
 > before any dev work). Drafted with no interview from the owner's tester report and Plan 0107's
 > Phase 1 reading; the guesses and the questions left are under "Risks & open questions", each
 > with a recommended option.
@@ -377,7 +377,7 @@ Readings: [`logs/0111.md`](logs/0111.md).
 | 6a': the z move's every-column read goes | dev | done; bar missed: quiet F lines' `build` mean (7.118, 6.597 against under 6.0); the other bars met, stop rule not fired; deviations in the log | 0c7d353b (code), 6b2cd2d8 (reading) |
 | 6b: the slab's frame, read in four arms | dev | done (a reading on `0c7d353b`, no code); Hold D (Plan 0107's conditions) run; deviations: D before C, D's `--report` dropped (`over_33ms` from the summary), D's full residency not reached in any run, the copy-led split over the printed lines only | 6c926800 |
 | 6c: the picks from 6b | human | done 2026-11-28 (the amendment "6c's picks": both defaults flip as one pair; ADR-0089 proposed) | 14f500ea |
-| 6d: the picked defaults, and the identity test the flip owes | dev | code and tests landed (`--sync-ms 6` and `--mirror-pack workers` the defaults, `MirrorConfig::new` packs `Workers`, the banner's `mirror sync` row); the holds pending; deviations in the log | committed with this row |
+| 6d: the picked defaults, and the identity test the flip owes | dev | done; the flip restored by the architect's ruling (A/tip1 discarded as a cold launch); reading of record the warm pairs: `full residency after` +3.6 % (pair 2), +7.4 % (C); pre-roll span +3.3 / +3.7 / +8.9 %; other quiet bars met, loaded `over_33ms` 0.188; deviations in the log | fa3fe4a8 (defaults and test), 055a6148 (revert), 63bad424 (restore), committed with this row (log) |
 | 7: the owner flies the same paths | human | not started | |
 
 ### Notes
