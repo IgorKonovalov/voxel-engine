@@ -105,13 +105,18 @@ the gate and are listed here:
 | `flythrough::gpu_fsr2` | `fsr2_marks_a_dropped_list_light` | 18.3 | 15.6 |
 | `flythrough::gpu_loading` | `a_benchmark_warms_up_from_the_first_world_frame` | 17.7 | 21.3 |
 | `flythrough::gpu_dynamic_lights` | `a_pulsing_emitter_marks_only_where_its_light_lands` | 17.4 | 18.8 |
-| `flythrough::gpu_loading` | `a_source_switch_shows_the_loading_frames_before_the_new_world` | 17.0 | 18.1 |
+| `flythrough::gpu_loading` | `a_source_switch_shows_the_loading_frames_before_the_new_world` | 12.8 (a) | (a) |
 | `flythrough::gpu_bake` | `a_bake_with_no_key_light_leaves_the_other_words` | 16.4 | 15.7 |
 | `flythrough::gpu_entities` | `a_moving_entity_leaves_no_ghost_and_no_stale_shadow` | 16.1 | 16.6 |
 | `flythrough::gpu_entities` | `history_does_not_cross_between_instances` | 14.5 | 13.5 |
 | `flythrough::gpu_golden` | `dark_cave_golden_is_lit_by_its_ore_alone` | 14.4 | 15.9 |
 | `flythrough::gpu_bake_tiers` | `a_lod_only_chunk_in_a_partial_reach_casts_from_its_mip` | 14.3 | 13.5 |
 | `flythrough::gpu_queue_reach` | `a_break_through_reaches_the_far_wall` | 14.3 | 13.1 |
+
+(a) Corrected by Plan 0109 Phase 6a (2026-11-27, `85f36761`, lavapipe, exclusive perf lock, the
+test alone by name, five runs, loaded at 3.7 to 9.9): the median of 11.1, 12.7, 12.8, 13.8 and
+13.9 s. It read 17.0 and 18.1 s here, then 27 to 66 s from the Plan 0099 merge until Plan 0109
+(the switched pre-roll's 30-step recheck); `docs/plans/logs/0109.md` holds the runs.
 
 A test's time at two threads includes its partner's contention (median 1.10 times its N = 1
 time), so `scripts/test-times.mjs` over a two-thread log counts more tests over the line than
