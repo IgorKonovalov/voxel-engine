@@ -1001,3 +1001,151 @@ the tip it stacks on. The window's figures stay Phase 7's.
    half) and the cut half on its reading. Alternative: park it in the backlog ("The mirror's
    notes for the bake's shadow" grows a line) until Phase 7's window says whether the F frame
    still shows; quiet it is 7 lines of 162 and 156, and the loaded box is where it bites.
+
+## Amended 2026-11-28 (architect, 6c's picks)
+
+Read from the Phase 6b section of [logs/0111.md](logs/0111.md) (its tables under `live/p6b/`,
+outside the repo), ADR-0056's Outcome, the fly-through's `cli/parse.rs`, `setup.rs`
+(`start_streaming`), `run/loading/pre_roll.rs` and `gpu_world/mod.rs` (`MirrorConfig::new`) at
+`0c7d353b`. No run was made for this reading. The owner's standing answer (Phase 5, question 4)
+lets the picks follow the written rule; they are shown here before 6d starts, and the owner may
+overrule them in the morning (question 4 below). The ADR the earlier amendment said a budget
+flip owes is [ADR-0089](../adrs/0089-the-streamed-mirrors-sync-takes-a-6-ms-budget-a-frame-on-top-of-the-workers-slot-image.md).
+
+### The picks, shown to the owner
+
+**Both defaults flip, as one pair: `--sync-ms 6` and `--mirror-pack workers`** (the 6b arm
+`both`), in the fly-through and so in the tester. Each stays a setting with its other arm
+(`--sync-ms 0`, `--mirror-pack inline`; the `U` key). The rows they rest on, 6b's binary
+`0c7d353b`, RTX 3080 Laptop, release, quiet:
+
+| reading (default, then `both`) | cave run 1 | cave run 2 | castle run 1 | castle run 2 |
+|---|---|---|---|---|
+| `over_33ms` | 141 to 14 | 150 to 8 | 43 to 3 | 32 to 3 |
+| sync-led slow frames (`alloc` + `size` + `copy`) | 132 to 8 | 143 to 3 | 29 to 0 | 20 to 0 |
+| the same with the 0-brick copy-led lines left out (6h's) | 129 to 0 | 141 to 0 | 29 to 0 | 20 to 0 |
+| sync p99 / max, ms | 17.2 / 18.6 to 7.9 / 10.6 | 17.3 / 18.9 to 8.0 / 10.1 | 17.0 / 19.0 to 7.8 / 15.7 | 16.6 / 18.4 to 8.0 / 16.5 |
+| `full residency after`, s | 12.73 to 13.43 (+5.5 %) | 12.69 to 13.29 (+4.7 %) | 10.48 to 10.21 (-2.6 %) | 10.38 to 10.14 (-2.3 %) |
+| fill at 5 s / 15 s, mirrored | equal | equal | equal | equal |
+| the run's wall, s | 67 to 67 | 67 to 67 | 36 to 35 | 35 to 35 |
+
+Loaded (one run an arm, 32 busy loops): `over_33ms` 306 to 52 (0.17), sync-led 280 to 13, sync
+max 41.8 to 18.6 ms; `full residency after` 14.68 to 17.60 s (+19.9 %), a reading, not a measure
+(below). Plan 0107's conditions for `workers` (Hold D, the eight-CPU stand-in's fresh forest, two
+pairs): `march GPU` p50 +1.3 % then -2.2 %, not following the arm (condition 2 met); full
+residency reached in no run of either arm, so condition 3 is read on the nearest figure the runs
+give, the fill at 5 s and 15 s: -1.5 %, +0.5 %, +0.1 %, +1.5 % (met on that figure, in neither
+direction).
+
+### The rule, applied, and the two readings it needed settled
+
+**The residency clause reads the quiet holds.** The rule's sentence left the hold open; it is
+read as the plan's Phase 5 rules read every remedy: "the reading of record is the quiet headless
+cave at the tester's line", the loaded re-run beside it at one run an arm, and the owner's Phase
+5 answer 2 makes the loaded tables readings only. 6d's stop rule already says "either run", the
+two quiet runs. The loaded figure could not be a measure here anyway: Hold C's two runs were not
+at one load. load1 read 21.6 at the default run's start and 33.8 at `both`'s (the busy loops'
+one-minute average was still climbing through the default run, which started 60 s after the
+loops), so the +19.9 % compares a run under a rising load with one under the settled load, in
+that order. The default's own loaded residency is +15 % over its quiet one from the load alone.
+6d's loaded run reads load1 at both starts and re-runs the pair once if they differ by more than
+20 % (below), so the next loaded figure is at least comparable.
+
+**The two settings are picked as a pair, not each alone.** The rule says "for each setting",
+and 6b's arms show why that cannot be done setting by setting: `--sync-ms 6` alone passes the
+sync-led clause (6 / 8) but **misses the residency clause** (+11.9 %, +12.3 %), while the pair
+passes it (+5.5 %, +4.7 %). The arithmetic is ADR-0056's own: the budget rations the sync's
+time, so the chunks it carries a frame are the budget over the per-chunk cost; `workers` cuts
+that cost (the image is copied, not packed), so the same 6 ms carries more chunks and the
+backlog clears sooner. `workers` alone passes every quiet clause (23 / 29 sync-led, residency
+-1.6 %, -2.1 %) and conditions 2 and 3, but leaves 17 to 23 `alloc`-led frames and was not run
+loaded on its own; it is not the pick because the pair empties the sync-led set (0 / 0 with the
+0-brick lines out) and the rule's loaded clause is read on the pair. No further 6b run is
+needed to pick: a `workers`-alone loaded run would only tell whether a weaker pick also passes.
+
+**The sync max of 10 to 11 ms under a 6 ms budget is not the budget failing.** The budget stops
+selection and whole-chunk uploads; the frame's `copy` then writes the leaving slab's cleared
+table runs and the column map's dirty tiles whatever it read (6a''s reading: 4.8 to 9.5 ms on a
+move frame with 0 bricks, Phase 6h's). The 6b `sync6` and `both` arms' slowest syncs are a
+budgeted upload plus that flush, or the one chunk that crosses the budget uploaded whole. 6d's
+"slowest sync under 10 ms" bar was set at Phase 5 before 6a' read the flush, and is restated
+below at 12 ms with the p99 beside it; 6h owns the rest.
+
+**The residency the pair costs (+5 %, 0.6 to 0.7 s on 12.7) is paid for what the owner asked
+for first.** The fill at 5 s and 15 s is equal in every quiet arm (what the camera sees is in
+place at the same time); the 0.7 s moves the moment the last of 57 777 chunks lands. Against it:
+the quiet cave's frames over 33 ms fall by a factor of ten to twenty and the castle's by
+fourteen. If the owner weighs the 0.7 s higher, `--sync-ms 0` restores it (question 4).
+
+### What 6d builds (its text above stands; this restates its bars and adds what the code shows)
+
+- **The defaults** in `apps/flythrough/src/cli/parse.rs` (`sync_time: Some(6 ms)`,
+  `mirror_pack: Packing::Workers`), the flags' help in `cli/flags.rs` naming them (`[6; 0
+  none]`, `[workers]`), `MirrorConfig::new`'s `packing` and `Packing`'s `#[default]` in
+  `crates/svet-render/src/gpu_world/` (`sync_budget_time` stays `None` there: a consumer names
+  its frame's share; the fly-through's and the tester's default is the 6 ms), the HUD's
+  `QueueModes` default (`hud/modes.rs`), `docs/flythrough.md`'s two flag rows and the `U` key
+  row. The tester passes no `--sync-ms` or `--mirror-pack` (`apps/tester/src/run.rs`), so it
+  takes the new defaults with no change. `enter_pre_roll` restores `args.sync_time` after the
+  sliced start, so the pre-roll streams under the 6 ms too, as 6b's arms did.
+- **The tests that name the defaults:** `cli/tests.rs`
+  `the_sync_ms_flag_parses_and_zero_is_no_budget` (no flags reads 6 ms; `0` reads none),
+  `cli/tests/mirror_pack.rs` `the_mirror_pack_flag_names_both_packings` (no flags reads
+  `Workers`), `apps/flythrough/tests/gpu_settings_rows.rs` (`build.sync_budget_time` reads the
+  default), and whichever `--mode-text` or banner golden carries `mirror pack inline`.
+- **Plan 0107's owed identity test** in `crates/svet-render/tests/gpu_mirror_image.rs`: the
+  `Rich` world at `r_lod` above `r_full` (2 and 4, say), a focus move that promotes a LOD
+  record to full with its image held and demotes a full one, then the pool, the records, the
+  table and the light samples equal byte for byte against the inline arm after every sync;
+  lavapipe, under the soak line, its time stated. One short debug-build headless cave glide at
+  the defaults, exit 0 (the debug re-pack compares armed; the backlog's other owed check),
+  frames and time stated in the log.
+- **Bars, the quiet headless cave at the defaults, two runs alternated against the base arm**
+  (`0c7d353b` at its defaults, 6b's `default` rows may stand for it if the dev's base runs read
+  within their spread): slow frames whose largest stage is `alloc`, `size` or `copy` with
+  bricks above 0: 0 in both (6b `both` 0 / 0; base 129 / 141); `over_33ms` at most a quarter
+  of the base's in both (6b 0.10, 0.05); sync p99 under 9 ms (6b 7.9 / 8.0; base 17.2) and the
+  slowest sync under 12 ms (6b 10.6 / 10.1; the flush, above); `full residency after` not later
+  than the base's by more than 10 % in either run (6b +5.5 %, +4.7 %); the `streaming:` fill at
+  5 s and 15 s not below the base's by more than 1 % (6b equal); the start-up's first-frame
+  mark (Hold D's `first frame` column) not later by more than 10 %. The castle is not re-run:
+  6b's Hold B is its reading (43 / 32 to 3 / 3, residency -2.5 %). **The loaded cave, one run an
+  arm, 32 loops, 60 s lead, the base first:** load1 printed at both starts and within 20 % of
+  each other, else the pair is run once more after the loops settle (wait until load1 moves
+  under 10 % a minute); `over_33ms` at most half the base's (6b 0.17); the loaded residency
+  logged, not a bar.
+- **Stop rule:** `full residency after` later by more than 10 % in either quiet run, or the
+  fill at 5 s or 15 s below the base's by more than 1 % in both: revert both defaults in one
+  commit, keep the reading, the architect. A hold projected past 20 minutes is not started
+  (6b: 67 s a quiet cave run, so the quiet hold is about 6 minutes with its waits, the loaded
+  about 4).
+- **The named `gpu_*` binaries:** `gpu_mirror_image` (svet-render) and `gpu_settings_rows`
+  (flythrough), `test-changed.mjs --profile gpu --binaries`; the tip's full gpu tier is the
+  plan's.
+- **The log:** the dev adds the Implementation log's rows for Phase 5 (done, the amendments of
+  2026-11-27) and 6c (done 2026-11-28, this section) with 6d's.
+
+**Bookkeeping at the close, the architect's:** ADR-0089 accepted; ADR-0056's Outcome gains a
+dated line (the default flipped, Plan 0111 6d); `docs/nfr.md` section 5's "off by default"
+sentence on the slot images and section 2's streaming row (its `inline` default) are refreshed
+from 6d's rows; the backlog's "Plan 0107's leftovers" loses the conditions, the stand-in run and
+the identity test (marked here, removed at the close).
+
+### 6d may run tonight
+
+The picks follow the written rule with the two readings settled above and no owner decision
+that is new: the rule's hold (the plan's own reading of record), the pair (the rule read on the
+arm that was run), and a bar restated for a cost 6a' already attributed. Both defaults stay
+settings, and the revert is one commit. 6d proceeds; the owner's morning word may revert it.
+
+### Owner questions (new; each with the recommended option first)
+
+4. **The pair as the default (`--sync-ms 6 --mirror-pack workers`), at +5 % on the quiet full
+   residency (0.7 s on 12.7) for a tenth of the frames over 33 ms?** Recommended: yes, as
+   picked. Alternative: `workers` alone (a quarter of the frames, residency -2 %, 17 to 23
+   `alloc`-led frames stay; its loaded run was not taken and would be about 4 minutes).
+5. **Condition 3 of Plan 0107 read on the fill at 5 s and 15 s** (full residency was reached
+   in no Hold D run of either arm, so the condition as written cannot be read on that command)?
+   Recommended: accept the fill as the condition's measure; a run long enough to reach the
+   stand-in's full residency would be about 90 s an arm, four runs, and reads a tail the owner
+   does not wait for. Alternative: run it (about 8 minutes under the lock) before the flip.

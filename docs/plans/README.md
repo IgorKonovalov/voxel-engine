@@ -55,7 +55,7 @@ were sized by Plan 0109 Phase 6. Plan 0093, the README rewrite with reproducible
 | [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
 | [0103](0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md) | A pipeline cache for the renderer: the driver's cache through wgpu in an engine envelope, bytes the consumer keeps | draft, parked 11-24 | ADR-0087 (proposed). Parked: the driver's cache already warms a second start (logs/0103.md). |
 | [0110](0110-the-math-hot-paths-measured-then-cut-shader-math-f16-and-the-integer-root.md) | The math hot paths, measured then cut: shader math and f16 by adapter | draft 11-27 | ADR-0088. After 0091 (owner). P2 the owner's clock sweep; keep at >= 5 % on RENOIR. |
-| [0111](0111-the-stagger-in-flight-on-streamed-scenes-read-quiet-after-plan-0107-then-cut.md) | The stagger in flight on streamed scenes: read quiet, then cut | in progress | P1-4 read 11-27; 6a and 6a' landed; 6b next; 6a'' and 6h ask the owner; 6c-6f stand; 6g backlog. ADR at 6c. |
+| [0111](0111-the-stagger-in-flight-on-streamed-scenes-read-quiet-after-plan-0107-then-cut.md) | The stagger in flight on streamed scenes: read quiet, then cut | in progress | P1-4 read 11-27; 6a, 6a', 6b landed; 6c picked both defaults (ADR-0089); 6d next; 6a'' and 6h ask the owner; 6e-6f stand; 6g backlog |
 <!-- roster:end -->
 
 ## Sequence
