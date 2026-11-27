@@ -86,6 +86,7 @@ impl Args {
             sync_budget: SYNC_BUDGET_MIB << 20,
             sync_time: None,
             workers: None,
+            mirror_pack: svet_render::Packing::Inline,
             mirror_budget: None,
             residency: RESIDENCY,
             hud: false,

@@ -413,6 +413,8 @@ pub struct BakeQueue {
     pub(in crate::bake) thread_depth: usize,
     /// The table slots the bake thread's steps open jobs into ([`BakeQueue::set_thread_slots`]).
     pub(in crate::bake) thread_slots: usize,
+    /// The listing pool's threads at its start ([`BakeQueue::set_lister_threads`]).
+    pub(in crate::bake) lister_threads: usize,
     /// A test's hook, run after each candidate the opening lists into the loop.
     #[cfg(test)]
     pub(in crate::bake) listed_hook: Option<Box<dyn FnMut() + Send + Sync>>,
@@ -710,6 +712,7 @@ impl BakeQueue {
             fill: Default::default(),
             thread_depth: THREAD_DEPTH,
             thread_slots: THREAD_SLOTS,
+            lister_threads: crate::ThreadPlan::here(None).listers,
             #[cfg(test)]
             listed_hook: None,
             pool: Default::default(),

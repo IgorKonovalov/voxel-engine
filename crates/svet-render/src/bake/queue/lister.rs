@@ -93,12 +93,6 @@ struct Req {
 /// the neighbours it read absent ([`list_chunk_read`]), or the text of the panic that ended it.
 type Done = (u64, [i32; 3], Result<((ChunkFaces, bool), u8), String>);
 
-/// The threads the pool keeps: the logical cores less the stream workers' half and the render
-/// and bake threads, at least one, so the process runs no more busy threads than it has cores.
-pub(in crate::bake) fn lister_threads(logical: usize) -> usize {
-    logical.saturating_sub(logical / 2).saturating_sub(2).max(1)
-}
-
 /// The kept pool of listing threads. Dropping it closes the requests and joins the threads.
 pub(in crate::bake) struct Lister {
     tx: Option<mpsc::Sender<Req>>,
@@ -107,14 +101,13 @@ pub(in crate::bake) struct Lister {
 }
 
 impl Lister {
-    /// Starts [`lister_threads`] threads listing from `world`.
-    pub(in crate::bake) fn start(world: Arc<World>) -> std::io::Result<Self> {
-        let logical = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
+    /// Starts `count` threads (at least one) listing from `world`.
+    pub(in crate::bake) fn start(world: Arc<World>, count: usize) -> std::io::Result<Self> {
         let (tx, jobs) = mpsc::channel::<Req>();
         let (done, rx) = mpsc::channel::<Done>();
         let jobs = Arc::new(std::sync::Mutex::new(jobs));
         let mut threads = Vec::new();
-        for k in 0..lister_threads(logical) {
+        for k in 0..count.max(1) {
             let (jobs, done, world) = (jobs.clone(), done.clone(), world.clone());
             threads.push(
                 std::thread::Builder::new()
@@ -186,10 +179,17 @@ pub(in crate::bake) struct Listing {
 impl BakeQueue {
     /// Starts the listing pool on `world`; the bake thread's openings list through it.
     /// Its steps open jobs into the last [`BakeQueue::set_thread_slots`] table slots from here.
+    /// The pool's threads are [`BakeQueue::set_lister_threads`]'s count.
     pub(crate) fn start_lister(&mut self, world: Arc<World>) -> std::io::Result<()> {
-        self.lister = Some(Lister::start(world)?);
+        self.lister = Some(Lister::start(world, self.lister_threads)?);
         self.lp.set_rows(queue_rows(self.thread_slots));
         Ok(())
+    }
+
+    /// The listing pool's threads at its next start, at least 1 ([`crate::ThreadPlan`]'s
+    /// listers; this machine's default until set).
+    pub(crate) fn set_lister_threads(&mut self, threads: usize) {
+        self.lister_threads = threads.max(1);
     }
 
     /// Stops the listing pool and forgets what it held: those candidates are still in the

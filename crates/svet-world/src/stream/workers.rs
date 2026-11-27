@@ -94,7 +94,7 @@ enum Work {
 /// Work the caller has the stream workers do on each full chunk they load (ADR-0017): a pure
 /// function of the chunk's content, whose result the world carries to [`Streamer::poll`]'s
 /// events and never reads. A caller keeps an inline path for a chunk with no result, and
-/// throws a result away once the chunk is edited.
+/// throws a result away once the chunk is edited ([`Chunk::is_edited`]).
 pub trait ChunkPrep: Send + Sync {
     fn prepare(&self, coord: ChunkCoord, chunk: &Chunk) -> Prepared;
 }

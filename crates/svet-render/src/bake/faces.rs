@@ -190,9 +190,10 @@ impl ChunkMasks {
     }
 }
 
-/// The stream workers' hook (ADR-0017, `svet_world::ChunkPrep`): each full chunk's
+/// The bake's part of the stream workers' hook ([`ChunkWork`]; ADR-0017): each full chunk's
 /// [`ChunkMasks`] under the material classes it was made with, for [`list_faces_by`], and its
 /// no-face verdict and its neighbours' from the shared shells (ADR-0080, [`super::seal`]).
+/// Set alone as a `svet_world::ChunkPrep`, it is a [`ChunkWork`] with no image.
 pub struct FacePrep {
     pub(crate) classes: Arc<Vec<u8>>,
     pub(crate) shells: SharedShells,
@@ -208,21 +209,73 @@ impl FacePrep {
     }
 }
 
-impl svet_world::ChunkPrep for FacePrep {
-    fn prepare(&self, coord: ChunkCoord, chunk: &Chunk) -> svet_world::Prepared {
+impl FacePrep {
+    /// `chunk`'s masks at `coord`, its verdicts admitted into the shared shells.
+    fn masks(&self, coord: ChunkCoord, chunk: &Chunk) -> PreparedMasks {
         let t = stopwatch();
         let masks = ChunkMasks::of(chunk, &self.classes);
         let ns = (seconds_since(t) * 1e9) as u64;
         let t = stopwatch();
         let shell = Shell::of(&masks);
         let verdicts = seal::lock(&self.shells).admit(coord.0, shell);
-        svet_world::Prepared(Arc::new(PreparedMasks {
+        PreparedMasks {
             classes: self.classes.clone(),
             masks,
             ns,
             seal_ns: (seconds_since(t) * 1e9) as u64,
             verdicts,
             shells: self.shells.clone(),
+        }
+    }
+}
+
+impl svet_world::ChunkPrep for FacePrep {
+    fn prepare(&self, coord: ChunkCoord, chunk: &Chunk) -> svet_world::Prepared {
+        ChunkPrepared::of(self.masks(coord, chunk), None)
+    }
+}
+
+/// The stream workers' hook (ADR-0017, ADR-0056): for each full chunk they load, the bake's
+/// masks ([`FacePrep`]) and, through an [`crate::ImageHook`], the mirror's slot image. Its
+/// results ([`svet_world::StreamEvents::prepared`]) go to both readers: the live queue's
+/// ([`crate::Frame::take_prepared`]) and the mirror's ([`crate::GpuWorld::take_images`]).
+pub struct ChunkWork {
+    faces: FacePrep,
+    images: Option<crate::ImageHook>,
+}
+
+impl ChunkWork {
+    /// The hook over `materials`' face classes, with the mirror's images from `images`.
+    pub fn new(materials: &MaterialTable, images: Option<crate::ImageHook>) -> Self {
+        Self {
+            faces: FacePrep::new(Arc::new(face_classes(materials))),
+            images,
+        }
+    }
+}
+
+impl svet_world::ChunkPrep for ChunkWork {
+    fn prepare(&self, coord: ChunkCoord, chunk: &Chunk) -> svet_world::Prepared {
+        let image = self.images.as_ref().and_then(|h| h.make(coord, chunk));
+        ChunkPrepared::of(self.faces.masks(coord, chunk), image)
+    }
+}
+
+/// What [`ChunkWork`] hands back, each part for its reader: the bake's masks, shared, and the
+/// mirror's slot image, which the mirror takes out (so no other holder keeps its bytes).
+pub(crate) struct ChunkPrepared {
+    pub masks: Arc<PreparedMasks>,
+    pub image: std::sync::Mutex<Option<crate::gpu_world::HeldImage>>,
+}
+
+impl ChunkPrepared {
+    pub(crate) fn of(
+        masks: PreparedMasks,
+        image: Option<crate::gpu_world::HeldImage>,
+    ) -> svet_world::Prepared {
+        svet_world::Prepared(Arc::new(Self {
+            masks: Arc::new(masks),
+            image: std::sync::Mutex::new(image),
         }))
     }
 }

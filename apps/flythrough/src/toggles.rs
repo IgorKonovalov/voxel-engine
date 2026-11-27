@@ -749,6 +749,16 @@ pub static TOGGLES: &[Toggle] = &[
         },
     },
     Toggle {
+        press: Press::Key(KeyCode::KeyU, None),
+        name: "mirror pack",
+        group: Group::Debug,
+        needs: None,
+        number: None,
+        row: HudRow::Mirror,
+        get: |m| crate::hud::mirror_pack_row(m.mirror_pack),
+        flip: |m, _| m.mirror_pack = m.mirror_pack.next(),
+    },
+    Toggle {
         press: Press::Key(KeyCode::F9, None),
         name: "view",
         group: Group::Debug,

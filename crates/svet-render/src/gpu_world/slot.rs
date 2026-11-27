@@ -22,6 +22,9 @@ pub(super) struct MaterialFlags {
     /// Rows written in place of the world's table's at the first sync, from
     /// [`GpuWorld::rewrite_materials`] before it.
     pub(super) rows_from: Option<MaterialTable>,
+    /// A hash of the translucent, emissive and opaque bits, set by [`MaterialFlags::read`]:
+    /// the flags a [`SlotImage`] was packed under, compared with the mirror's.
+    pub(super) key: u64,
 }
 
 impl MaterialFlags {
@@ -63,7 +66,23 @@ impl MaterialFlags {
             rows: 0,
             crisp: false,
             rows_from: None,
+            key: Self::key_of(&[], &[], &[]),
         }
+    }
+
+    /// The key of three flag vectors: each id's three bits, folded in id order, the ids past
+    /// the shortest's end read as clear.
+    fn key_of(translucent: &[bool], emissive: &[bool], opaque: &[bool]) -> u64 {
+        let n = translucent.len().max(emissive.len()).max(opaque.len());
+        let bit = |v: &[bool], i: usize| u64::from(v.get(i).copied().unwrap_or(false));
+        (0..n).fold(0x0107_0002_u64, |h, i| {
+            let b = bit(translucent, i) | bit(emissive, i) << 1 | bit(opaque, i) << 2;
+            if b == 0 {
+                h
+            } else {
+                svet_world::hash::mix64(h ^ (i as u64) << 3 ^ b)
+            }
+        })
     }
 
     /// The flags of every row of `table`.
@@ -75,6 +94,7 @@ impl MaterialFlags {
                 0.2126 * m.emission[0] + 0.7152 * m.emission[1] + 0.0722 * m.emission[2];
             self.opaque[id] = id != usize::from(AIR) && !m.is_translucent();
         }
+        self.key = Self::key_of(&self.translucent, &self.emissive, &self.opaque);
     }
 }
 
@@ -190,13 +210,55 @@ pub(super) fn materials_of(p: &Packed, f: impl Fn(MaterialId) -> bool) -> bool {
     }
 }
 
-impl GpuWorld {
-    /// The units of `p`'s slot ([`slot_units`]): mask, header, payload, and a translucent unit
-    /// for a planar brick holding a translucent voxel.
-    pub(super) fn slot_units(&self, p: &Packed) -> u32 {
-        slot_units(p, |m| self.mats.translucent[usize::from(m)])
+/// [`GpuWorld::need`]'s count over the bricks `set` names: per brick, its band slot (with
+/// `band_had`, the band slot it held, and its mask in `bands`) and its own slot, each counted
+/// new unless the bin of the slot it held (`old`, its record entry; `bin_of_unit`) is the
+/// same. Returns the new slots of each bin and the slot bytes written.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the bricks, the set, the bands and what the record held"
+)]
+pub(super) fn need_of(
+    mats: &MaterialFlags,
+    bricks: &Bricks<'_>,
+    set: &[bool],
+    bands: &[Option<[u64; 8]>],
+    band_had: Option<impl Fn(usize) -> u32>,
+    old: impl Fn(usize) -> u32,
+    bin_of_unit: impl Fn(u32) -> Option<usize>,
+) -> ([u64; BIN_COUNT], u64) {
+    let mut new = [0u64; BIN_COUNT];
+    let mut bytes = 0;
+    for (i, &up) in set.iter().enumerate() {
+        if !up {
+            continue;
+        }
+        let old = old(i);
+        if let (Some(had), Some(m)) = (&band_had, bands[i]) {
+            let k = band_bin_of(crate::field::band_slot_units(crate::field::band_count(&m)));
+            bytes += u64::from(SLOT_BINS[k]) * UNIT_BYTES;
+            let had = had(i);
+            if had == ABSENT || bin_of_unit(had) != Some(k) {
+                new[k] += 1;
+            }
+        }
+        let units = match bricks.get(i) {
+            Brick::Full(p) => mats.slot_units(p),
+            Brick::Uniform(m) if bands[i].is_some() => {
+                2 + u32::from(mats.translucent[usize::from(*m)])
+            }
+            Brick::Uniform(_) => continue,
+        };
+        let k = bin_of(units);
+        bytes += u64::from(BINS[k]) * UNIT_BYTES;
+        if old & FULL_BIT == 0 || bin_of_unit(old & UNIT_MASK) != Some(k) {
+            new[k] += 1;
+        }
     }
+    (new, bytes)
+}
 
+impl GpuWorld {
     /// What uploading `bricks` into record `rec` (`None`: a new record) takes: the new slots
     /// of each bin (a brick keeps its slot only when its bin is unchanged) and the slot bytes
     /// written, over the bricks [`upload_set`] names, whose band masks, for a full chunk's
@@ -229,37 +291,19 @@ impl GpuWorld {
                 }
             });
         }
-        let mut new = [0u64; BIN_COUNT];
-        let mut bytes = 0;
-        for (i, &up) in set.iter().enumerate() {
-            if !up {
-                continue;
-            }
-            let old = rec.map_or(0, |r| {
-                self.recs.entries[r as usize * RECORD_WORDS + ENTRY_WORD + i]
-            });
-            if let (Some(b), Some(m)) = (band, bands[i]) {
-                let k = band_bin_of(crate::field::band_slot_units(crate::field::band_count(&m)));
-                bytes += u64::from(SLOT_BINS[k]) * UNIT_BYTES;
-                let had = b.slot(coord, i);
-                if had == ABSENT || self.bin_of_unit(had) != Some(k) {
-                    new[k] += 1;
-                }
-            }
-            let units = match bricks.get(i) {
-                Brick::Full(p) => self.slot_units(p),
-                Brick::Uniform(m) if bands[i].is_some() => {
-                    2 + u32::from(self.mats.translucent[usize::from(*m)])
-                }
-                Brick::Uniform(_) => continue,
-            };
-            let k = bin_of(units);
-            bytes += u64::from(BINS[k]) * UNIT_BYTES;
-            if old & FULL_BIT == 0 || self.bin_of_unit(old & UNIT_MASK) != Some(k) {
-                new[k] += 1;
-            }
-        }
-        (new, bytes)
+        need_of(
+            &self.mats,
+            bricks,
+            &set,
+            bands,
+            band.map(|b| move |i| b.slot(coord, i)),
+            |i| {
+                rec.map_or(0, |r| {
+                    self.recs.entries[r as usize * RECORD_WORDS + ENTRY_WORD + i]
+                })
+            },
+            |u| self.bin_of_unit(u),
+        )
     }
 
     /// Runs `f` on the 27 chunks around `coord` as the band reads them ([`crate::field`]):
@@ -312,11 +356,15 @@ impl GpuWorld {
 
     /// Writes one chunk's record: `bricks` into its entries (512 voxel bricks, or a LOD
     /// record's 73 mip-bricks): every brick when `coord` had no record before this call, else
-    /// the dirty ones; then, for a record allocated here, its table entry.
+    /// the dirty ones; then, for a record allocated here, its table entry. `image`, the
+    /// chunk's slot image for a new full record with no band ([`GpuWorld::usable_image`]),
+    /// gives each brick's entry and words in place of packing them, and the record's emissive
+    /// flag and light lists (taken out of it) in place of scanning the bricks.
     pub(super) fn upload_record(
         &mut self,
         coord: ChunkCoord,
         bricks: Bricks<'_>,
+        image: Option<&mut SlotImage>,
         enc: &mut wgpu::CommandEncoder,
         st: &mut SyncStats,
     ) -> Result<(), MirrorError> {
@@ -338,12 +386,16 @@ impl GpuWorld {
         // has an emitter.
         let left = self.lap(Stage::LightPlace);
         let emits = !lod
-            && (kept_emits
-                || (0..bricks.len()).any(|i| {
-                    (every || bricks.is_dirty(i))
-                        && matches!(bricks.get(i), Brick::Full(p)
-                            if materials_of(p, |m| self.mats.emissive[usize::from(m)]))
-                }));
+            && match &image {
+                Some(img) => img.emits,
+                None => {
+                    kept_emits
+                        || (0..bricks.len()).any(|i| {
+                            (every || bricks.is_dirty(i))
+                                && matches!(bricks.get(i), Brick::Full(p) if self.mats.emits(p))
+                        })
+                }
+            };
         self.lap(left);
         st.light_fresh_records += u64::from(every && emits);
         let mut rescan = RescanSet::default();
@@ -364,6 +416,8 @@ impl GpuWorld {
         let mut result = Ok(());
         let band_on = self.field.band.is_some() && !lod;
         let set = upload_set(bricks.len(), every, band_on, |i| bricks.is_dirty(i));
+        debug_assert!(image.is_none() || (every && !band_on && !lod));
+        let mut image_at = 0;
         for (i, &up) in set.iter().enumerate() {
             if !up {
                 continue;
@@ -376,15 +430,13 @@ impl GpuWorld {
             }
             // The upload's backstop computed the bands under the same write lock.
             let band = band_on.then(|| self.field.bands.get(i).copied().flatten());
-            result = self.upload_brick(
-                coord,
-                i,
-                base + ENTRY_WORD + i,
-                bricks.get(i),
-                band,
-                enc,
-                st,
-            );
+            let at = base + ENTRY_WORD + i;
+            result = match image.as_deref() {
+                Some(img) => {
+                    self.upload_image_brick(img, i, at, &mut image_at, bricks.get(i), enc, st)
+                }
+                None => self.upload_brick(coord, i, at, bricks.get(i), band, enc, st),
+            };
             if result.is_err() {
                 break;
             }
@@ -398,7 +450,7 @@ impl GpuWorld {
                     .entry(coord);
                 fresh.or_default()[i / 64] |= 1 << (i % 64);
             }
-            if emits {
+            if emits && image.is_none() {
                 rescan.insert(i);
                 st.rescan_inserts += 1;
                 let b = brick_of_slot(i);
@@ -418,7 +470,23 @@ impl GpuWorld {
             // A written brick changes its own exposed voxels and those of its neighbours'
             // faces toward it.
             let left = self.lap(Stage::LightNote);
-            self.note_lights(coord, rescan, &bricks, st);
+            match image {
+                Some(img) => {
+                    let lists = std::mem::take(&mut img.lights);
+                    #[cfg(debug_assertions)]
+                    {
+                        let scanned: Vec<_> = (0..bricks.len())
+                            .filter_map(|i| {
+                                let found = self.mats.scan(coord, i, |s| bricks.get(s))?;
+                                (!found.is_empty()).then_some((i as u16, found))
+                            })
+                            .collect();
+                        assert_eq!(lists, scanned, "{coord:?}: the image's light lists");
+                    }
+                    self.take_lights(coord, lists);
+                }
+                None => self.note_lights(coord, rescan, &bricks, st),
+            }
             self.lap(left);
             if self.lights.chunks.contains_key(&coord) {
                 self.lights.dirty.insert(coord);
@@ -550,7 +618,7 @@ impl GpuWorld {
                         // The slot keeps its unit and bin: only its header names the band and
                         // holds its prefix, which a new mask changes even in the same slot.
                         let mut words = std::mem::take(&mut self.up.slot_words);
-                        self.fill_slot(p, ptr.zip(mask.as_ref()), &mut words);
+                        self.mats.fill_slot(p, ptr.zip(mask.as_ref()), &mut words);
                         st.packed_bricks += 1;
                         let u = entry & UNIT_MASK;
                         let k = self.bin_of_unit(u).expect("a live slot");
@@ -616,35 +684,18 @@ impl GpuWorld {
         };
         let header = ptr.zip(mask.as_ref());
         let mut words = std::mem::take(&mut self.up.slot_words);
-        let packed = match brick {
-            Brick::Full(p) => Some((self.fill_slot(p, header, &mut words), class_code(p.class()))),
-            Brick::Uniform(m) if ptr.is_some() => Some((
-                self.fill_uniform_slot(*m, header, &mut words),
-                CLASS_UNIFORM,
-            )),
-            Brick::Uniform(_) => None,
-        };
-        st.packed_bricks += u64::from(packed.is_some());
-        let (flag, code) = match (packed, brick) {
-            (Some(p), _) => p,
-            (None, Brick::Full(_)) => unreachable!("a full brick is packed above"),
-            (None, Brick::Uniform(m)) => {
-                self.up.slot_words = words;
-                if let Some(u) = old_unit {
-                    self.pool.free_slot(u);
-                }
-                self.recs.entries[i] = u32::from(*m)
-                    | if self.mats.translucent[usize::from(*m)] {
-                        TRANSLUCENT_BIT
-                    } else {
-                        0
-                    };
-                return Ok(());
+        let packed = self
+            .mats
+            .pack_brick(brick, header, ptr.is_some(), &mut words);
+        let BrickWords::Slot { bin: k, .. } = packed else {
+            self.up.slot_words = words;
+            if let Some(u) = old_unit {
+                self.pool.free_slot(u);
             }
+            self.recs.entries[i] = packed.entry();
+            return Ok(());
         };
-        let k = bin_of((words.len() / UNIT_WORDS) as u32);
-        // The rest of the bin's slot is padding that no reader reads.
-        words.resize(BINS[k] as usize * UNIT_WORDS, u32::MAX);
+        st.packed_bricks += 1;
         let u = match old_unit {
             Some(u) if self.bin_of_unit(u) == Some(k) => u,
             _ => match self.pool.alloc(k) {
@@ -662,7 +713,7 @@ impl GpuWorld {
         };
         self.stage(k, u, &words, enc, st);
         st.bytes += (words.len() * 4) as u64;
-        self.recs.entries[i] = FULL_BIT | flag | code << CLASS_SHIFT | u;
+        self.recs.entries[i] = packed.entry() | u;
         self.up.slot_words = words;
         st.bricks += 1;
         Ok(())
@@ -730,106 +781,6 @@ impl GpuWorld {
         self.stage(k, u, &words, enc, st);
         st.bytes += (words.len() * 4) as u64;
         Ok(Some(u))
-    }
-
-    /// Fills `out` with the CPU units of a [`CLASS_UNIFORM`] slot of material `m`: an opaque
-    /// mask all set for an opaque material and clear for air or a translucent one, the header
-    /// with `m` as palette entry 0 (none for air), its translucent words all set for a
-    /// translucent material, and `band` in [`HEADER_BAND_WORD`]; then, for a translucent
-    /// material, a translucent unit all set. Returns `TRANSLUCENT_BIT` for a translucent `m`.
-    pub(super) fn fill_uniform_slot(
-        &self,
-        m: MaterialId,
-        band: Option<(u32, &[u64; 8])>,
-        out: &mut Vec<u32>,
-    ) -> u32 {
-        out.clear();
-        out.resize(2 * UNIT_WORDS, 0);
-        let translucent = self.mats.translucent[usize::from(m)];
-        if m != AIR && !translucent {
-            out[..OPAQUE_WORDS].fill(!0);
-        }
-        let header = UNIT_WORDS;
-        out[header + HEADER_PALETTE_WORD] = u32::from(m);
-        if let Some((u, mask)) = band {
-            band_header(&mut out[header..header + UNIT_WORDS], u, mask);
-        }
-        if translucent {
-            out[header + HEADER_TRANSLUCENT_WORD] = !0;
-            out[header + HEADER_TRANSLUCENT_WORD + 1] = !0;
-            out.resize(3 * UNIT_WORDS, !0);
-            return TRANSLUCENT_BIT;
-        }
-        0
-    }
-
-    /// Fills `out` with the CPU units of `p`'s slot (module docs): the opaque mask (the packed
-    /// mask less the translucent voxels), the header, the planes or raw ids copied from the
-    /// packed words, the translucent unit of a planar brick holding a translucent voxel, and
-    /// `band`, a band slot's first unit and its band mask, in the header
-    /// ([`band_header`]). Returns `TRANSLUCENT_BIT`
-    /// when the brick holds a translucent voxel, else 0.
-    pub(super) fn fill_slot(
-        &self,
-        p: &Packed,
-        band: Option<(u32, &[u64; 8])>,
-        out: &mut Vec<u32>,
-    ) -> u32 {
-        out.clear();
-        out.resize(2 * UNIT_WORDS, 0);
-        if let Some((u, mask)) = band {
-            band_header(&mut out[UNIT_WORDS..2 * UNIT_WORDS], u, mask);
-        }
-        let glass = self.mats.glass_of(p);
-        let code = class_code(p.class());
-        let mask = p.mask();
-        for z in 0..8 {
-            let opaque = mask[z] & !glass[z];
-            out[2 * z] = opaque as u32;
-            out[2 * z + 1] = (opaque >> 32) as u32;
-        }
-        let header = UNIT_WORDS;
-        for (z, &w) in glass.iter().enumerate() {
-            let mut bits = w;
-            while bits != 0 {
-                let b = bits.trailing_zeros() as usize;
-                bits &= bits - 1;
-                let (x, y) = (b % 8, b / 8);
-                let block = x / 2 + 4 * (y / 2) + 16 * (z / 2);
-                out[header + HEADER_TRANSLUCENT_WORD + block / 32] |= 1 << (block % 32);
-            }
-        }
-        match p.words() {
-            Some(w) => {
-                let planes = p.class().planes();
-                for (q, &pal) in w[8 + 8 * planes..].iter().enumerate() {
-                    out[header + HEADER_PALETTE_WORD + 2 * q] = pal as u32;
-                    out[header + HEADER_PALETTE_WORD + 2 * q + 1] = (pal >> 32) as u32;
-                }
-                for &plane in &w[8..8 + 8 * planes] {
-                    out.extend([plane as u32, (plane >> 32) as u32]);
-                }
-                if glass != [0; 8] {
-                    for g in glass {
-                        out.extend([g as u32, (g >> 32) as u32]);
-                    }
-                }
-            }
-            None => {
-                let ids = p.wide_ids().expect("a packed brick is planar or wide");
-                out.extend(
-                    ids.chunks_exact(2)
-                        .map(|v| u32::from(v[0]) | u32::from(v[1]) << 16),
-                );
-            }
-        }
-        debug_assert_eq!(
-            out.len(),
-            2 * UNIT_WORDS
-                + payload_units(code) as usize * UNIT_WORDS
-                + usize::from(glass != [0; 8] && code != CLASS_WIDE) * UNIT_WORDS
-        );
-        if glass != [0; 8] { TRANSLUCENT_BIT } else { 0 }
     }
 }
 

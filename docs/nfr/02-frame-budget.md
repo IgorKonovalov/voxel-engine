@@ -1337,3 +1337,26 @@ over 9 494 blocks (a reading, no bar). One `--queue-rule-audit --bake-thread on`
 The lockstep step's p50 lies -6.9 to +5.6 % of Phase 1's base (14.347 ms). The lockstep in-view
 and residency readings beside Phase 3's one run (13.5 and 39.5 s) are not separable (the same
 behaviour read 12.0 to 33.0 s and 27.6 to 41.5 there). The lines of section 2 do not move.
+
+**The mirror's slot image, `inline` against `workers` (Plan 0107 Phase 5, ADR-0056, 2026-11-27,
+release `flythrough` at `103e6715`, headless, the bake thread on, exclusive perf lock, quiet
+at ask and hold, arms alternated; RTX 3080 Laptop, Ryzen 9 5900HS; the rows are in
+[the plan's readings log](../plans/logs/0107.md)).** Sync p99, `inline` / `workers`: the
+tester's cave bench at 1080p Floor 14.13 and 14.86 / 12.27 and 12.53 ms (-14.4 % by the means);
+the forest glide 11.92 and 12.16 / 10.33 and 10.11 (-15.1 %); the forest at leaf fill 128
+11.33 / 9.18 (-19.0 %, one run an arm, against the 6 ms line: missed in both); the RENOIR's
+cave at 720p Portable 14.39 / 12.48 (-13.3 %); the eight-CPU stand-in (`taskset -c 0-7`) cave
+13.94 / 12.51 (-10.3 %) and a fresh forest start 4.92 / 5.31 (+8.0 %, one run an arm). The
+stages at p99 on the RTX cave: `size` 2.23 to 2.35 / 0.96 to 1.01, `note` 1.87 to 1.99 / 0.12,
+`alloc` 7.34 to 7.72 / 7.01 to 7.14, `copy` 3.44 to 3.51 / 3.30 to 3.48, `select` 1.88 to 1.96
+in both, `light place` 1.11 to 1.19 in both; `poll` 3.6 to 3.7 and `lock` at most 0.05 in
+every run. `update + poll + sync` p99 15.91 and 16.32 / 13.90 and 14.30. Bricks packed on the
+render thread at p99: 13 316 / 10 082 in the cave, 8 853 / 4 359 in the forest: a quarter to a
+half of the tail's packed bricks belong to records an image stands for (new full records of
+never-edited chunks); the rest, by inference from the code and not counted by a row, are LOD
+records. The workers pay 6 to 18 us a chunk for an image beside 50 to 116 us for the masks.
+The stand-in's fresh forest read worse frames under `workers` (wall p50 22.3 against 15.5 ms,
+p99 36.4 against 31.6, `march GPU` p50 15.1 against 10.1 with frame CPU p50 equal), one run an
+arm, not attributed and not re-read. Against the plan's bar (a 20 % cut of the sync's p99 on
+both RTX scenes) the gain is short, so the default stays `inline`; section 2's lines for
+`alloc` and `update + poll + sync` carry both arms' figures.

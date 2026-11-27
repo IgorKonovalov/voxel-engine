@@ -498,9 +498,9 @@ fn f1_opens_the_keys_page() {
 /// The shortcut rows of ADR-0061's key table as the owner answered it (Plan 0080's "The
 /// keys"), the render profile's `F4` (ADR-0055) and the belt's (Plan 0077's placement mode;
 /// the dig radius is the menu's only; the digits are the belt's slots while the belt is shown,
-/// a fixed row, and enter no mode): each entry that keeps a bind and its binds as the menu
-/// shows them.
-const SHORTCUTS: [(&str, &str); 20] = [
+/// a fixed row, and enter no mode), and the mirror's packing (Plan 0107 Phase 3): each entry
+/// that keeps a bind and its binds as the menu shows them.
+const SHORTCUTS: [(&str, &str); 21] = [
     ("profile", "F4"),
     ("walk", "G / pad North"),
     ("resume the tour", "T"),
@@ -521,6 +521,7 @@ const SHORTCUTS: [(&str, &str); 20] = [
     ("frame readings", "Enter"),
     ("view", "F9"),
     ("snap", "F / pad D-pad up"),
+    ("mirror pack", "U"),
 ];
 
 /// `FIXED_KEYS` is the table's Fixed rows (movement, look's keys, `Tab`, `F1`, `F2`, `Esc`,

@@ -573,6 +573,11 @@ impl RenderSettings {
     pub const NOT_SETTINGS: &'static [(&'static str, &'static str)] = &[
         ("set_dt", "a per-frame input: the frame's step in seconds"),
         (
+            "set_packing",
+            "where the mirror's new records are packed (MirrorConfig::packing, ADR-0056): the \
+             mirror's bytes are the same under either, so the image does not depend on it",
+        ),
+        (
             "set_bake_queue",
             "the route a caller's write to the live queue's books takes (a rig's order or rule \
              switch); the bake knobs that are settings have setters of their own",
@@ -586,6 +591,11 @@ impl RenderSettings {
             "set_bake_slots",
             "a reading's knob: the bake thread's table slots, picked by reading (Plan 0099 \
              Phase 4c2); lockstep keeps 16 whatever it is",
+        ),
+        (
+            "set_bake_listers",
+            "an input: the listing pool's threads follow from the stream workers the caller \
+             chose (ThreadPlan), not from a picture setting",
         ),
         (
             "set_pipeline_cache",

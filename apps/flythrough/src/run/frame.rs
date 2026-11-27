@@ -55,6 +55,7 @@ impl Run {
         let sync_ms = ms_since(ts);
         let cpu = ms_since(t);
         stream.stages_ms = [update_ms, poll_ms, apply_ms, sync_ms];
+        self.hud.run.poll_ms.push(poll_ms);
         stream.tick_ms.push(ms_since(self.start));
         stream.cpu_ms.push(cpu);
         for e in &ev.errors {
@@ -66,6 +67,7 @@ impl Run {
         let tick = stream.streamer.ticks();
         stream.last_sync = synced.ok();
         if let Some(s) = &stream.last_sync {
+            stream.tally.note_sync(s);
             stream.sync_line.push(s);
             self.hud.run.sync.push(s);
             if let (Some(rec), Some(p)) = (self.recorder.as_mut(), self.player.as_ref()) {
@@ -145,6 +147,10 @@ impl Run {
         stream.track(&ev, &gfx.mirror);
         let st = stream.streamer.stats();
         stream.stats = Some(st);
+        if let Some(k) = stream.tally.fill_due(ms_since(self.start)) {
+            let mirrored = gfx.mirror.full_chunks().count() as u64;
+            stream.tally.fill[k] = Some([st.resident_full as u64, mirrored]);
+        }
         if !stream.full_residency
             && st.in_flight == 0
             && st.queued == 0
@@ -240,6 +246,11 @@ impl Run {
         }
         let drawn = self.frame;
         let flow = self.draw(gpu, surface, t0, dt);
+        if drawn == 0
+            && let Some(s) = self.stream.as_mut()
+        {
+            s.mark_first_frame(ms_since(self.start));
+        }
         if self.frame > drawn {
             self.write_still_at(gpu, drawn);
         }

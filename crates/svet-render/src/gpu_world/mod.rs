@@ -109,6 +109,7 @@ mod columns;
 mod emitters;
 mod fit;
 mod format;
+mod image;
 mod lights;
 mod slot;
 mod stage;
@@ -119,6 +120,11 @@ use self::columns::ColumnMap;
 pub use self::columns::{COLUMN_CELL, COLUMN_CELLS, COLUMN_NONE};
 pub(crate) use self::columns::{column_is_final, column_unfinal_at};
 pub use self::format::*;
+pub(crate) use self::image::HeldImage;
+use self::image::*;
+pub use self::image::{
+    DEFAULT_IMAGE_CAP_BYTES, ImageHook, ImageHookStats, Packing, slot_image_maker,
+};
 pub use self::lights::*;
 use self::slot::*;
 pub use self::stage::*;
@@ -277,6 +283,13 @@ pub struct SyncStats {
     pub kept_sizes: u64,
     /// Column-map tiles written ([`GpuWorld::column_map`]).
     pub column_tiles: u64,
+    /// New full records written from a stream worker's slot image ([`Packing::Workers`]),
+    /// and the images dropped at their upload instead: the chunk edited since, the image
+    /// packed under other material flags, the field surface on.
+    pub images_used: u64,
+    pub images_edited: u64,
+    pub images_other_flags: u64,
+    pub images_field: u64,
 }
 
 /// Which chunks the mirror holds.
@@ -318,6 +331,8 @@ pub struct MirrorConfig {
     pub light_radius: i32,
     /// Light samples one sync writes before carrying the rest over (at least one chunk).
     pub light_sync_samples: u32,
+    /// Where a new full record's slot words are packed ([`GpuWorld::take_images`]).
+    pub packing: Packing,
 }
 
 impl MirrorConfig {
@@ -335,6 +350,7 @@ impl MirrorConfig {
             light_chunk_cap: DEFAULT_LIGHT_CHUNK_CAP,
             light_radius: DEFAULT_LIGHT_RADIUS,
             light_sync_samples: DEFAULT_LIGHT_SYNC_SAMPLES,
+            packing: Packing::Inline,
         }
     }
 }
@@ -355,6 +371,7 @@ pub struct GpuWorld {
     lights: LightMirror,
     field: FieldState,
     columns: ColumnMap,
+    images: Images,
 }
 
 impl GpuWorld {
@@ -410,6 +427,7 @@ impl GpuWorld {
             mats: MaterialFlags::new(),
             field: FieldState::default(),
             columns: ColumnMap::new(device, window_size),
+            images: Images::default(),
         }
     }
 
@@ -899,9 +917,12 @@ impl GpuWorld {
         n
     }
 
-    /// Drops the chunks `events` evicted from the mirror. Loaded chunks need nothing here:
-    /// the world's dirty-chunk set carries them to the next `sync`.
+    /// Takes the slot images among `events`' prepared results ([`GpuWorld::take_images`]),
+    /// then drops the chunks `events` evicted from the mirror, with their images. Loaded
+    /// chunks need nothing more here: the world's dirty-chunk set carries them to the next
+    /// `sync`.
     pub fn apply_events(&mut self, events: &StreamEvents) {
+        self.take_images(&events.prepared);
         for &c in &events.evicted {
             self.drop_chunk(c);
         }
@@ -1046,6 +1067,7 @@ impl GpuWorld {
             self.queue = Some(queue.clone());
         }
         self.reconcile_window(world);
+        self.prune_images();
         self.lap(Stage::LightPlace);
         self.flush_dropped_lights(enc);
         self.lap(Stage::Select);

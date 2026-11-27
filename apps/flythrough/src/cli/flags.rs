@@ -388,6 +388,16 @@ fn run_flags() -> Vec<Flag<Parsing>> {
             },
         ),
         Flag::value(
+            &["--mirror-pack"],
+            "inline|workers",
+            "where new mirror records are packed (key U)",
+            |p: &mut Parsing, v| {
+                p.args.mirror_pack =
+                    svet_render::Packing::parse(v.text).ok_or_else(|| v.takes("inline|workers"))?;
+                Ok(())
+            },
+        ),
+        Flag::value(
             &["--residency"],
             "R_FULL,R_LOD",
             "the streamed radii in chunks",

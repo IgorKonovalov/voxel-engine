@@ -940,6 +940,17 @@ against the baked store: no probe or store term takes sun or sky light.
   hall and every cold start miss it. **Left open** (the backlog): a census of the pipelines a
   default start needs, the default-off arms built behind the first frame, the window's start
   2.5 s behind the headless one.
+- **The mirror's slot image packed on the stream workers** ([Plan 0107](plans/done/0107-the-mirrors-slot-image-packed-on-the-stream-workers.md),
+  closed 2026-11-27, v0.83.0; ADR-0056's Outcome added to): the stream workers' hook makes
+  each full chunk's slot words, sizes and emitter lists, and the mirror copies them for a new
+  full record of a never-edited chunk; the mirror's bytes are equal whichever thread packed,
+  by test. **It stays a setting, off** (`--mirror-pack workers`, `U`): it cuts the sync's p99
+  by 10 to 15 % on the RTX host against the plan's 20 % bar, because a quarter to a half of
+  the tail's packed bricks belong to records an image can stand for, and `alloc` still leads
+  the tail (7.0 to 7.7 ms p99 against the 3.0 ms line, both arms). The thread counts come
+  from one place (`ThreadPlan`), printed at the start. **Left open:** `alloc` and `light
+  place` go to Plan 0111, which reads before it picks; the three conditions of a flip to
+  `workers` are the backlog's "Plan 0107's leftovers".
 - **A surface detail layer** ([Plan 0081](plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
   drafted 2026-11-16, awaits the owner's go; ADR-0063 proposed): grass, moss, strands,
   fungus caps, flowers, pebbles and snow tufts as a procedural shell marched in the hit pass

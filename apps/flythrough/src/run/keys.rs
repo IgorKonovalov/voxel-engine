@@ -92,7 +92,15 @@ impl Run {
         bake.full_first = Some(q.full_first);
         bake.missing_light = q.missing_light;
         bake.reach = q.reach;
+        if m.mirror_pack != before.mirror_pack
+            && let Some(s) = &self.stream
+        {
+            s.images.set_packing(m.mirror_pack);
+        }
         let Some(g) = self.gfx.as_mut() else { return };
+        if m.mirror_pack != before.mirror_pack {
+            g.mirror.set_packing(m.mirror_pack);
+        }
         if q.reach != b.reach {
             g.frame.set_bake_reach(q.reach);
         }

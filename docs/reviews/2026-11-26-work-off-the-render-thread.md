@@ -348,7 +348,7 @@ The roadmap's order does not move: 0101 and 0105, 0093, then 0091. Step 1's lane
    follow-on. (b) Reopen question 8 of Plan 0099.
 
 **The owner's answers (2026-11-26): "all recommended".** 1 (a): drafted the same day as
-[Plan 0107](../plans/0107-the-mirrors-slot-image-packed-on-the-stream-workers.md), Phase 1 the
+[Plan 0107](../plans/done/0107-the-mirrors-slot-image-packed-on-the-stream-workers.md), Phase 1 the
 re-read, the lane after Plans 0101 and 0105 merge. 2 (a): drafted as
 [Plan 0108](../plans/done/0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md),
 the pre-roll reading beside Plan 0093, the cold-pipeline split before the next tester archive.

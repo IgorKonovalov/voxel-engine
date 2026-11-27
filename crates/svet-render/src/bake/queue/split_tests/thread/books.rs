@@ -100,7 +100,7 @@ fn masks_of(q: &mut BakeQueue, world: &World, c: [i32; 3]) -> svet_world::Prepar
         verdicts: Vec::new(),
         shells: Default::default(),
     };
-    svet_world::Prepared(Arc::new(m))
+    ChunkPrepared::of(m, None)
 }
 
 /// Done when (2) of Plan 0099 Phase 3f. The queue still baking, message F carries chunk 1's

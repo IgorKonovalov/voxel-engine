@@ -97,3 +97,47 @@ The decision is not superseded: nothing refutes the mechanism, only its share. P
 amended to cut the measured stages in place on the render thread first; its Phase 5 re-reads
 `pack + size` against what remains and, at half or more of the sync's p99, the worker packing
 returns as its own plan under this record. Until then nothing here is built.
+
+### 2026-11-27: built by Plan 0107, as a setting that stays off
+
+[Plan 0107](../plans/done/0107-the-mirrors-slot-image-packed-on-the-stream-workers.md) built
+the decision: the stream workers' hook (`ChunkWork`, with an `ImageHook`) makes each full
+chunk's slot image (entries, slot words padded to their bins, the per-bin counts, the exposed
+emitters), and the mirror copies it for a new full record of a never-edited chunk, under the
+mirror's own material flags, with the field surface off. One packing code serves both paths;
+`gpu_mirror_image` asserts the pool, the records, the table and the light samples equal byte
+for byte whichever thread packed, and a debug build re-packs every image it uses and compares.
+The images alive are capped at 64 MiB. It is `MirrorConfig::packing`, `Packing::Workers`, and
+the fly-through's `--mirror-pack workers` (key `U`).
+
+**The default is `Inline`.** Read at the plan's Phase 5 (release at `103e6715`, RTX 3080
+Laptop, Ryzen 9 5900HS, the bake thread on, quiet, arms alternated; `docs/plans/logs/0107.md`):
+`Workers` cuts the sync's p99 from 14.49 to 12.40 ms on the tester's cave bench (-14.4 %) and
+from 12.04 to 10.22 ms in the forest glide (-15.1 %), against the plan's bar of 20 % on both.
+`size` falls by 57 to 60 % and the emitter scan leaves, but `alloc`, the stage this record's
+plan was drawn for, reads 7.0 to 7.7 ms p99 in both arms against its 3.0 ms line.
+
+Two things this record's Decision assumed did not hold, and both are of share, not of
+mechanism:
+
+- **Most of the tail's bricks have no image to use.** Under `Workers` the render thread still
+  packs 76 % of `Inline`'s bricks at p99 in the cave and 49 % in the forest. The Decision's
+  image stands for a new full record; the rest of a moving camera's records are, by inference
+  from the code (no printed row counts records by tier), LOD records packed and sized from
+  mips, at the outer ring and behind the camera.
+- **"The render thread only allocates and copies" still costs a walk a brick.** The upload
+  from an image keeps one allocation, one staged copy and one entry write per brick, and
+  `alloc`'s clock also holds per-record work no image touches (the chunk's write lock, the
+  backstop's fit, the record's entries, the column notes).
+
+One run on an eight-CPU stand-in (a fresh forest start) read worse frames under `Workers`,
+with no path found from the image to the cost and no second run; the stand-in's cave read
+full residency 5.6 % later. Neither is attributed.
+
+The decision is not superseded: the mechanism works and its bytes are proven equal. A flip of
+the default is [Plan 0111](../plans/0111-the-stagger-in-flight-on-streamed-scenes-read-quiet-after-plan-0107-then-cut.md)'s
+to propose, on three conditions (Plan 0107's amendment of 2026-11-27): its quiet tables show
+fewer frames over 33.3 ms under `Workers`; the stand-in's fresh forest re-read in two
+alternated pairs does not follow the arm on the GPU; the stand-in's full residency is not
+later by more than 10 %. The `alloc` stage's candidates (LOD records from the workers, the
+per-record work, a run a bin in place of the per-brick walk) are that plan's to read first.

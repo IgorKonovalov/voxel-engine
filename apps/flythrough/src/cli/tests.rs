@@ -14,8 +14,10 @@ use crate::{LogicChoice, LookPreset, RESIDENCY};
 use svet_app::Pacing;
 use svet_render::UpscalerKind;
 mod exposure;
+mod mirror_pack;
 mod outdoor;
 mod still;
+mod threads;
 
 use svet_render::{
     AutoExposure, Exposure, HistoryKill, LightingResolution, NormalMode, RenderScale, ShadowWalk,

@@ -29,6 +29,7 @@ mod settings;
 pub mod sky;
 #[cfg(feature = "test-support")]
 pub mod test_support;
+mod threads;
 
 /// Readings: the readbacks of a texture or buffer, the march's step histogram, the bake
 /// queue step's stages and regimes, and the light summaries a getter returns. For tools and
@@ -81,14 +82,15 @@ pub mod internals {
         LOD_BIT, LOD_LEVEL_ENTRY, LightSample, MATERIAL_FLOATS, MATERIAL_MASK, PAGE_BYTES,
         PAGE_UNITS, PALETTE_ENTRIES, PLACEHOLDER_BYTES, RECORD_BYTES, RECORD_MASK, RECORD_WORDS,
         SLOT_BINS, TRANSLUCENT_BIT, UNIT_BYTES, UNIT_MASK, UNIT_WORDS, band_bin_of, bin_of,
-        budget_for, class_code, exposed_emitters, layer_prefix, payload_units, slot_units,
-        slots_per_page,
+        budget_for, class_code, exposed_emitters, layer_prefix, payload_units, slot_image_maker,
+        slot_units, slots_per_page,
     };
     pub use crate::probes::{
         MAX_AGE, ProbeUniform, RAYS_PER_PROBE, SLICES, TestProbe, WINDOW_FRAMES,
     };
 }
 
+pub use bake::ChunkWork;
 pub use bake::{
     AROUND_REACH, AroundSource, AuditDiffer, BakeError, BakeProgress, BakeQueue, BakeReport,
     BakeRoundTrip, BakeSettings, Band, Bands, Budget, CycleLine, DEFAULT_BAKE_EDIT_MS,
@@ -133,6 +135,7 @@ pub use gpu_world::{
     DEFAULT_LIGHT_CHUNK_CAP, DEFAULT_LIGHT_RADIUS, DEFAULT_LIGHT_SAMPLES, GpuWorld, MirrorConfig,
     MirrorError, ShardLayout, SyncClock, SyncPoint, SyncStats, Window,
 };
+pub use gpu_world::{DEFAULT_IMAGE_CAP_BYTES, ImageHook, ImageHookStats, Packing};
 pub use hud::{
     BACKDROP_ALPHA, GRID_COLS as HUD_GRID_COLS, HudBox, HudColour, HudOverlay, HudPaint, HudTile,
     MAX_TILES, TILE_BIT, TILE_CELLS, TILE_PX,
@@ -148,6 +151,7 @@ pub use settings::{
     ApplyClass, BakeKnobs, BuildSettings, DEFAULT_FAR_NORMAL, Profile, RenderSettings,
     SettingsChange, UpscalerChoice,
 };
+pub use threads::{ThreadPlan, logical_cpus};
 pub use {glam, wgpu};
 
 /// The hit pass's modules (`common`, `mirror`, `walk`, `hitrec`, `field_walk`, `hit`), which

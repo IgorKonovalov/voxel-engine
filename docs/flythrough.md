@@ -104,6 +104,7 @@ row showing the new value.
 | readings | `Enter` | Sample the next frames and print frame-time readings (menu closed) |
 | debug | `F9` | Cycle the view: shaded, normals, hitmask, steps, cracks, albedo |
 | debug | `X` | Cycle the cutaway: auto, on, off |
+| debug | `U` | `mirror pack`: inline or workers (`--mirror-pack`); the mirror uses or drops the images that arrive from the next sync, the workers follow from their next chunk |
 
 Everything else is an entry of the menu (`Tab`) with no key: the dig radius (`moving`), the
 look presets and far normal,
@@ -288,7 +289,8 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--settled-start` | With `--headless` only (refused in a window): after the light pre-roll and before frame 0, step the stream until full residency (nothing queued or in flight, nothing pending on the mirror), then the stream and the live queue in lockstep at 40 ms a step until the queue has no job and nothing to refine on 3 steps in a row; ended by that state, never by wall time. Prints `settled: F full, L lod chunks, J jobs, C to refine, P provisional after S steps (R to residency, Q of the queue), T ms`; past 50 000 steps it prints `settled start: not settled ...` and the run exits non-zero without drawing a frame |
 | `--sync-budget MIB` | The mirror's upload bytes a frame |
 | `--sync-ms MS` | The mirror's upload time a frame [none; 0 is none] |
-| `--workers N` | The streamer's generation workers, at least 1 [half the logical cores] |
+| `--workers N` | The streamer's generation workers, at least 1; the bake's listing threads take what the workers and the render and bake threads leave, at least 1, and the start-up's `threads:` line prints the sum against the logical CPUs (`svet_render::ThreadPlan`) [half the logical cores] |
+| `--mirror-pack inline\|workers` | Where a streamed world's new mirror records are packed: on the render thread, or copied from the slot images the stream workers make (ADR-0056; the bytes are the same); the banner's and the HUD's `mirror pack inline` row; `U` flips it [inline] |
 | `--residency R_FULL,R_LOD` | The streamed full and LOD radii in chunks, hysteresis 1 [16,24] |
 | `--mirror-budget MIB` | The VRAM the mirror reserves at startup [3072 streamed; on the level what it needs plus dig headroom]. While streaming, the full radius drops a chunk after 30 frames with the mirror's pressure over 0.9 and returns after 300 frames under 0.7, down to 6 |
 
