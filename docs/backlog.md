@@ -17,6 +17,14 @@ Rules:
 
 ## Next up
 
+### The forest dig at depth is checked by name on the RTX alone (2026-11-27)
+
+From [Plan 0105](plans/0105-the-digs-flash-at-depth-a-held-estimate-that-follows-the-holes-own-light.md), "Amended 2026-11-27 (architect, after Phase 7c's stop)". The forest's bars at depth (`down` and `side`, 1 to 7 m, `gpu_outdoor`'s `dig_depth::reading`) could not become a soak test: on lavapipe the rig's start alone (the floor's 1080p frame, the queue drained) took 25.5 minutes on a debug build. Lavapipe holds the synthetic shaft (`gpu_sun`'s `a_dig_at_depth_holds_no_light_over_its_landing`) and the fresh hole from above; no CI run sees the forest's sky at depth, the 1 m dark start's level, or a dig into a shaft's wall from inside.
+
+- **What it would take:** a forest rig that drains on lavapipe inside the soak tier's time. Unread: the drain's frame count there, and whether a hole 7 m down still holds enough pixels at a quarter of the size. Not an edited forest.
+- **Until then:** a plan that touches the held estimate, the dig's hold or the temporal pass's dig path names those two readings in its re-reads, by name on the RTX.
+- **Pick up:** with the next plan that edits those, or when lavapipe's drain is read for another reason.
+
 ### The pre-roll's end on a streamed world rides a 30-step recheck (2026-11-26)
 
 From [Plan 0106](plans/done/0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md), Rulings 4 and 5 (readings in `docs/plans/logs/0106.md`, Phases 10 and 11). **Drafted 2026-11-26 as [Plan 0109](plans/0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md); awaits the owner's go.** This entry leaves when the owner answers.
