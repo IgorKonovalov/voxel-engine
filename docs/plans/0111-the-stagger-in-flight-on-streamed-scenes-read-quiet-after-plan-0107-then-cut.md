@@ -715,3 +715,173 @@ merged tree first (the plan's risk, unchanged).
 2. **Under a loaded box:** readings only. 6g goes to the backlog unless the loaded re-runs after 6a to 6f still show `update`-led frames.
 3. **The castle's focus jump:** 6f in this plan. It does not run beside Plan 0033's streamer brief.
 4. **Default flips at 6c:** by the written rule, the picks shown to the owner before 6d.
+
+## Amended 2026-11-27 (architect, 6a's bars)
+
+Read from the Phase 6a section of [logs/0111.md](logs/0111.md), the diff `b8d74e5b..1795738b`
+and the tree at `1795738b` (`crates/svet-render/src/bake/queue/shadow.rs`,
+`gpu_world/columns.rs`, `gpu_world/window.rs`, `gpu_world/mod.rs`, `gpu_world/lights.rs`,
+`gpu_world/slot.rs`, `frame/baked.rs`). No run was made for this reading.
+
+### The ruling: 6a stays at `1795738b`; Phase 6a' finishes it
+
+Phase 6a met its first bar (quiet `build` p99 10.753 / 13.795 to 4.790 / 4.773 ms against 5.0)
+and its loaded bar (16.926 to 5.993 against 8.0), and the quiet cave's slow count fell in both
+runs (227 to 174, 178 to 147; `over_33ms` 222 / 177 to 168 / 146). It missed `build` max (10.540
+/ 10.871 against 8) and the build-led slow frames (11 / 9 against 0). The Phase 6 rule says a
+remedy that misses is reverted. **Not here:** the dev's attribution run puts the whole of the
+miss on one read the phase's own text asked for, the every-column `column_lowest` on a z move
+(2 601 columns, about 5.5 ms of the 7.1 to 10.5 ms frames), and the code reading below shows
+that read is unnecessary, so a revert would give up a measured cut to redo a deletion. The
+phase's text was wrong on the code, and that is the architect's error (Phase 5's "every column
+of the window when the window's z range changed"), not the dev's. 6a' below removes the read
+and carries 6a's bars. The owner may overrule in the morning (question 1); a revert is one
+`git revert 1795738b`.
+
+### What the code says
+
+**The column map holds the window's chunks only, so the z range adds nothing a chunk change
+does not name.** `ColumnMap::sheets` (`gpu_world/columns.rs`) gains a sheet in `note_columns`,
+called by `upload` (`gpu_world/window.rs`) after `upload_record` placed the chunk, which notes
+it (`slot.rs`, `note_change` before `recs.mirrored.insert`); it loses a sheet in `drop_record`
+(`gpu_world/mod.rs`), which notes the chunk in the same breath (`note_change` then
+`columns.remove`). `reconcile_window` (`window.rs`) drops every leaving chunk, mirrored or
+pending, with `drop_chunk` inside the `sync` that moves the window, before `window.min` is set,
+and queues each entering one with `enqueue`, which notes it. `sync` runs before
+`bake_queue_frame` reads the notes (`frame/baked.rs`), so at `notes` every sheet lies inside the
+window, and `lowest_top` over the window's z range reads every sheet of its column whatever the
+range's position. A column's lowest top changes only when a sheet of it is set or removed, and
+each of those notes its chunk. The window's size is set at construction and never assigned
+again, so `z_moved`'s size clause has nothing to catch. The 6a test's model agrees (its
+`column_lowest` filters by the z range, but its chunks all lie in the window), which is why the
+test could not see the read was redundant: nothing modelled the hazard it guards against.
+
+**`light_notes` walks every chunk with lights because the key carries no coordinate.**
+`GpuWorld::light_notes` (`gpu_world/lights.rs`) iterates `lights.chunks` (16 800 to 17 900 in
+the cave), scans each chunk's `bricks` lists for a non-empty one and looks the chunk up in
+`dirty`, then sorts; `light_key` is `(epoch, changes)`, two counters bumped by `touch()` at
+seven sites (`note_lights`, `take_lights`, `drop_lights`, `write_chunk_lights`'s removal of an
+emptied chunk, `released`, the dirty mark after an upload in `slot.rs`, and the walk's
+`changes += 1` after `write_walk`), none of which records the chunk. `Shadow::take` replaces its
+`lights` `Vec` whole (`clone_from`), and `emitters_near` and `lights_ready_near` scan it
+linearly on the bake thread. The dev's attribution read it in 377 of 4 260 frames at 1.0 to 3.2
+ms (median 2.4): it is inside every F frame (a move drops lights, which touches) and in about 8
+% of the others. Not a hitch by itself; the largest part of what an F frame's `build` will hold
+once 6a' lands.
+
+**The x and y moves' 5.0 to 5.3 ms** are the changed chunks' `chunk_note` (600 to 1 300, three
+hash lookups each), their columns' `column_lowest` (400 to 610 at about 2 us) and `light_notes`.
+After 6a' a z move costs the same.
+
+#### Phase 6a': the z move's every-column read goes
+- **Owner skill:** dev
+- **What:** In `notes` (`bake/queue/shadow.rs`), the `z_moved` branch and `all_columns` on the
+  delta path go: the delta's columns are the changed chunks' columns, on every move alike;
+  `all_columns` stays for `whole`. The `columns` field's doc and the module doc say why (the
+  map holds the window's sheets only, dropped in the sync that moves the window). The
+  mechanism is defended on both sides: the real mirror's invariant by a GPU test, the shadow's
+  reading by the CPU oracle. `GpuWorld` gains a `#[doc(hidden)] pub fn
+  column_sheets_outside_window(&self) -> usize` (a count over `columns.sheets`) for the test.
+- **Files touched:** `crates/svet-render/src/bake/queue/shadow.rs` (and its test module),
+  `crates/svet-render/src/gpu_world/columns.rs` or `mod.rs` (the accessor), one of
+  `crates/svet-render/tests/gpu_mirror_tiers.rs` or `gpu_mirror_image.rs` (whichever already
+  moves the focus; a z move is added if neither has one), `docs/plans/logs/0111.md`.
+- **Done when:** (1) The 6a CPU test's z-move assertion flips: after the z move the notes
+  carry at most the changed chunks' columns (not every column), and `same_as_whole` still
+  holds for every chunk and column of the old and new windows after every move and arrivals
+  frame; the model's `column_lowest` drops its z-range filter (the real map has none to
+  apply), so the oracle reads what the mirror does. Under 1 s, no GPU, no clock. (2) A
+  lavapipe test in the named `gpu_*` binary streams a world whose chunks span at least three
+  chunk layers in z, moves the focus so the window moves in x, in z and by a jump, syncing
+  after each, and asserts `column_sheets_outside_window()` is 0 after every sync and that
+  `column_lowest(x, y)` for every column of the window equals a fold over the mirror's full
+  and LOD-only chunks of that column (the test's own oracle from `full_chunks` and the world's
+  bricks is acceptable; a simpler oracle is the same call before and after a z-only move with
+  no chunk arrived or dropped, which must read equal); under the soak line, its time stated.
+  (3) The quiet headless cave at the tester's line, two runs an arm alternated, the base arm
+  `1795738b` (6a's tip) and the parent `b8d74e5b` read from 6a's rows, not re-run: `build` p99
+  under 5.0 ms (6a 4.790 / 4.773), **`build` max under 8 ms** (6a 10.540 / 10.871), the F
+  lines' `build` mean under 6.0 ms (6a 9.849 / 10.460; the x and y moves read 5.0 to 5.3), and
+  **slow frames whose largest stage is `build` 0 in both runs** where a frame counts only if
+  its `build` is 8 ms or more (a build-led frame under that is the headless `present` wait
+  crossing 33 ms on the GPU's clocks, as Phase 5 said; it is listed in the log, not counted).
+  The loaded cave, one run an arm against 6a's tip: `build` p99 under 8.0 ms (6a 5.993) and
+  `build` max under 20 ms (6a 29.885). The hold is projected from its first run (6a's: about
+  8 minutes quiet, 3.5 loaded).
+- **Expected cut (a guess):** the 15 z-move frames of 7.1 to 10.5 ms read 4 to 5.5; the quiet
+  cave's build-led slow frames 9 to 11 become 0 to 2, the rest `present`.
+- **Stop rule:** `build` max still 8 ms or more in either quiet run with the every-column read
+  gone: stop, the dev's attribution rig (`live/p6a-instrument.py`) is run once on the tip and
+  the architect reads what is left. A hold projected past 20 minutes is not started.
+- **Beside the lanes:** yes. `shadow.rs` and the mirror's test binaries are no brief's of
+  Plans 0033 or 0081 (0033 names `gpu_world/columns.rs` for its level tiles; the accessor
+  goes in `mod.rs` if that brief has started).
+
+#### Phase 6a'': the light notes as a delta (awaits the owner's go, question 2)
+- **Owner skill:** dev
+- **What:** The mirror records the chunk at every site that touches the lights
+  (`Lights::touch` gains a coordinate; the walk's `changes += 1` records each chunk
+  `write_walk` placed, evicted or refused), in a `noted` set beside `Changes` with the same
+  overflow rule (`None` past `CHANGES_MAX`, then whole). `light_notes` takes the set and returns
+  those chunks' notes, a chunk no longer in `lights.chunks` as `LightNote::default()`; the
+  whole read stays for `whole` and the overflow. `ShadowNotes::lights` becomes the chunk
+  list's shape (each chunk once, newest wins in `then`, `whole` replaces), `Shadow::lights` a
+  `ChunkMap<LightNote>` (`emitters_near` and `lights_ready_near` iterate it as today), and the
+  bake side's `blocked.lights_changed()` trigger in `step.rs` reads `lights.is_some()` as now.
+  The test models in `blocked_tests.rs` and `split_tests.rs` gain the delta.
+- **Files touched:** `crates/svet-render/src/gpu_world/lights.rs`, `gpu_world/slot.rs` (the
+  dirty mark's site), `gpu_world/window.rs` (the set beside `Changes`), `bake/queue/shadow.rs`,
+  `bake/queue/blocked_tests.rs`, `bake/queue/split_tests.rs`, one `gpu_*` binary,
+  `docs/plans/logs/0111.md`.
+- **Done when:** `the_shadow_membership_answers_as_the_mirror_does` extends its recorded
+  sequence with light deltas (ranges written, moved, dropped, dirtied, emptied) and still
+  equals the oracle after every message, including a `then` of three stalled frames; a
+  lavapipe test streams a lit world (the cave's lamps or a seeded one), moves the focus and
+  digs, and after every sync asserts the shadow fed the deltas answers `emitters_near` and
+  `lights_ready_near` for every chunk of the window as one fed `light_notes()` whole does
+  (through a `#[doc(hidden)]` accessor or the bake's test rig); under the soak line, its time
+  stated. The quiet headless cave, two runs an arm alternated against 6a''s tip: `build` p99
+  under 3.0 ms and the F lines' `build` mean under 3.0 ms (6a' sets both bases), `build` max
+  under 8 ms; `over_33ms` not higher than 6a''s in either run. The loaded cave, one run an arm:
+  `build` p99 under 5.0 ms.
+- **Expected cut (a guess):** 1 to 3 ms off every F frame and off about 8 % of the others; no
+  slow frame of the quiet cave leaves on this alone.
+- **Stop rule:** the oracle test finds a touch site the delta misses that the dev cannot name
+  from the code within the phase: stop, the architect; the mechanism is not shipped with a
+  known miss. A hold projected past 20 minutes is not started.
+- **Beside the lanes:** yes; `gpu_world/lights.rs`, `slot.rs` and `window.rs` are no brief's of
+  Plans 0033 or 0081.
+
+### The order, and what runs meanwhile
+
+6a' first: the code is a deletion and two tests, and 6b, 6c and 6d then rest on one base. **6b
+may start on `1795738b` if the lane is otherwise idle:** its four arms compare settings on one
+binary and its fields (sync-led slow frames, `alloc` p99, the sync max, residency) do not read
+`build`; its runs and 6a''s serialize under the perf lock, and the log names the tip it ran
+on. 6a'' runs after 6b's reading, only on the owner's go. 6c to 6f are unchanged; where a phase
+says "against 6a's tip" it means the tip it stacks on (6a', or 6a'' if run).
+
+### Not done, and why
+
+- **(b) a cheaper `column_lowest`:** after 6a' the columns read on a move are the changed
+  chunks' 400 to 610 at about 2 us, about 1 ms. The flush already builds each dirty column's
+  tile (`ColumnMap::flush`), so a `slot_lowest` kept beside `slot_tops` would make the read
+  O(1) for a flushed column; parked in the backlog ("The mirror's notes for the bake's shadow")
+  until a reading after 6a' and 6a'' still names the columns.
+- **(d) restating the bars:** only the noise clause above (a build-led frame under 8 ms is
+  `present`'s jitter), which Phase 5 already stated in prose; the figures stand.
+- **(e) a revert:** above.
+
+### Owner questions (each with the recommended option first)
+
+1. **Keep 6a at `1795738b` and finish it with 6a', against the Phase 6 revert rule?**
+   Recommended: keep (the p99 bar met, the slow count lower in both runs, the miss attributed
+   to a read the code shows redundant). Alternative: revert and re-land 6a and 6a' as one
+   commit (the same code, a cleaner history, half a day). **The lane proceeds on the
+   recommendation:** 6a' is 6a's own file and text, inside the approval 6a already has.
+2. **Phase 6a'' (the light notes as a delta), after 6b's reading?** Recommended: yes; it is the
+   largest part of the F frame's `build` after 6a' and about 2.4 ms in 8 % of all frames, and
+   the F frame stays a hitch under load until 6f. Alternative: park it (the backlog's "The
+   mirror's notes for the bake's shadow" entry grows a line) and let Phase 7's window say
+   whether the F frame still shows. **The lane waits for the morning on this one:** new code
+   in `gpu_world/lights.rs` is outside 6a's approval.
