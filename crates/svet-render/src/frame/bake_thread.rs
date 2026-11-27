@@ -46,6 +46,13 @@ impl Frame {
         self.baked.thread_slots = slots;
     }
 
+    /// The bake thread's listing threads, at least 1: [`crate::ThreadPlan`]'s listers for the
+    /// stream workers the caller chose (this machine's default plan until set). It takes hold
+    /// at the thread's next start.
+    pub fn set_bake_listers(&mut self, listers: usize) {
+        self.baked.thread_listers = listers.max(1);
+    }
+
     /// The bake thread's submits on the render side since the frame was made (a reading,
     /// [`crate::BakeRoundTrip`]).
     pub fn bake_round_trip(&self) -> crate::BakeRoundTrip {
@@ -265,6 +272,7 @@ impl Frame {
         // steps hold its depth of submits unread and open jobs into its table slots.
         queue.set_thread_depth(b.thread_depth);
         queue.set_thread_slots(b.thread_slots);
+        queue.set_lister_threads(b.thread_listers);
         if let Err(e) = queue.start_lister(shared.clone()) {
             self.end_failed(BakeError::Thread(format!("spawn: {e}")));
             return;

@@ -391,11 +391,10 @@ pub(crate) fn outdoor_camera(args: &Args) -> Camera {
     }
 }
 
-/// The streamer's default generation workers: half the logical cores, at least 1. Half is a
-/// proxy for the physical cores on an SMT machine: workers on both siblings of a core starve
-/// the render thread and the light bake that share them, and the frame tail grows.
+/// The streamer's default generation workers: [`svet_render::ThreadPlan`]'s on this machine,
+/// half the logical cores and at least 1.
 pub(crate) fn default_workers() -> usize {
-    (std::thread::available_parallelism().map_or(1, usize::from) / 2).max(1)
+    svet_render::ThreadPlan::here(None).workers
 }
 
 /// The castle's banner row for `shot`: `castle gate`.

@@ -29,6 +29,7 @@ mod settings;
 pub mod sky;
 #[cfg(feature = "test-support")]
 pub mod test_support;
+mod threads;
 
 /// Readings: the readbacks of a texture or buffer, the march's step histogram, the bake
 /// queue step's stages and regimes, and the light summaries a getter returns. For tools and
@@ -150,6 +151,7 @@ pub use settings::{
     ApplyClass, BakeKnobs, BuildSettings, DEFAULT_FAR_NORMAL, Profile, RenderSettings,
     SettingsChange, UpscalerChoice,
 };
+pub use threads::{ThreadPlan, logical_cpus};
 pub use {glam, wgpu};
 
 /// The hit pass's modules (`common`, `mirror`, `walk`, `hitrec`, `field_walk`, `hit`), which

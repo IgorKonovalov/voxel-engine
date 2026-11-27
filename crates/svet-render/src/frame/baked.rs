@@ -124,6 +124,8 @@ pub(super) struct BakeLink {
     pub(super) thread_depth: usize,
     /// The table slots the bake thread's steps open jobs into ([`Frame::set_bake_slots`]).
     pub(super) thread_slots: usize,
+    /// The listing pool's threads at the bake thread's start ([`Frame::set_bake_listers`]).
+    pub(super) thread_listers: usize,
     /// The reading [`Frame::bake_round_trip`] returns.
     pub(super) round_trip: crate::BakeRoundTrip,
 }
@@ -189,6 +191,7 @@ impl BakeLink {
             last_apply: (0.0, 0),
             thread_depth: crate::THREAD_DEPTH,
             thread_slots: crate::THREAD_SLOTS,
+            thread_listers: crate::ThreadPlan::here(None).listers,
             round_trip: Default::default(),
         }
     }

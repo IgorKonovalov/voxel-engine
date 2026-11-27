@@ -593,6 +593,11 @@ impl RenderSettings {
              Phase 4c2); lockstep keeps 16 whatever it is",
         ),
         (
+            "set_bake_listers",
+            "an input: the listing pool's threads follow from the stream workers the caller \
+             chose (ThreadPlan), not from a picture setting",
+        ),
+        (
             "set_pipeline_cache",
             "a test hook: the pipeline cache the test devices build through",
         ),

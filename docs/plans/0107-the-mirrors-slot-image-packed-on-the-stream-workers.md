@@ -673,7 +673,7 @@ the default.
 | 4: the sizes and the emitters from the image | dev | done; gpu readings loaded | committed with this row |
 | 5: the readings (tail, workers, held bytes) | dev | done; the no-gain stop fires (sync p99 -14.4 % cave, -15.1 % forest); quiet at each hold | committed with this row |
 | 6: the wanted set kept in order | dev | not started | |
-| 7: the thread counts in one place | dev | not started | |
+| 7: the thread counts in one place | dev | done; the defaults unchanged on 1 to 64 CPUs; starts read loaded | committed with this row |
 | 8: the owner's window (only if 5 did not stop the default) | human | not started | |
 | 9: the pick as the default, and the lines | dev | not started | |
 
@@ -719,6 +719,12 @@ each. Empty is fine.)_
 - Phase 5: the image counter `used` sums world frames' syncs only, not the pre-roll's.
 - Phase 5: the readings ran on a binary whose first-frame mark sat in `wait_first_frame`; the
   committed mark is after frame 0's `draw` (clippy's `too_many_lines`); not re-read.
+- Phase 7: outside the phase's list: `bake/queue/mod.rs` (the pool's count kept on the queue,
+  `set_lister_threads`), `frame/baked.rs`, `settings.rs` (`set_bake_listers` in
+  `NOT_SETTINGS`), `run/loading/pre_roll.rs` (the setter's call and the `threads:` print);
+  the CLI test is `cli/tests/threads.rs` (`cli/tests.rs` is near the size cap).
+- Phase 7: the line prints at every start's pre-roll, streamed or not; on a bounded scene the
+  workers it names are the default's, unused.
 - Phase 5: (c)'s fresh forest start is the forest glide with `--pre-roll near`.
 - Phase 5: frames over 33 ms for the forest runs come from the diag submit deltas (1 ms grain),
   as the forest glide writes no `run.json`.

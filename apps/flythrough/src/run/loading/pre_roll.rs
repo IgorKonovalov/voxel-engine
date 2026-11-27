@@ -52,6 +52,9 @@ impl Run {
         frame.set_bake_thread(&gpu.queue, self.args.bake_thread());
         frame.set_bake_depth(self.args.bake.depth);
         frame.set_bake_slots(self.args.bake.slots);
+        let threads = svet_render::ThreadPlan::here(self.args.workers);
+        frame.set_bake_listers(threads.listers);
+        println!("{threads}");
         if frame.bake_queue().is_some() {
             let (order, withdraw) = (self.args.queue_order(), self.args.bake.queue_withdraw);
             let (census, rule, audit) = (
