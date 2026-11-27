@@ -1,6 +1,6 @@
 # 0110: The math hot paths, measured then cut: shader math and f16 by adapter
 
-> **Status:** draft
+> **Status:** approved 2026-11-27 (owner: "approve 110 and put somewhere after m10": slot after M10's plans 0033 to 0037 close, and after Plan 0091). Was: draft (2026-11-27)
 > **Created:** 2026-11-27
 > **Milestone:** M7 in `docs/roadmap.md` (tooling; the profiler this plan reads through is Plan 0091's)
 > **Related ADRs:** [ADR-0088](../adrs/0088-half-precision-shader-math-from-one-source-built-per-adapter.md)
