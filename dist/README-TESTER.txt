@@ -61,6 +61,11 @@ Keys in a run
 
 A benchmark flies by itself; only Esc does anything there.
 
+The run's top-left corner shows the frame rate under the run's own row, for example
+"fps 59.9  frame 16.7 ms p99 18.2": frames per second, the median frame time and the 99th
+percentile (the slowest 1 in 100 frames), over the last 240 frames. The report holds the
+whole run's figures.
+
 
 What the report holds
 ---------------------

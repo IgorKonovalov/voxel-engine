@@ -6,6 +6,8 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+- **Added (fly-through, tester):** under `--tester` the banner carries one frame row under the path's rows, `fps 59.9  frame 16.7 ms p99 18.2` (the wall frame window's fps, median and p99 over 240 frames, as the open menu's readout); the stats HUD stays out of reach (ADR-0054). The overlay pass already drew the banner on every frame; it is inside `run.json`'s wall times and outside its GPU figure. The owner's v0.79.1 report: "fps is unknown and hided".
+
 ## [0.80.0] - 2026-11-27
 
 Plan 0105 (a minor bump: new public items on `svet-render`, none removed; no new ADR, ADR-0082's Outcome added to). **A dig no longer flashes at depth.** The record a dig holds until its re-bake lands had a floor above black (0.02 of the open sky), which the owner saw as a flash past 2 to 3 m deep: under an eye in the hole it read +78 to +100 display levels over a landed 0 (RTX 3080 Laptop, the forest at 15:00). The held estimate is now a render setting whose default follows the hole's own light.

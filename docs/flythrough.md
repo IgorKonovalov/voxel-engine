@@ -251,6 +251,13 @@ the fly-through has no notion of a room, so judge a large structure on the outdo
 Only movement, look, the left click's dig, `F1` (a help panel), `T` and `Esc` act. Every other
 key is off, the stats overlay among them.
 
+The banner carries one frame row under the path's rows, once a frame is drawn: `fps 59.9  frame
+16.7 ms p99 18.2`, the wall frame window's fps, median and p99 over the last 240 frames (the
+open menu's readout, from the same window). The banner is drawn on every frame in any mode, so
+the row adds a few glyphs to the overlay pass already there; that pass is inside the wall frame
+times `run.json` reports and outside its GPU figure (the sum of the frame's passes, which
+leaves the overlay out).
+
 ## Flags
 
 Grouped as `--help` groups them. A default in brackets is the code's.
