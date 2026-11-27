@@ -954,6 +954,7 @@ takes:** a profile of `Walkers::tick` at 64 spiders on the showcase, then the cu
 names (a pose written in place, a tick every other frame for bodies out of view, or a cheaper
 dwell). **Pick up when** a scene needs more than about 30 crawlers, or before the first consumer
 runs creatures on its server tick.
+**Profiled by [Plan 0110](plans/0110-the-math-hot-paths-measured-then-cut-shader-math-f16-and-the-integer-root.md)'s Phase 1** (drafted 2026-11-27): that plan cuts only the arithmetic share (`isqrt`); the allocation and dwell suspects stay here with its readings.
 
 ### Pathfinding over the coarse grid and the walkable map
 
