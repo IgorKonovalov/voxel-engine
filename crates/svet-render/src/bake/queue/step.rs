@@ -762,12 +762,15 @@ impl Placement<'_> {
                 })
             {
                 block[LANDED_AT as usize] = landed_word(Some(&from), self.landed_word);
-                self.refade(store, coord, (first, f), from, block, false);
+                self.refade(store, coord, (first, f), from, block, (false, false));
             } else {
                 store.release(first, block.len() as u64);
             }
             return;
         }
+        // The job's block lands: a whole dig's summary is made from its baked cells again
+        // ([`Store::held_whole`]).
+        let whole = store.held_whole.remove(&coord.0);
         if let Some((case, faces)) = audited.filter(|_| dug.is_none()) {
             self.audit(coord, case, &faces, &block);
         }
@@ -818,7 +821,7 @@ impl Placement<'_> {
             Some((f, from))
                 if from.len() == block.len() && from[..CHUNK_BRICKS] == block[..CHUNK_BRICKS] =>
             {
-                self.refade(store, coord, (first, f), from, block, dug);
+                self.refade(store, coord, (first, f), from, block, (dug, whole));
             }
             Some((f, from)) => {
                 self.stats.landings[LANDED_UNFADED] += 1;
@@ -884,7 +887,9 @@ impl Placement<'_> {
     }
 
     /// The same layout: the block takes its old place `f`, its words read back at `first` are
-    /// released, it shows its old values `from` and fades to the new ones.
+    /// released, it shows its old values `from` and fades to the new ones. `whole`: the block
+    /// ends a whole dig's hold ([`Store::held_whole`]): `from`, the provisional block shown in
+    /// the landing frame, keeps its stale summary there; the landed block's is fresh.
     fn refade(
         &mut self,
         store: &mut Store,
@@ -892,7 +897,7 @@ impl Placement<'_> {
         (first, f): (u64, u64),
         from: Vec<u32>,
         block: Vec<u32>,
-        dug: bool,
+        (dug, whole): (bool, bool),
     ) {
         // Under a running fade the old values are what that fade shows now, not its target: a
         // refinement landing while a first block fades from its fallback goes on from where the
@@ -916,7 +921,13 @@ impl Placement<'_> {
         store.release(first, block.len() as u64);
         store.begin_unit();
         store.put(coord, f, block);
-        store.show(coord, f, &mut from);
+        if whole {
+            store.held_whole.insert(coord.0);
+            store.show(coord, f, &mut from);
+            store.held_whole.remove(&coord.0);
+        } else {
+            store.show(coord, f, &mut from);
+        }
         store.end_unit();
         self.fades.insert(
             coord.0,

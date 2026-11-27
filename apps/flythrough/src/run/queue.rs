@@ -168,6 +168,9 @@ pub(crate) struct QueueRun {
     /// parts beside the frames' wall (the `frames: bake thread cycle` line).
     pub(crate) fed: svet_render::QueueFed,
     pub(crate) cycles: svet_render::CycleLine,
+    /// While `--settled-start` steps the queue before frame 0 (`run::settle`): the frame
+    /// counter stands at 0, so the per-60-frames line is not printed.
+    pub(crate) settling: bool,
     /// Under `--queue-rule-reading`: the newest request for the rule hashes (made when the
     /// queue is first empty) and the newest hashes read (`QueueDrain::rule_hashes`).
     pub(crate) hash_asked: u64,
@@ -662,6 +665,8 @@ impl Run {
         let stepped =
             gfx.frame
                 .bake_queue_step(&gpu.device, &gpu.queue, &mut gfx.mirror, &self.world, &view);
+        // A box waits until the books of the step that read it are taken (the stats predate it).
+        let box_answered = !gfx.frame.bake_queue().is_some_and(|q| q.boxes_waiting());
         self.queue.last_step_cpu = ms_since(t_cpu);
         self.queue.step_cpu.push(self.queue.last_step_cpu);
         // After the step: the queue holds the frame's far-normal band by then.
@@ -699,15 +704,16 @@ impl Run {
                         let share = f64::from(missing) / f64::from(gfx.frame.light_pixels().max(1));
                         w.missing_max = w.missing_max.max(share);
                     }
-                    if w.rings_ms.is_none() && st.digs == 0 {
+                    if w.rings_ms.is_none() && st.digs == 0 && box_answered {
                         w.rings_ms = Some((t_step - w.start_ms, w.frames));
                         println!(
-                            "dig settled: rings 1 and 2 in {} frames, {:.0} ms ({} dig jobs, {} bricks, {:.3e} samples); frames from the dig: longest {:.1} ms, {} over 33 ms; no value at most {}; ring 3 {} chunks waiting",
+                            "dig settled: rings 1 and 2 in {} frames, {:.0} ms ({} dig jobs, {} bricks, {:.3e} samples, {}); frames from the dig: longest {:.1} ms, {} over 33 ms; no value at most {}; ring 3 {} chunks waiting",
                             w.frames,
                             t_step - w.start_ms,
                             st.digs_baked - w.from.digs_baked,
                             st.dig_bricks - w.from.dig_bricks,
                             (st.total_samples - w.from.total_samples) as f64,
+                            crate::edits::digs_whole_text(&w.from, &st),
                             w.longest_ms,
                             w.over_33,
                             if self.args.bake.read_missing {
@@ -863,11 +869,12 @@ impl Run {
         // A line a second: of wall time in a window, of 60 frames headless (a headless frame is
         // 1/60 s of the glide and the exposure).
         let t = ms_since(self.start);
-        let due = if self.args.headless {
-            self.frame.is_multiple_of(60)
-        } else {
-            t - self.queue.line_ms >= 1000.0
-        };
+        let due = !self.queue.settling
+            && if self.args.headless {
+                self.frame.is_multiple_of(60)
+            } else {
+                t - self.queue.line_ms >= 1000.0
+            };
         if due && let Some(st) = self.queue.stats {
             // The store's counters without waiting: the newest copy finished on the GPU, its
             // age in frames on the line.

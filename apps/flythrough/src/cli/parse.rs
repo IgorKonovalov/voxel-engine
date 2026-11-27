@@ -63,6 +63,7 @@ impl Args {
             mode: RunMode::Cave,
             shot: SHOTS[0],
             pose: None,
+            eye: None,
             autopilot: false,
             headless: false,
             adapter: None,
@@ -358,6 +359,9 @@ pub(crate) fn check_path(args: &Args, path_mode_flag: bool) -> Result<(), String
             "--path drives the camera; it does not take --autopilot, --walk, --glide or --pan"
                 .to_owned(),
         );
+    }
+    if args.eye.is_some() {
+        return Err("--path drives the camera; it does not take --eye".to_owned());
     }
     Ok(())
 }

@@ -22,7 +22,20 @@ mod dig_line {
 
         /// Where sequence B's five digs aim, voxels on the ground about the view's centre's hit;
         /// the sixth digs into the first.
-        const B_AIMS: [[f32; 2]; 5] = [[0.0, 0.0], [9.0, 0.0], [-9.0, 2.0], [2.0, 9.0], [-2.0, -9.0]];
+        pub(in super::super) const B_AIMS: [[f32; 2]; 5] = [[0.0, 0.0], [9.0, 0.0], [-9.0, 2.0], [2.0, 9.0], [-2.0, -9.0]];
+
+        /// A point of [`line_run`] a reading's tap sees: the frame made and stepped, before any
+        /// step (`Start`); a dig's edit applied, before the queue's step reads its box (`Edit`,
+        /// the dig from 0 and its changed voxels' bounds); and each frame after a dig, read
+        /// (`Frame`, the dig, frames from its own, the frame).
+        pub(in super::super) enum Tap<'a> {
+            Start,
+            Edit { dig: usize, lo: [i64; 3], hi: [i64; 3] },
+            Frame { dig: usize, k: usize, frame: &'a HoleFrame },
+        }
+
+        /// A reading's tap on [`line_run`] ([`Tap`]).
+        pub(in super::super) type TapFn<'t> = &'t mut dyn FnMut(Tap<'_>, &mut Rig, &mut Stepper);
 
         /// The run of [`dig_timeline`]: the frames, per dig its frame index and box, and the
         /// queue's trace after each frame's step.
@@ -83,11 +96,13 @@ mod dig_line {
         /// device-wait mode ([`Stepper::wait`]), the fly-through's pace; `stretch`: the queue's
         /// ring-1 stretch ([`svet_render::Frame::set_bake_ring1_stretch`]); `thread`: the queue's
         /// sliced steps on the bake thread ([`svet_render::Frame::set_bake_thread`], its books
-        /// carrying the dig trace), else lockstep.
+        /// carrying the dig trace), else lockstep. `tap`: a reading's look at the run's points
+        /// ([`Tap`]); with one, every frame reads its stages ([`hole_frame`]'s switch).
         #[allow(
             clippy::too_many_arguments,
-            reason = "the run's scene, state, sequence, arm, drain, stills, pace, stretch and mode are independent"
+            reason = "the run's scene, state, sequence, arm, drain, stills, pace, stretch, mode and tap are independent"
         )]
+        #[allow(clippy::too_many_lines, reason = "a reading's run, one pass over its frames")]
         pub(in super::super) fn line_run(
             scene: &str,
             waiting: bool,
@@ -98,7 +113,9 @@ mod dig_line {
             wait: bool,
             stretch: f64,
             thread: bool,
+            mut tap: Option<TapFn<'_>>,
         ) -> Option<(LineRun, Rig)> {
+            let stages = tap.is_some();
             let portable = scene == "portable";
             let facing = spawn_facing();
             let (mut rig, cam, clock, sizes) = if portable {
@@ -152,6 +169,9 @@ mod dig_line {
             }
             let mut s = Stepper::new(&rig, f);
             s.wait = wait;
+            if let Some(t) = tap.as_mut() {
+                t(Tap::Start, &mut rig, &mut s);
+            }
             let mut n = 0;
             let head = loop {
                 let q = queue_step(&mut rig, &mut s.frame, &cam);
@@ -213,7 +233,7 @@ mod dig_line {
                 }));
                 traces.push(s.frame.bake_queue().expect("the live queue").dig_trace());
                 let path = png.map(|d| d.join(format!("{:03}-{label}.png", frames.len())));
-                frames.push(hole_frame(rig, s, &cam, q, label, out, false, path.as_deref()));
+                frames.push(hole_frame(rig, s, &cam, q, label, out, stages, path.as_deref()));
                 times.push((t0, ms()));
                 q
             };
@@ -228,11 +248,17 @@ mod dig_line {
                 };
                 digs.push((frames.len(), dug.0, dug.1));
                 edit_ms.push(ms);
+                if let Some(t) = tap.as_mut() {
+                    t(Tap::Edit { dig: d, lo: dug.0, hi: dug.1 }, &mut rig, &mut s);
+                }
                 // The ring as the pool holds it before any step has read the box.
                 let mut ring = Ring { lo: dug.0, hi: dug.1, pre: pool_ring(&s.frame, &rig, dug.0, dug.1), held: None };
                 let mut tail = None;
                 for k in 0..1200usize {
                     let q = read(&mut rig, &mut s, &mut frames, &mut traces, format!("D{}+{k}", d + 1), Some(&mut ring));
+                    if let (Some(t), Some(frame)) = (tap.as_mut(), frames.last()) {
+                        t(Tap::Frame { dig: d, k, frame }, &mut rig, &mut s);
+                    }
                     if k + 1 == *gap {
                         break;
                     }
@@ -279,12 +305,12 @@ mod dig_line {
         }
 
         /// Brick records by chunk and slot.
-        type RingRecords = BTreeMap<([i32; 3], usize), Vec<u32>>;
+        pub(in super::super) type RingRecords = BTreeMap<([i32; 3], usize), Vec<u32>>;
 
         /// The ring-1 records of the box `lo ..= hi` (every brick within a voxel of it) as the
         /// pool holds them now, by chunk and slot, from the blocks the frame reads
         /// (`Frame::read_store_block`: each at the place the pool's chunk table names, read back).
-        fn pool_ring(f: &svet_render::Frame, rig: &Rig, lo: [i64; 3], hi: [i64; 3]) -> RingRecords {
+        pub(in super::super) fn pool_ring(f: &svet_render::Frame, rig: &Rig, lo: [i64; 3], hi: [i64; 3]) -> RingRecords {
             let mut out = BTreeMap::new();
             let a = lo.map(|v| (v - 1).div_euclid(64) as i32);
             let b = hi.map(|v| (v + 1).div_euclid(64) as i32);
@@ -610,7 +636,7 @@ mod dig_line {
                 std::fs::create_dir_all(p).expect("the stills' directory");
             }
             std::fs::create_dir_all(&dir).expect("the reading's directory");
-            let Some((run, _rig)) = line_run(&scene, state == "waiting", &seq, &arm, drain, png.as_deref(), wait, stretch, thread) else {
+            let Some((run, _rig)) = line_run(&scene, state == "waiting", &seq, &arm, drain, png.as_deref(), wait, stretch, thread, None) else {
                 return;
             };
             let text = line_text(&run);
@@ -627,7 +653,7 @@ mod dig_line {
 
         /// A block's brick records by slot ([`svet_render::internals::BRICK_WORDS`] words each,
         /// the directory's run end in each slot's word).
-        fn records(block: &[u32]) -> BTreeMap<usize, Vec<u32>> {
+        pub(in super::super) fn records(block: &[u32]) -> BTreeMap<usize, Vec<u32>> {
             use svet_render::internals::{BRICK_WORDS, SUMMARY_AT};
             let mut out = BTreeMap::new();
             for (slot, &d) in block[..SUMMARY_AT as usize].iter().enumerate() {
@@ -863,16 +889,63 @@ mod dig_line {
         /// frame before the next group's dig); the ring's at 4 levels in every frame from
         /// the first dig; the dots against the settled frame's; the ring's and the frame's
         /// shift before the first landing; the largest step away from a group's settled mean
-        /// after its landing; and the histogram's text.
+        /// after its landing; the hole's worst white shares (%) over 8 and over 16 levels from
+        /// each dig's frame to its landing plus [`DIG_FADE`]; each dig's ring's black share at 4
+        /// levels at its own frame and the next (D+0, D+1); the label of the frame whose ring
+        /// share at 4 levels (white or black) is the run's worst; and the histogram's text.
         pub(crate) struct Claims {
             pub land: Vec<Option<usize>>,
+            pub ring_at: Vec<[f64; 2]>,
+            pub ring_worst: String,
             pub before: [f64; 2],
+            pub white: [f64; 2],
             pub after: [f64; 2],
             pub ring: [f64; 2],
             pub dots: [f64; 2],
             pub shift: f64,
             pub away: f64,
             pub text: String,
+        }
+
+        /// `flicker::a_fresh_hole_holds_its_value_until_its_light_lands`' bars: each dig's ring
+        /// black share at 4 levels at D+0 and D+1 (%), A then B. B's dig 5 is Plan 0105 Phase
+        /// 7a4a's group (Phase 7b3's reading 0.46 / 0.43 %); every other dig its reading rounded
+        /// up to 0.05 plus 0.05 (Phase 7b3b's, after its fix).
+        const RING_AT: [&[[f64; 2]]; 2] = [
+            // A, read 0.00 / 0.01, 0.00 / 0.02, 0.02 / 0.00.
+            &[[0.05, 0.10], [0.05, 0.10], [0.10, 0.05]],
+            // B, read 0.00 / 0.00, 0.04 / 0.04, 0.02 / 0.01, 0.17 / 0.08, 0.46 / 0.43, 0.00 / 0.00.
+            &[[0.05, 0.05], [0.10, 0.10], [0.10, 0.10], [0.25, 0.15], [0.55, 0.50], [0.05, 0.05]],
+        ];
+        /// The ring's worst frame at 4 levels (%), A and B (Phase 7b3's reading 0.03 and 1.21 %).
+        const RING_WORST: [f64; 2] = [0.10, 1.35];
+        /// The hole's black share over 32 levels before its light lands (%), A and B (Phase
+        /// 7b3's reading 0.00 and 1.37 %).
+        const BLACK_32: [f64; 2] = [0.10, 1.55];
+
+        /// Plan 0105 Phase 7b3b's bars on `c`, the claims of sequence `seq` (`A` or `B`), each a
+        /// reading of the soak test on lavapipe (Phase 7b3's, or 7b3b's after its fix where that
+        /// is lower): each dig's ring at D+0 and D+1 under [`RING_AT`], the ring's worst frame
+        /// under [`RING_WORST`], the hole's black over 32 levels before the landing under
+        /// [`BLACK_32`]. Prints each dig's ring and the worst frame's label; returns every miss.
+        pub(crate) fn bar_misses(seq: &str, c: &Claims) -> Vec<String> {
+            let mut misses = Vec::new();
+            let mut bar = |what: String, v: f64, b: f64| {
+                if v > b {
+                    misses.push(format!("{what}: {v:.2} % against {b:.2} %"));
+                }
+            };
+            let s = usize::from(seq == "B");
+            for (k, r) in c.ring_at.iter().enumerate() {
+                println!("{seq} dig {}: the ring black over 4 levels at D+0 {:.2} %, D+1 {:.2} %", k + 1, r[0], r[1]);
+                let b = RING_AT[s].get(k).copied().unwrap_or([0.0; 2]);
+                bar(format!("{seq} dig {}: the ring at D+0", k + 1), r[0], b[0]);
+                bar(format!("{seq} dig {}: the ring at D+1", k + 1), r[1], b[1]);
+            }
+            println!("{seq}: the ring's worst frame {}", c.ring_worst);
+            bar(format!("{seq}: the ring's worst frame ({})", c.ring_worst), c.ring[0].max(c.ring[1]), RING_WORST[s]);
+            bar(format!("{seq}: the hole blackens over 32 levels before its light lands"), c.before[1], BLACK_32[s]);
+            misses
         }
 
         /// Each dig's ring-1 landing: the first frame from its own whose queue trace holds no
@@ -897,13 +970,126 @@ mod dig_line {
                 .collect()
         }
 
+        /// Plan 0105 Phase 7a2's print (a reading, nothing asserted). Per dig: the change of
+        /// `QueueStats::digs_whole` from the frame before the dig's first frame (D-1) to it (D+0),
+        /// and from D+0 to D+1. Per frame whose ring breaks 2 % at 4 levels: its ring pixels
+        /// darker than both `before` and `after` by over 4 levels ([`defects::before_after`],
+        /// the pixels [`defects::hole_figures_in`] counts) by the store's table word of their
+        /// hit's chunk in the `before` frame (none, a block, coarse, or unseen: the chunk under
+        /// no pixel of that frame), each split by whether their hit's brick (the hit point's
+        /// voxel's) is one a dig's box made by that frame, dilated by one voxel, touches; and the
+        /// ring's dark shares over 8, 16 and 32 levels.
+        fn whole_text(run: &HoleRun, groups: &[(usize, usize)], f4: &[HoleFigures]) -> String {
+            use std::collections::HashMap;
+            let mut text = String::new();
+            for (k, &(d0, _, _)) in run.digs.iter().enumerate() {
+                let whole = |i: usize| run.frames.get(i).map(|f| f.q.digs_whole);
+                let step = |a: usize, b: usize| match (whole(a), whole(b)) {
+                    (Some(x), Some(y)) => format!("{:+}", y as i64 - x as i64),
+                    _ => "-".into(),
+                };
+                text += &format!(
+                    "  dig {} ({}): digs whole {:?} at D+0, {} from D-1, {} to D+1\n",
+                    k + 1,
+                    run.frames[d0].label,
+                    whole(d0),
+                    step(d0 - 1, d0),
+                    step(d0, d0 + 1)
+                );
+            }
+            let (dw, dh) = (run.out[0] as usize, run.out[1] as usize);
+            let chunk_of = |h: &[f32; 4]| [0, 1, 2].map(|k| (h[k].floor() as i32).div_euclid(64));
+            let first = run.digs[0].0;
+            for (fi, fig) in f4.iter().enumerate().skip(first) {
+                if fig.white_ring.max(fig.black_ring) <= 2.0 {
+                    continue;
+                }
+                let f = &run.frames[fi];
+                let (bi, ai) = defects::before_after(run, groups, fi);
+                let (c, cb, ca) = (
+                    defects::hole_classes(run, f).1,
+                    defects::hole_classes(run, &run.frames[bi]).1,
+                    defects::hole_classes(run, &run.frames[ai]).1,
+                );
+                let (before, after) = (&run.frames[bi].luma, &run.frames[ai].luma);
+                // The before frame's table word by chunk (its pixels' hits; the largest word a
+                // chunk shows).
+                let mut words: HashMap<[i32; 3], u8> = HashMap::new();
+                for (h, &w) in run.frames[bi].hits.iter().zip(&run.frames[bi].table) {
+                    if h[3] < 1e30 && h[3].is_finite() {
+                        let e = words.entry(chunk_of(h)).or_insert(w);
+                        *e = (*e).max(w);
+                    }
+                }
+                let gl = f.hits.len();
+                let gw = ((gl as f64 * dw as f64 / dh as f64).sqrt().round() as usize).max(1);
+                let boxes: Vec<([i64; 3], [i64; 3])> =
+                    run.digs.iter().filter(|d| d.0 <= fi).map(|d| (d.1, d.2)).collect();
+                let touched = |h: &[f32; 4]| {
+                    let v = [0, 1, 2].map(|k| i64::from(h[k].floor() as i32));
+                    boxes.iter().any(|(lo, hi)| {
+                        (0..3).all(|k| {
+                            let b = v[k].div_euclid(8) * 8;
+                            b + 7 >= lo[k] - 1 && b <= hi[k] + 1
+                        })
+                    })
+                };
+                // [word: none, block, coarse, unseen][touched: no, yes]
+                let mut by = [[0u64; 2]; 4];
+                let (mut nr, mut dark) = (0u64, [0u64; 4]);
+                for i in 0..f.luma.len() {
+                    if !(c[i] == defects::DIG_RING_CLASS && cb[i] == defects::DIG_RING_CLASS && ca[i] == defects::DIG_RING_CLASS) {
+                        continue;
+                    }
+                    nr += 1;
+                    let (l, b, a) = (i32::from(f.luma[i]), i32::from(before[i]), i32::from(after[i]));
+                    for (n, lv) in [4, 8, 16, 32].into_iter().enumerate() {
+                        dark[n] += u64::from(l < b.min(a) - lv);
+                    }
+                    if l >= b.min(a) - 4 {
+                        continue;
+                    }
+                    let h = &f.hits[defects::grid_of(i, dw, dh, gw, gl)];
+                    let w = words.get(&chunk_of(h)).map_or(3, |&w| usize::from(w.min(2)));
+                    by[w][usize::from(touched(h))] += 1;
+                }
+                let pct = |a: u64| 100.0 * a as f64 / nr.max(1) as f64;
+                let n4 = dark[0].max(1) as f64;
+                let cell = |w: usize| {
+                    format!(
+                        "{} touched / {} not ({:.0} / {:.0} %)",
+                        by[w][1],
+                        by[w][0],
+                        100.0 * by[w][1] as f64 / n4,
+                        100.0 * by[w][0] as f64 / n4
+                    )
+                };
+                text += &format!(
+                    "  {} (before {}): ring {} px, dark over 4 {} ({:.2} %), over 8 {:.2} %, 16 {:.2} %, 32 {:.2} %; by the before frame's chunk word: none {}; block {}; coarse {}; unseen {}\n",
+                    f.label,
+                    run.frames[bi].label,
+                    nr,
+                    dark[0],
+                    pct(dark[0]),
+                    pct(dark[1]),
+                    pct(dark[2]),
+                    pct(dark[3]),
+                    cell(0),
+                    cell(1),
+                    cell(2),
+                    cell(3)
+                );
+            }
+            text
+        }
+
         /// The run of `seq` (`A` or `B`) under `arm` at the image test's start (`waiting`
         /// false: one frame and the settle) or after 600 frames (`waiting`), on the adapter
         /// the test support opens, with its claims' figures; `wait` the stepper's device-wait
         /// mode ([`line_run`]'s).
         pub(crate) fn claims(seq: &str, waiting: bool, arm: &str, wait: bool) -> Option<Claims> {
             let drain = if waiting { 600 } else { 1 };
-            let (line, _rig) = line_run("above", waiting, seq, arm, drain, None, wait, svet_render::DEFAULT_RING1_STRETCH, false)?;
+            let (line, _rig) = line_run("above", waiting, seq, arm, drain, None, wait, svet_render::DEFAULT_RING1_STRETCH, false, None)?;
             let land = ring1_landings(&line);
             let hold = !arm.split(',').any(|t| t == "hold=off");
             let LineRun { frames, digs, out, eye, head, .. } = line;
@@ -957,6 +1143,7 @@ mod dig_line {
                 })
                 .collect();
             text += &format!("  frames over 2 % at 4 levels: {}\n", over.join("; "));
+            text += &whole_text(&run, &groups, f4);
             let first_landing = land.iter().flatten().min().copied().unwrap_or(last);
             let shift = f4[first..first_landing.max(first)]
                 .iter()
@@ -980,8 +1167,16 @@ mod dig_line {
                 }
             }
             let land: Vec<Option<usize>> = land.iter().zip(&run.digs).map(|(l, d)| l.map(|l| l - d.0)).collect();
+            let black_at = |i: usize| f4.get(i).map_or(f64::NAN, |f| f.black_ring);
+            let ring_at = run.digs.iter().map(|d| [black_at(d.0), black_at(d.0 + 1)]).collect();
+            let ring_worst = (first..=last)
+                .max_by(|&a, &b| f4[a].white_ring.max(f4[a].black_ring).total_cmp(&f4[b].white_ring.max(f4[b].black_ring)))
+                .map_or_else(String::new, |i| run.frames[i].label.clone());
             Some(Claims {
+                ring_at,
+                ring_worst,
                 before: [worst(at(32), &is_early, |f| f.white_hole), worst(at(32), &is_early, |f| f.black_hole)],
+                white: [worst(at(8), &is_early, |f| f.white_hole), worst(at(16), &is_early, |f| f.white_hole)],
                 after: [worst(f4, &is_late, |f| f.white_hole), worst(f4, &is_late, |f| f.black_hole)],
                 ring: [worst(f4, &from_first, |f| f.white_ring), worst(f4, &from_first, |f| f.black_ring)],
                 dots: [worst(f4, &from_first, |f| f.dots), f4[last].dots],
@@ -993,7 +1188,15 @@ mod dig_line {
         }
 
         mod reading {
+        use super::super::super::support::defects::{self, HoleRun, Stepper};
+        use super::super::super::support::terms::Rig;
+        use super::super::reading::{LineRun, Tap, line_run, records};
         use super::claims;
+        use std::collections::{BTreeMap, BTreeSet};
+        use std::fmt::Write as _;
+        use svet_render::debug::HeldPart;
+        use svet_render::internals::{BRICK_WORDS, SUMMARY_AT, face_classes, list_world_chunk, record_sky_stale, record_visibility, rgb9e5_unpack};
+        use svet_world::ChunkCoord;
 
         /// Plan 0098 Phase 17 step 1's histogram: [`claims`] of A and B on the waiting queue
         /// under `SVET_DIG`'s arm (`support::defects::dig_spec`), printed, nothing asserted.
@@ -1010,6 +1213,476 @@ mod dig_line {
                     c.text, c.land, c.before[0], c.before[1], c.after[0], c.after[1], c.ring[0], c.ring[1], c.dots[0], c.dots[1], c.shift, c.away
                 );
             }
+        }
+
+        /// A dig's edit as the CPU store read it (Plan 0105 Phase 7a3's T1 and T2): the box, the
+        /// chunks its box dilated by one voxel touches, each one's block before the edit and
+        /// after the step that read the box (the store's copy) and the pool's after that frame
+        /// (`Frame::read_store_block`), the listing after the edit (bricks, faces, the touched
+        /// bricks that list faces), the chain of the chunks and their face neighbours before and
+        /// after, and the held trace's parts the step pushed.
+        #[derive(Default)]
+        struct DigCpu {
+            lo: [i64; 3],
+            hi: [i64; 3],
+            chunks: Vec<[i32; 3]>,
+            before: BTreeMap<[i32; 3], Option<Vec<u32>>>,
+            after: BTreeMap<[i32; 3], Option<Vec<u32>>>,
+            pool: BTreeMap<[i32; 3], Option<Vec<u32>>>,
+            listed: BTreeMap<[i32; 3], [usize; 3]>,
+            chain_before: BTreeMap<[i32; 3], Option<[u32; BRICK_WORDS]>>,
+            chain_after: BTreeMap<[i32; 3], Option<[u32; BRICK_WORDS]>>,
+            trace0: usize,
+            trace: Vec<HeldPart>,
+        }
+
+        /// The chunks box `lo ..= hi` dilated by one voxel touches.
+        fn box_chunks(lo: [i64; 3], hi: [i64; 3]) -> Vec<[i32; 3]> {
+            let a = lo.map(|v| (v - 1).div_euclid(64) as i32);
+            let b = hi.map(|v| (v + 1).div_euclid(64) as i32);
+            let mut out = Vec::new();
+            for z in a[2]..=b[2] {
+                for y in a[1]..=b[1] {
+                    for x in a[0]..=b[0] {
+                        out.push([x, y, z]);
+                    }
+                }
+            }
+            out
+        }
+
+        /// Whether brick `slot` of chunk `c` lies within one voxel of box `lo ..= hi`.
+        fn brick_touched(c: [i32; 3], slot: usize, lo: [i64; 3], hi: [i64; 3]) -> bool {
+            let b = [slot % 8, slot / 8 % 8, slot / 64];
+            (0..3).all(|k| {
+                let l = i64::from(c[k]) * 64 + b[k] as i64 * 8;
+                l + 7 >= lo[k] - 1 && l <= hi[k] + 1
+            })
+        }
+
+        /// The read chain (`LightSummaries::chain`) of `chunks` and their six face neighbours.
+        fn chains(store: &svet_render::Store, chunks: &[[i32; 3]]) -> BTreeMap<[i32; 3], Option<[u32; BRICK_WORDS]>> {
+            let mut out = BTreeMap::new();
+            for c in chunks {
+                for f in 0..7 {
+                    let mut n = *c;
+                    if f < 6 {
+                        n[f / 2] += if f % 2 == 0 { -1 } else { 1 };
+                    }
+                    out.entry(n).or_insert_with(|| store.light().chain(n, store.missing_light()));
+                }
+            }
+            out
+        }
+
+        fn lum(w: u32) -> f64 {
+            let c = rgb9e5_unpack(w);
+            0.2126 * f64::from(c[0]) + 0.7152 * f64::from(c[1]) + 0.0722 * f64::from(c[2])
+        }
+
+        /// A record's six sky bytes read with every direction's bit set (`None`: no `VIS_BAKED`).
+        fn sky_bytes(r: &[u32]) -> Option<[u8; 6]> {
+            let mut f = r.to_vec();
+            f[6] |= 0x3F << 16;
+            record_visibility(&f, 0)?;
+            Some(std::array::from_fn(|d| (record_visibility(&f, d).unwrap_or(0.0) * 255.0).round() as u8))
+        }
+
+        /// The solid voxel under a hit's face: of the two voxels across the face plane nearest
+        /// the hit point, the one the world holds solid while the other is not (the axes tried
+        /// nearest first); `None` at a miss or where no axis splits so.
+        fn face_voxel(world: &svet_world::World, h: &[f32; 4]) -> Option<[i32; 3]> {
+            if h[3] >= 1e30 || !h[3].is_finite() {
+                return None;
+            }
+            let solid = |v: [i32; 3]| world.material_at(svet_world::VoxelCoord(v)).is_some_and(|m| m != svet_world::AIR);
+            let mut axes = [0usize, 1, 2];
+            axes.sort_by(|&a, &b| (h[a] - h[a].round()).abs().total_cmp(&(h[b] - h[b].round()).abs()));
+            for k in axes {
+                let p = h[k].round() as i32;
+                let mut a = [0, 1, 2].map(|j| h[j].floor() as i32);
+                let mut b = a;
+                a[k] = p - 1;
+                b[k] = p;
+                match (solid(a), solid(b)) {
+                    (true, false) => return Some(a),
+                    (false, true) => return Some(b),
+                    _ => {}
+                }
+            }
+            None
+        }
+
+        /// One group of T3's dark ring pixels: the count, over 32 levels, the sky source words
+        /// (before, frame), and in the before frame, the frame and the after frame the means of
+        /// the shown sky visibility, the stored stage and the direct stage; the rays cast and the
+        /// pair's age in the frame; how many hold a pair's x within 0.01 and a stored value
+        /// within 0.05 of the frame before's (`steady`).
+        #[derive(Default)]
+        struct Group {
+            n: u64,
+            over32: u64,
+            src: BTreeMap<(u8, u8), u64>,
+            x: [f64; 3],
+            stored: [f64; 3],
+            direct: [f64; 3],
+            cast: u64,
+            age: f64,
+            steady: u64,
+        }
+
+        /// T1's rows of one dig.
+        fn t1(out: &mut String, n: usize, d: &DigCpu) {
+            let _ = writeln!(out, "T1 dig {n}: box {:?}..{:?}", d.lo, d.hi);
+            let mut whole = Vec::new();
+            for c in &d.chunks {
+                let (b, a) = (d.before[c].is_some(), d.after[c].is_some());
+                let put = d.before[c] != d.after[c];
+                if !b && a {
+                    whole.push(*c);
+                }
+                let l = d.listed.get(c).copied().unwrap_or_default();
+                let _ = writeln!(
+                    out,
+                    "  {c:?}: block before {} after {}{}{}; listed bricks {} faces {}; touched bricks listing faces {}",
+                    u8::from(b),
+                    u8::from(a),
+                    if !b && a { " WHOLE" } else { "" },
+                    if put { " put" } else { "" },
+                    l[0],
+                    l[1],
+                    l[2]
+                );
+                if !put {
+                    continue;
+                }
+                let block = d.pool[c].as_ref().or(d.after[c].as_ref());
+                let Some(block) = block else {
+                    continue;
+                };
+                // [held baked, of those all 0, kept stale, kept fresh, no VIS_BAKED with a mask, zero mask]
+                let mut kinds = [0u64; 6];
+                for (slot, r) in records(block) {
+                    let mask = (r[6] >> 16) & 0x3F;
+                    let sky = sky_bytes(&r);
+                    if mask == 0 {
+                        kinds[5] += 1;
+                    } else if sky.is_none() {
+                        kinds[4] += 1;
+                    } else if brick_touched(*c, slot, d.lo, d.hi) {
+                        kinds[0] += 1;
+                        kinds[1] += u64::from(sky.is_some_and(|s| s == [0; 6]));
+                    } else if record_sky_stale(&r) {
+                        kinds[2] += 1;
+                    } else {
+                        kinds[3] += 1;
+                    }
+                }
+                let at = SUMMARY_AT as usize;
+                let sm = &block[at..at + BRICK_WORDS];
+                let _ = writeln!(
+                    out,
+                    "    records ({}): held baked {} (all 0: {}), kept stale {}, kept fresh {}, no VIS_BAKED with a mask {}, zero mask {}; summary mask {:06b} VIS_BAKED {} SKY_STALE {} sky {:?}",
+                    if d.pool[c].is_some() { "pool" } else { "store copy" },
+                    kinds[0], kinds[1], kinds[2], kinds[3], kinds[4], kinds[5],
+                    (sm[6] >> 16) & 0x3F,
+                    u8::from(sky_bytes(sm).is_some()),
+                    u8::from(record_sky_stale(sm)),
+                    sky_bytes(sm)
+                );
+            }
+            let row = |ch: &Option<[u32; BRICK_WORDS]>| -> String {
+                ch.map_or("none".into(), |r| {
+                    (0..6)
+                        .map(|f| if (r[6] >> (16 + f)) & 1 != 0 { format!("{:.4}", lum(r[f])) } else { "-".into() })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+            };
+            for w in &whole {
+                for f in 0..7 {
+                    let mut n = *w;
+                    if f < 6 {
+                        n[f / 2] += if f % 2 == 0 { -1 } else { 1 };
+                    }
+                    let _ = writeln!(
+                        out,
+                        "  chain {}{n:?} by direction (-x +x -y +y -z +z): before {} | after {}",
+                        if f == 6 { "WHOLE " } else { "neighbour " },
+                        row(&d.chain_before[&n]),
+                        row(&d.chain_after[&n])
+                    );
+                }
+                let block = d.pool[w].as_ref().or(d.after[w].as_ref());
+                let (mut s, mut m) = (0.0, 0u64);
+                for (slot, r) in block.map(|b| records(b)).unwrap_or_default() {
+                    if brick_touched(*w, slot, d.lo, d.hi) {
+                        continue;
+                    }
+                    for f in 0..6 {
+                        if (r[6] >> (16 + f)) & 1 != 0 {
+                            s += lum(r[f]);
+                            m += 1;
+                        }
+                    }
+                }
+                let _ = writeln!(out, "  whole {w:?}: guess records' mean luminance {:.4} over {m} directions", s / m.max(1) as f64);
+            }
+        }
+
+        /// T2's rows of one dig.
+        fn t2(out: &mut String, n: usize, d: &DigCpu) {
+            let _ = writeln!(out, "T2 dig {n}: {} parts traced", d.trace.len());
+            let mut by: BTreeMap<[i32; 3], Vec<&HeldPart>> = BTreeMap::new();
+            for p in &d.trace {
+                by.entry(p.chunk).or_default().push(p);
+            }
+            let byte = |v: f32| (v * 255.0).round() as i32;
+            for (c, parts) in by {
+                let kept: Vec<&&HeldPart> = parts.iter().filter(|p| p.old_faces > 0).collect();
+                let kn = kept.len().max(1) as f64;
+                let old = kept.iter().map(|p| f64::from(p.own.unwrap_or(f32::NAN))).sum::<f64>() / kn;
+                let new = kept.iter().map(|p| f64::from(p.value)).sum::<f64>() / kn;
+                let under = kept.iter().filter(|p| p.own.is_some_and(|o| byte(o) - byte(p.value) > 4)).count();
+                let outs: Vec<&&HeldPart> = parts.iter().filter(|p| p.outside > 0).collect();
+                let on = outs.len().max(1) as f64;
+                let _ = writeln!(
+                    out,
+                    "  {c:?}: parts {}; with kept faces {} old {:.4} written {:.4} written over 4 bytes under {}; with faces outside counted as the dig's {} ({} faces) written {:.4}",
+                    parts.len(),
+                    kept.len(),
+                    old,
+                    new,
+                    under,
+                    outs.len(),
+                    outs.iter().map(|p| u64::from(p.outside)).sum::<u64>(),
+                    outs.iter().map(|p| f64::from(p.value)).sum::<f64>() / on
+                );
+            }
+        }
+
+        /// Plan 0105 Phase 7a3: what darkens B's ring at dig 5, by the light's own words (a
+        /// reading; run by name it asserts Plan 0105 Phase 7b3b's bounds on T3, below). Sequence B alone on the waiting queue, the default arm,
+        /// device-wait lockstep, every frame's stages read and the held trace on. Prints T1 (the
+        /// edit, digs 5 and 4), T2 (the held trace, digs 4 and 5) and T3 (the ring's dark
+        /// pixels at D5+0 and D5+1, the set the bar counts, by their face's voxel's chunk kind
+        /// and whether dig 5's box dilated by one voxel touches its brick); written to
+        /// `live/p7b3b/whole.txt`. At D5+0 and D5+1 it also prints the lighting pixels with the
+        /// source `record`, the cast flag set and the moments' w under 1.5 (a marked dig face the
+        /// passes after the temporal one count as cast).
+        #[test]
+        #[ignore = "reading"]
+        #[allow(clippy::too_many_lines, reason = "a reading's three tables over one run")]
+        fn whole_dig_ring() {
+            let mut cpu: BTreeMap<usize, DigCpu> = BTreeMap::new();
+            let mut voxels: BTreeMap<usize, Vec<Option<[i32; 3]>>> = BTreeMap::new();
+            // Dig 5's frames' moments' w, by lighting pixel.
+            let mut kinds: BTreeMap<usize, Vec<f32>> = BTreeMap::new();
+            let mut tap = |t: Tap<'_>, rig: &mut Rig, s: &mut Stepper| match t {
+                Tap::Start => s.frame.set_bake_queue(|q| q.trace_held = true),
+                Tap::Edit { dig, lo, hi } => {
+                    if dig != 3 && dig != 4 {
+                        return;
+                    }
+                    let store = s.frame.store();
+                    let chunks = box_chunks(lo, hi);
+                    let mut d = DigCpu { lo, hi, ..Default::default() };
+                    d.trace0 = s.frame.bake_queue().expect("the live queue").held_trace.len();
+                    for c in &chunks {
+                        d.before.insert(*c, store.block_words(ChunkCoord(*c)).map(<[u32]>::to_vec));
+                    }
+                    d.chain_before = chains(store, &chunks);
+                    d.chunks = chunks;
+                    cpu.insert(dig, d);
+                }
+                Tap::Frame { dig, k, frame } => {
+                    if k == 0
+                        && let Some(d) = cpu.get_mut(&dig)
+                    {
+                        let store = s.frame.store();
+                        let classes = face_classes(rig.world.materials());
+                        for c in d.chunks.clone() {
+                            let coord = ChunkCoord(c);
+                            d.after.insert(c, store.block_words(coord).map(<[u32]>::to_vec));
+                            d.pool.insert(c, s.frame.read_store_block(&rig.device, &rig.queue, coord));
+                            let l = list_world_chunk(&rig.world, coord, &classes).unwrap_or_default();
+                            let faces = l.bricks.iter().map(|b| b.1.len()).sum();
+                            let touched = l.bricks.iter().filter(|b| !b.1.is_empty() && brick_touched(c, usize::from(b.0), d.lo, d.hi)).count();
+                            d.listed.insert(c, [l.bricks.len(), faces, touched]);
+                        }
+                        d.chain_after = chains(store, &d.chunks);
+                        d.trace = s.frame.bake_queue().expect("the live queue").held_trace[d.trace0..].to_vec();
+                    }
+                    if dig == 4 && k < 2 {
+                        voxels.insert(k, frame.hits.iter().map(|h| face_voxel(&rig.world, h)).collect());
+                        let mom = svet_render::debug::read_rgba16f(&rig.device, &rig.queue, s.frame.moments());
+                        kinds.insert(k, mom.iter().map(|m| m[3]).collect());
+                    }
+                }
+            };
+            let Some((line, _rig)) = line_run("above", true, "B", "default", 600, None, true, svet_render::DEFAULT_RING1_STRETCH, false, Some(&mut tap)) else {
+                return;
+            };
+            let land = super::ring1_landings(&line);
+            let LineRun { frames, digs, out, eye, head, .. } = line;
+            let run = HoleRun { frames, n1: 1, digs, out, hold: true, eye };
+            let groups = defects::hole_groups_at(&run, &land);
+            let f4 = defects::hole_figures_in(&run, 4, &groups).0;
+            let mut text = format!("{head}\n");
+            for (k, (&(d0, lo, hi), l)) in run.digs.iter().zip(&land).enumerate() {
+                let _ = writeln!(text, "dig {} at frame {d0} box {lo:?}..{hi:?} ring 1 lands D+{:?}; digs whole {}", k + 1, l.map(|l| l - d0), run.frames[d0].q.digs_whole);
+            }
+            for (n, k) in [(5, 4), (4, 3)] {
+                if let Some(d) = cpu.get(&k) {
+                    t1(&mut text, n, d);
+                }
+            }
+            for (n, k) in [(4, 3), (5, 4)] {
+                if let Some(d) = cpu.get(&k) {
+                    t2(&mut text, n, d);
+                }
+            }
+            // T3: dig 5's chunks by kind.
+            let Some(d5) = cpu.get(&4) else {
+                println!("{text}no dig 5");
+                return;
+            };
+            let whole: BTreeSet<[i32; 3]> = d5.chunks.iter().filter(|c| d5.before[*c].is_none() && d5.after[*c].is_some()).copied().collect();
+            let held: BTreeSet<[i32; 3]> = d5.chunks.iter().filter(|c| d5.before[*c].is_some()).copied().collect();
+            const KINDS: [&str; 4] = ["whole chunk", "dug, held a block", "other", "no face voxel"];
+            let (dw, dh) = (run.out[0] as usize, run.out[1] as usize);
+            // Plan 0105 Phase 7b3b's bounds at D5+0 and D5+1 (the readings 3 / 5 px and 917 / 863
+            // px, Phase 7b3): the dug chunks with a block at most 20 dark pixels, the whole
+            // chunk at most 1000, none of them shown from a record or the chunk's own summary,
+            // and no marked dig face counted as cast.
+            let mut fails: Vec<String> = Vec::new();
+            for k in 0..2 {
+                let fi = run.digs[4].0 + k;
+                let Some(vox) = voxels.get(&k) else {
+                    continue;
+                };
+                let (bi, ai) = defects::before_after(&run, &groups, fi);
+                let (f, fb, fa) = (&run.frames[fi], &run.frames[bi], &run.frames[ai]);
+                let (c, cb, ca) = (defects::hole_classes(&run, f).1, defects::hole_classes(&run, fb).1, defects::hole_classes(&run, fa).1);
+                let gl = f.hits.len();
+                let gw = ((gl as f64 * dw as f64 / dh as f64).sqrt().round() as usize).max(1);
+                let mut by: BTreeMap<(usize, bool), Group> = BTreeMap::new();
+                let (mut nr, mut dark) = (0u64, 0u64);
+                for i in 0..f.luma.len() {
+                    let ring = defects::DIG_RING_CLASS;
+                    if !(c[i] == ring && cb[i] == ring && ca[i] == ring) {
+                        continue;
+                    }
+                    nr += 1;
+                    let (l, b, a) = (i32::from(f.luma[i]), i32::from(fb.luma[i]), i32::from(fa.luma[i]));
+                    if l >= b.min(a) - 4 {
+                        continue;
+                    }
+                    dark += 1;
+                    let gi = defects::grid_of(i, dw, dh, gw, gl);
+                    let (kind, touched) = match vox[gi] {
+                        None => (3, false),
+                        Some(v) => {
+                            let ch = v.map(|x| x.div_euclid(64));
+                            let kind = if whole.contains(&ch) {
+                                0
+                            } else if held.contains(&ch) {
+                                1
+                            } else {
+                                2
+                            };
+                            let lv = [0, 1, 2].map(|j| v[j].rem_euclid(64) as usize / 8);
+                            (kind, brick_touched(ch, lv[0] + 8 * lv[1] + 64 * lv[2], d5.lo, d5.hi))
+                        }
+                    };
+                    let g = by.entry((kind, touched)).or_default();
+                    g.n += 1;
+                    g.over32 += u64::from(l < b.min(a) - 32);
+                    *g.src.entry((fb.source[gi], f.source[gi])).or_default() += 1;
+                    for (j, fr) in [fb, f, fa].into_iter().enumerate() {
+                        g.x[j] += f64::from(fr.pair[gi][0]);
+                        g.stored[j] += fr.stored.get(gi).copied().map_or(f64::NAN, f64::from);
+                        g.direct[j] += fr.direct.get(gi).copied().map_or(f64::NAN, f64::from);
+                    }
+                    g.cast += u64::from(f.cast[gi]);
+                    g.age += f64::from(f.pair[gi][3]);
+                    let fp = &run.frames[fi - 1];
+                    let near = |a: Option<&f32>, b: Option<&f32>, tol: f32| a.zip(b).is_some_and(|(a, b)| (a - b).abs() <= tol);
+                    g.steady += u64::from(
+                        near(f.pair.get(gi).map(|p| &p[0]), fp.pair.get(gi).map(|p| &p[0]), 0.01) && near(f.stored.get(gi), fp.stored.get(gi), 0.05),
+                    );
+                }
+                let _ = writeln!(
+                    text,
+                    "T3 {} (before {}, after {}): ring {nr} px, dark over 4 {dark} ({:.2} %), ring bar {:.2} % black; exposure before {:.6} frame {:.6} after {:.6} (frame / before {:+.2} %)",
+                    f.label,
+                    fb.label,
+                    fa.label,
+                    100.0 * dark as f64 / nr.max(1) as f64,
+                    f4[fi].black_ring,
+                    fb.exposure,
+                    f.exposure,
+                    fa.exposure,
+                    100.0 * (f.exposure / fb.exposure.max(1e-12) - 1.0)
+                );
+                // The marked dig faces still counted as cast by the passes after the temporal
+                // one: the source `record` (the temporal pass's no-ray read), the light pass's
+                // cast flag set and the moments' w under 1.5, over the frame's lighting pixels.
+                let marked_cast = kinds.get(&k).map_or(0, |w| {
+                    (0..f.source.len())
+                        .filter(|&i| f.source[i] == defects::SOURCE_RECORD && f.cast[i] && w.get(i).is_some_and(|&w| w < 1.5))
+                        .count()
+                });
+                let _ = writeln!(text, "  record pixels cast with w under 1.5: {marked_cast} of {}", f.source.len());
+                let mut big = 0u64;
+                for ((kind, touched), g) in &by {
+                    let n = g.n.max(1) as f64;
+                    if g.n >= 1000 {
+                        big += g.n;
+                    }
+                    let src: Vec<String> = g
+                        .src
+                        .iter()
+                        .map(|(&(a, b), &m)| format!("{} -> {} {m}", defects::SOURCE_NAMES[usize::from(a.min(6))], defects::SOURCE_NAMES[usize::from(b.min(6))]))
+                        .collect();
+                    let tri = |v: &[f64; 3]| format!("{:.4} / {:.4} / {:.4}", v[0] / n, v[1] / n, v[2] / n);
+                    let _ = writeln!(
+                        text,
+                        "  {} / {}: {} ({:.0} %), over 32 {}; sources (before -> frame) {}; sky x (before / frame / after) {}; stored {}; direct {}; cast {:.1} %; age {:.2}; pair and stored as the frame before's {}",
+                        KINDS[*kind],
+                        if *touched { "brick dig 5 touches" } else { "brick dig 5 does not touch" },
+                        g.n,
+                        100.0 * g.n as f64 / dark.max(1) as f64,
+                        g.over32,
+                        src.join(", "),
+                        tri(&g.x),
+                        tri(&g.stored),
+                        tri(&g.direct),
+                        100.0 * g.cast as f64 / n,
+                        g.age / n,
+                        g.steady
+                    );
+                }
+                let _ = writeln!(text, "  groups of 1000 or more: {big} of {dark} ({:.0} %)", 100.0 * big as f64 / dark.max(1) as f64);
+                let of_kind = |kind: usize| by.iter().filter(|e| e.0.0 == kind).map(|e| e.1.n).sum::<u64>();
+                let shown: u64 = by
+                    .iter()
+                    .filter(|e| e.0.0 == 0)
+                    .flat_map(|e| e.1.src.iter())
+                    .filter(|(s, _)| s.1 == defects::SOURCE_RECORD || s.1 == defects::SOURCE_OWN_SUMMARY)
+                    .map(|(_, m)| *m)
+                    .sum();
+                for (what, v, bar) in [("dug chunks with a block", of_kind(1), 20), ("the whole chunk", of_kind(0), 1000), ("the whole chunk's from a record or its own summary", shown, 0), ("record pixels cast with w under 1.5", marked_cast as u64, 0)] {
+                    if v > bar {
+                        fails.push(format!("{}: {what} {v} px against {bar}", f.label));
+                    }
+                }
+            }
+            println!("{text}");
+            let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../live/p7b3b");
+            std::fs::create_dir_all(&dir).expect("the reading's directory");
+            std::fs::write(dir.join("whole.txt"), text).expect("the tables");
+            assert!(fails.is_empty(), "T3's bounds missed: {}", fails.join("; "));
         }
         }
     }

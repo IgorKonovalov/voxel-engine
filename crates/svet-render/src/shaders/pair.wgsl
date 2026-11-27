@@ -1,7 +1,8 @@
 // The visibility pair (ADR-0070) of the temporal pass: its running means, the no-ray value's
-// fade, the sky term's source words and a landing's switch of source's fade. Compiled after
-// `sky.wgsl` and before `temporal.wgsl`, whose uniforms (`params`, `sky`), bindings (`store`)
-// and helpers (`above_column`, the store's readers) it uses.
+// fade, the sky term's source words, a landing's switch of source's fade and the dig hold's
+// box tests. Compiled after `sky.wgsl` and `edits.wgsl` and before `temporal.wgsl`, whose
+// uniforms (`params`, `sky`), bindings (`store`, `edits`) and helpers (`above_column`, the
+// store's readers) it uses.
 
 // The visibility pair (ADR-0070). The short mean's frames, and the age past which a sample is
 // clamped.
@@ -277,6 +278,37 @@ fn in_dig_hold(p: vec3<f32>) -> bool {
         }
     }
     return false;
+}
+
+// Whether voxel `v` lies in a held dig box (`Lighting::dig_hold`'s boxes after the frame's kill
+// boxes, edits.wgsl) dilated by one voxel, whatever the hold's bits: the voxel test the CPU's
+// held record splits a cell's faces by (`bake::held`), so the faces read here are its dig faces.
+fn in_held_box(v: vec3<i32>) -> bool {
+    for (var i = edits.count; i < edits.count + edits.held; i++) {
+        if (all(v >= edits.boxes[2u * i].xyz - 1) && all(v <= edits.boxes[2u * i + 1u].xyz + 1)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Face `face` of voxel `v`'s held dig value (ADR-0082, `DigEstimate::Depth`) in x, with a 1 in
+// y: where the voxel lies in a held dig box, its own cell's record holds no KEY_BAKED and the
+// first key word's bit `face` (`bake::DIG_HELD`; SKY_STALE or not), the direction's sky byte,
+// which no other read takes (the record's mask lacks the direction or it holds no VIS_BAKED,
+// so `store_sky_cell` reads none). 0 in y for none. Read for the pixel's own cell alone, where
+// `store_sky_visibility` finds no direction; no 2 x 2 tap reads it.
+fn store_dig_held(head: StoreHead, v: vec3<i32>, face: u32) -> vec2<f32> {
+    if (edits.held == 0u || !in_held_box(v)) {
+        return vec2<f32>(0.0);
+    }
+    let rec = store_cell_record(head, v >> vec3<u32>(head.shift));
+    if (rec == 0u || (store[rec + KEY_WORD + 1u] & KEY_BAKED) != 0u
+        || ((store[rec + KEY_WORD] >> face) & 1u) == 0u) {
+        return vec2<f32>(0.0);
+    }
+    let byte = (store[rec + VIS_WORD + face / 4u] >> (8u * (face % 4u))) & 255u;
+    return vec2<f32>(f32(byte) / 255.0, 1.0);
 }
 
 // Whether a stale ring face's pair holds its record's estimate at the cap under the dig hold:

@@ -1,0 +1,13 @@
+{
+  "readme_cap_bytes": 2000,
+  "shots": {
+    "hero": { "kind": "still", "file": "hero.webp", "cap_bytes": 300000 },
+    "loop": { "kind": "loop", "file": "loop.webp", "cap_bytes": 700000, "unjudged": "a fixture: its noise set broke its ceiling" },
+    "big": { "kind": "still", "file": "big.webp" },
+    "orphan": { "kind": "still", "file": "orphan.webp" },
+    "soon": { "kind": "still", "file": "soon.webp", "draft": true }
+  },
+  "frozen": {
+    "old.png": "a frozen figure no markdown references"
+  }
+}

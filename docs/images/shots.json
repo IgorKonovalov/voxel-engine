@@ -1,0 +1,256 @@
+{
+  "shots": {
+    "hero": {
+      "kind": "still",
+      "file": "hero.webp",
+      "width": 1600,
+      "quality": 82,
+      "source": "flythrough",
+      "seed": 1,
+      "flags": ["--headless", "--settled-start", "--source", "outdoor", "--trees", "forest", "--spawn", "forest", "--time", "18:10", "--render", "1920x1080", "--frames", "96", "--eye", "0,640,579,180,15", "--lamp", "off"],
+      "still_at": 95,
+      "tolerance": 0.02,
+      "cap_bytes": 300000,
+      "shows": "The hills at sunset from the forest spawn (the castle on a hill is not placeable: --vox is ignored outdoors)",
+      "candidates": [
+        ["--time", "17:40"],
+        ["--time", "18:10"],
+        ["--time", "18:40"],
+        ["--eye", "0,640,579,180,-5"],
+        ["--eye", "0,640,640,270,-10"],
+        ["--eye", "0,640,640,180,5", "--lamp", "off"],
+        ["--time", "18:40", "--eye", "0,640,640,180,5", "--lamp", "off"],
+        ["--eye", "0,640,579,180,15", "--lamp", "off"],
+        ["--eye", "0,640,800,180,-5", "--lamp", "off"]
+      ],
+      "note": "the flags are candidate 8, the owner's pick; tolerance: cell share at C 8, L 4; ten renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 45 pairs, largest pair 0.007743, twice the largest pair (G13), rounded up to one significant figure; smallest wrong share 0.614602 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
+    },
+    "dig": {
+      "kind": "still",
+      "file": "dig.webp",
+      "width": 1600,
+      "quality": 82,
+      "source": "flythrough",
+      "seed": 1,
+      "flags": ["--headless", "--settled-start", "--source", "cave", "--dig-at", "40", "--render", "1280x720", "--frames", "97", "--eye", "32,32,32,180,-10", "--lamp", "on"],
+      "still_at": 96,
+      "tolerance": 0.003,
+      "cap_bytes": 300000,
+      "shows": "A dug cave lit by the headlamp, its light settled (World and edits)",
+      "candidates": [
+        [],
+        ["--eye", "32,32,32,90,0"],
+        ["--eye", "32,32,32,180,-10"],
+        ["--eye", "32,32,32,180,-10", "--lamp", "off"],
+        ["--eye", "32,32,32,180,-10", "--lamp", "off", "--exposure-comp", "1"]
+      ],
+      "note": "the flags are candidate 3 with the lamp on, the owner's pick of 2026-11-27 ((a): the same pose, where the dig reads); candidate 4 (the lamp off) was the page's image from v0.79.1 until 2026-11-27; a still of the loop's last frame by G3's flash read on these flags (the mean over the changed pixels is over the last frame's by up to 1.236 (frame 50) at 54 of frames 40..95, the two renders apart by at most 0.003); the loop for the re-shoot was kind loop, still_at 36..96, fps 20, width 800, quality 70, cap_bytes 700000, fallback gif; --pre-roll-stepped left off (a render with it ran past the script's 300 s timeout); tolerance: cell share at C 8, L 4; thirteen renders of this entry (the shoot's, eleven more in one hold and the check's, G13; eleven PNGs identical, one other), 78 pairs, largest pair 0.001062, twice the largest pair (G13), rounded up to one significant figure; smallest wrong share 0.573407 (the yaw turned 2 degrees); 2026-11-27, the release binaries of b16a944e, RTX 3080 Laptop, loaded"
+    },
+    "hall": {
+      "kind": "still",
+      "file": "hall.webp",
+      "width": 1600,
+      "quality": 82,
+      "source": "flythrough",
+      "seed": 1,
+      "flags": ["--headless", "--settled-start", "--source", "showcase", "--shot", "crystals", "--render", "1920x1080", "--frames", "64"],
+      "still_at": 63,
+      "tolerance": 0.003,
+      "cap_bytes": 300000,
+      "shows": "The showcase hall, the lamp off (Rendering)",
+      "candidates": [
+        ["--shot", "hall"],
+        ["--shot", "chasm"],
+        ["--shot", "crystals"]
+      ],
+      "note": "tolerance: cell share at C 8, L 4; eight renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 28 pairs, largest pair 0.001195, twice the largest pair (G13), rounded up to one significant figure; smallest wrong share 0.383894 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
+    },
+    "lamp-cave": {
+      "kind": "still",
+      "file": "lamp-cave.webp",
+      "width": 1600,
+      "quality": 82,
+      "source": "flythrough",
+      "seed": 1,
+      "flags": ["--headless", "--settled-start", "--source", "cave", "--lamp", "on", "--render", "1920x1080", "--frames", "64", "--eye", "32,32,32,180,0"],
+      "still_at": 63,
+      "tolerance": 0.005,
+      "cap_bytes": 300000,
+      "shows": "A lamp-lit cave, the headlamp's bounce on wet rock (Lighting)",
+      "candidates": [
+        [],
+        ["--exposure", "2"],
+        ["--eye", "32,32,32,90,0"],
+        ["--eye", "32,32,32,180,0"],
+        ["--eye", "32,32,32,270,0"],
+        ["--eye", "32,32,32,180,0", "--exposure", "0.5"],
+        ["--eye", "32,32,32,180,0", "--exposure", "0.25"]
+      ],
+      "note": "tolerance: cell share at C 8, L 4; fourteen renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 91 pairs, largest pair 0.002345, twice the largest pair (G13), rounded up to one significant figure; smallest wrong share 0.556637 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
+    },
+    "canopy": {
+      "kind": "still",
+      "file": "canopy.webp",
+      "width": 1600,
+      "quality": 82,
+      "source": "flythrough",
+      "seed": 1,
+      "flags": ["--headless", "--settled-start", "--source", "outdoor", "--trees", "forest", "--spawn", "forest", "--time", "15:00", "--eye", "0,640,579,270,30", "--render", "1920x1080", "--frames", "96"],
+      "still_at": 95,
+      "tolerance": 0.006,
+      "cap_bytes": 300000,
+      "shows": "The canopy at 15:00 from under the trees (Outdoors)",
+      "candidates": [
+        ["--eye", "0,640,579,90,30"],
+        ["--eye", "0,640,579,270,30"],
+        ["--eye", "0,640,579,180,45"],
+        ["--eye", "0,640,579,0,15"],
+        ["--eye", "0,640,579,270,5"],
+        ["--eye", "0,640,579,45,60"]
+      ],
+      "note": "tolerance: cell share at C 8, L 4; eight renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 28 pairs, largest pair 0.002611, twice the largest pair (G13), rounded up to one significant figure; smallest wrong share 0.398717 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
+    },
+    "skylight": {
+      "kind": "still",
+      "file": "skylight.webp",
+      "width": 1600,
+      "quality": 82,
+      "source": "flythrough",
+      "seed": 1,
+      "flags": ["--headless", "--settled-start", "--source", "outdoor", "--spawn", "inside", "--eye", "96,0,535,180,60", "--dig-at", "30", "--render", "1920x1080", "--frames", "91"],
+      "still_at": 90,
+      "tolerance": 0.006,
+      "cap_bytes": 300000,
+      "shows": "The skylight dig: the tunnel's roof opened to the sky (Outdoors or the gallery)",
+      "candidates": [
+        [],
+        ["--eye", "96,0,535,180,45"],
+        ["--eye", "96,0,535,0,60"],
+        {
+          "flags": [],
+          "still_at": 60
+        }
+      ],
+      "note": "tolerance: cell share at C 8, L 4; eight renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 28 pairs, largest pair 0.002743, twice the largest pair (G13), rounded up to one significant figure; smallest wrong share 0.216416 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
+    },
+    "walkers": {
+      "kind": "loop",
+      "file": "walkers.webp",
+      "width": 800,
+      "fps": 20,
+      "quality": 70,
+      "source": "flythrough",
+      "seed": 1,
+      "flags": ["--headless", "--settled-start", "--source", "showcase", "--entities", "1", "--entities-walk", "on", "--shot", "crystals", "--render", "1280x720", "--frames", "121", "--lamp", "off", "--model", "apps/flythrough/assets/entities/spider/spider.rig", "--eye", "680,300,215,0,-65"],
+      "still_at": "60..120",
+      "tolerance": null,
+      "cap_bytes": 700000,
+      "fallback": "gif",
+      "shows": "One spider standing and turning on its legs among the lit crystals of the showcase (Entities)",
+      "candidates": [
+        ["--shot", "hall"],
+        ["--shot", "chasm"],
+        ["--entities", "1", "--lamp", "off", "--model", "apps/flythrough/assets/entities/walker/walker.rig", "--eye", "190,384,148,0,-20"],
+        ["--entities", "1", "--lamp", "off", "--model", "apps/flythrough/assets/entities/walker/walker.rig", "--shot", "crystals", "--eye", "720,300,150,0,-20"],
+        ["--entities", "1", "--lamp", "off", "--model", "apps/flythrough/assets/entities/spider/spider.rig", "--eye", "190,384,218,0,-65"],
+        ["--entities", "1", "--lamp", "off", "--model", "apps/flythrough/assets/entities/spider/spider.rig", "--shot", "crystals", "--eye", "680,300,215,0,-65"]
+      ],
+      "unjudged": "twice the largest pair, 0.014828 (largest pair 0.007414 of 28, eight renders), is over the ceiling 0.011994, a third of the smallest wrong share 0.035982 (the loop started one frame late); G13, 2026-11-27",
+      "note": "the flags are candidate 6, a default picked by the bar (Plan 0093 Phase 5d) for the owner to correct; no tolerance: cell share at C 8, L 4 over the 61 frames; eight renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 28 pairs, largest pair 0.007414, twice it 0.014828 (G13) over the ceiling 0.011994; smallest wrong share 0.035982 (the loop started one frame late), the yaw turned 2 degrees 0.526575; unjudged (G2); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
+    },
+    "spider-walk": {
+      "kind": "loop",
+      "file": "spider-walk.webp",
+      "width": 800,
+      "fps": 25,
+      "quality": 70,
+      "source": "clip",
+      "seed": 1,
+      "flags": ["--clip", "walk"],
+      "tolerance": 0.01,
+      "cap_bytes": 700000,
+      "fallback": "gif",
+      "note": "tolerance: cell share at C 8, L 4 over the 40 frames; eight renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 28 pairs, largest pair 0.004781, twice the largest pair (G13), rounded up to one significant figure; smallest wrong share 0.079048 (the loop started one frame late); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
+    },
+    "walker-walk": {
+      "kind": "loop",
+      "file": "walker-walk.webp",
+      "width": 480,
+      "fps": 25,
+      "quality": 70,
+      "source": "clip",
+      "seed": 1,
+      "flags": ["--rig", "apps/flythrough/assets/entities/walker/walker.rig", "--clip", "walk", "--ahead", "70", "--orbit", "24,3,-10", "--aim", "9"],
+      "tolerance": 0.003,
+      "cap_bytes": 700000,
+      "fallback": "gif",
+      "note": "tolerance: cell share at C 8, L 4 over the 25 frames; ten renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 45 pairs, largest pair 0.001137, twice the largest pair (G13), rounded up to one significant figure; smallest wrong share 0.038882 (the loop started one frame late); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
+    },
+    "chapel": {
+      "kind": "still",
+      "file": "chapel.webp",
+      "width": 1600,
+      "quality": 82,
+      "source": "flythrough",
+      "seed": 1,
+      "flags": ["--headless", "--settled-start", "--source", "cave", "--vox", "apps/flythrough/assets/structures/chapel/chapel.vox", "--render", "1920x1080", "--frames", "64", "--eye", "32,32,32,0,15", "--lamp", "off"],
+      "still_at": 63,
+      "tolerance": 0,
+      "cap_bytes": 300000,
+      "shows": "The chapel's glass and lamps in the cave (Structures)",
+      "candidates": [
+        ["--lamp", "on"],
+        ["--lamp", "off"],
+        ["--eye", "20,32,34,0,0", "--lamp", "on"],
+        ["--eye", "20,32,34,0,0", "--lamp", "off"],
+        ["--eye", "32,32,32,0,15", "--lamp", "off"]
+      ],
+      "note": "tolerance: cell share at C 8, L 4; eight renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 28 pairs, largest pair 0, every pair 0, so 0 (G13: 0 until a render differs); smallest wrong share 0.277434 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
+    },
+    "castle": {
+      "kind": "still",
+      "file": "castle.webp",
+      "width": 1600,
+      "quality": 82,
+      "source": "flythrough",
+      "seed": 1,
+      "flags": ["--headless", "--settled-start", "--castle-shot", "nave", "--render", "1920x1080", "--frames", "64"],
+      "still_at": 63,
+      "tolerance": 0.003,
+      "cap_bytes": 300000,
+      "shows": "The castle's nave under its vault (Audio)",
+      "candidates": [
+        ["--castle-shot", "gate"],
+        ["--castle-shot", "nave"],
+        ["--castle-shot", "window"],
+        ["--castle-shot", "nave", "--lamp", "off"],
+        ["--castle-shot", "nave", "--sky", "on", "--sun", "20,120", "--lamp", "off"],
+        ["--castle-shot", "nave", "--sky", "on", "--sun", "20,120", "--lamp", "on"]
+      ],
+      "note": "the flags are candidate 2, the owner's pick, kept by the bar (Plan 0093 Phase 5d): no sunlit candidate has sun on the nave; tolerance: cell share at C 8, L 4; eight renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 28 pairs, largest pair 0.001062, twice the largest pair (G13), rounded up to one significant figure; smallest wrong share 0.515398 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
+    },
+    "hud": {
+      "kind": "still",
+      "file": "hud.webp",
+      "width": 1600,
+      "quality": 82,
+      "source": "flythrough",
+      "seed": 1,
+      "flags": ["--headless", "--settled-start", "--source", "showcase", "--hud", "--shot", "crystals", "--render", "1920x1080", "--frames", "64"],
+      "still_at": 63,
+      "tolerance": 0.03,
+      "cap_bytes": 300000,
+      "shows": "The stats overlay with its pass list over the hall (Tooling)",
+      "candidates": [
+        ["--shot", "hall"],
+        ["--shot", "crystals"]
+      ],
+      "note": "tolerance: cell share at C 8, L 4; eight renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 28 pairs, largest pair 0.012743, twice the largest pair (G13), rounded up to one significant figure; smallest wrong share 0.358805 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
+    }
+  },
+  "frozen": {
+    "light/hall-settled-8192-frames.png": "a closed light write-up's figure; the mechanism it shows is gone",
+    "light/hall-diff-64-vs-8192-x8.png": "a closed light write-up's figure; the mechanism it shows is gone",
+    "light/hall-diff-2048-vs-8192-x8.png": "a closed light write-up's figure; the mechanism it shows is gone"
+  }
+}

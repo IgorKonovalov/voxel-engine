@@ -137,6 +137,12 @@ pub struct Store {
     /// A first block's landing word is marked on the next block write ([`Store::put`] or
     /// [`Store::show`]) while set.
     pub(super) mark_landing: bool,
+    /// Chunks that took their first block as a whole dig's provisional block (Plan 0105 F2):
+    /// [`Store::summarise`] marks their summary [`SKY_STALE`] until their job's block lands
+    /// (the queue removes them there), so the light pass reads no sky from a summary made of
+    /// held and guess records. Through every rewrite in between: [`Store::put`] (a second box's
+    /// provisional block), [`Store::show`] and [`Store::mark_sky_stale`] all summarise.
+    pub(super) held_whole: std::collections::BTreeSet<[i32; 3]>,
 }
 
 /// The chunks of `held` a move of the store's window from `old` to `window` drops: those outside
@@ -282,9 +288,9 @@ impl Store {
         let stamp = block[KEY_SUN_AT as usize];
         block[at..at + BRICK_WORDS].copy_from_slice(&s.unwrap_or_default());
         block[KEY_SUN_AT as usize] = stamp;
-        // A block whose cells hold a dig's stale visibilities: its summary waits for the bake
-        // too (the no-record prior does not read it).
-        if any_cell_stale(block, record) {
+        // A block whose cells hold a dig's stale visibilities, or a whole dig's provisional
+        // block: its summary waits for the bake too (the no-record prior does not read it).
+        if self.held_whole.contains(&c) || any_cell_stale(block, record) {
             mark_summary_stale(block);
         }
         self.set_summary(c, s);
@@ -332,6 +338,7 @@ impl Store {
             out: None,
             unit_depth: 0,
             mark_landing: false,
+            held_whole: std::collections::BTreeSet::new(),
         }
     }
 
@@ -444,6 +451,7 @@ impl Store {
         self.window = Some(window);
         self.free.clear();
         self.coarse.clear();
+        self.held_whole.clear();
         // Every chunk may have changed: the queue reads them all again.
         self.touched = None;
     }
@@ -608,6 +616,7 @@ impl Store {
             self.free_place(first, words);
             self.words.remove(&coord.0);
             self.coarse.remove(&coord.0);
+            self.held_whole.remove(&coord.0);
             self.emit(
                 self.table_word(coord) * 4,
                 bytemuck::bytes_of(&0u32),

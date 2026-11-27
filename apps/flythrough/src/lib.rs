@@ -42,7 +42,7 @@ pub use entities::walker;
 pub use flythrough_logic as logic;
 
 pub use census::*;
-pub use edits::ScrollSteps;
+pub use edits::{ScrollSteps, digs_whole_text};
 pub use look::*;
 pub use replay::*;
 pub use report::{now, percentile};

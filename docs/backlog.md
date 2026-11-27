@@ -17,6 +17,39 @@ Rules:
 
 ## Next up
 
+### The v0.79.1 tester archive on the owner's box: stagger in flight, no frame rate shown, a build-machine asset path (owner, 2026-11-27)
+
+The owner ran the released Linux archive (`svet-tester-0.79.1-linux-x86_64`, commit `1572f61f`, RTX 3080 Laptop, 2560x1440 output, FSR 2 at 1.5, floor profile, the four benchmark paths) and said: "there is quite a bit of a stagger when we were flying, and fps is unknown and hided". The report folder is kept outside the repo, in the main checkout's `live/owner-notes/2026-11-27-tester-0.79.1/`. **The box was loaded** (five to six lanes building, load1 about 15 to 45 at 13:48 to 13:51 local), so no figure here is a quiet reading.
+
+- **What the reports say:** the GPU is steady in every run (GPU p50 8.9 to 13.2 ms, p99 14.7 to 24.6 ms). The stagger is the CPU side on the three streamed scenes: wall p95 / p99 / max 53 / 116 / 202 ms in the cave, 48 / 118 / 501 ms at the castle, 29 / 56 / 242 ms outdoors, with 90 to 132 frames over 33 ms and 17 to 22 over 100 ms a run. The showcase, which streams nothing, reads p99 21.7 ms and 2 frames over 33 ms on the same loaded box. The streamed runs' mirror sync on the render thread reads p99 18 to 62 ms and max 103 to 156 ms (its `alloc` up to 91 ms, `copy` up to 82 ms, `light` up to 38 ms). Unread: how much is the box's load and how much the sync; a quiet re-run of the same archive separates them. Plan 0107 (the mirror's slot image packed on the stream workers) takes part of the sync off the render thread; its Phase 1 should read this report's `streaming` block first.
+- **No frame rate on screen:** the benchmark run shows no HUD and no frame rate; the figures are only in `run.json` and `tester.log`'s exit line. What it would take: a small frame-rate readout in tester mode, or the summary shown in the launcher after each run. The owner's call.
+- **A build-machine path in the release binary:** every run logs `structures /home/runner/work/svet/svet/apps/flythrough/assets/structures: No such file or directory`: the binary looks for the structures folder at the CI runner's source path, and the archive ships no assets folder. The runs go on without it. What it takes: the asset root resolved beside the executable in a packaged build (and the archive shipping what the paths need), with a test on the packed archive's log.
+
+### The forest dig at depth is checked by name on the RTX alone (2026-11-27)
+
+From [Plan 0105](plans/done/0105-the-digs-flash-at-depth-a-held-estimate-that-follows-the-holes-own-light.md), "Amended 2026-11-27 (architect, after Phase 7c's stop)". The forest's bars at depth (`down` and `side`, 1 to 7 m, `gpu_outdoor`'s `dig_depth::reading`) could not become a soak test: on lavapipe the rig's start alone (the floor's 1080p frame, the queue drained) took 25.5 minutes on a debug build. Lavapipe holds the synthetic shaft (`gpu_sun`'s `a_dig_at_depth_holds_no_light_over_its_landing`) and the fresh hole from above; no CI run sees the forest's sky at depth, the 1 m dark start's level, or a dig into a shaft's wall from inside.
+
+- **What it would take:** a forest rig that drains on lavapipe inside the soak tier's time. Unread: the drain's frame count there, and whether a hole 7 m down still holds enough pixels at a quarter of the size. Not an edited forest.
+- **Until then:** a plan that touches the held estimate, the dig's hold or the temporal pass's dig path names those two readings in its re-reads, by name on the RTX.
+- **Pick up:** with the next plan that edits those, or when lavapipe's drain is read for another reason.
+
+### A wandering spider turns on the spot and does not travel (2026-11-27)
+
+Found by the chore that tried to re-shoot the README's `walkers` image (`chore-readme-walkers-hud`, release binaries of `1febec75`, RTX 3080 Laptop, headless, showcase). With the wander on, the library spider changes heading but stays in one place for 900 to 1200 frames (15 to 20 s) after about its first second: at the crystals pose, on the hall floor, at 330,384 (where it climbs a wall and stays there) and at 560,300, alone and as three spiders. The built-in walker on its fixed circle does walk. Unread: whether the mover refuses the step (the look-ahead probe, the surface mover's climb), the wander picks targets it cannot reach, or the gait's stride is near zero. Stills: `live/report/walkers-spider-sheet-every30.png` and `walkers-spider-three-spots.png` in that chore's worktree (untracked). **What it takes:** an architect's reading of the wander and the surface mover at one of those poses, a headless count of distance travelled per second as the test, then the fix. The README's `walkers` loop waits on it.
+
+**Owner, 2026-11-27:** asked for its fix to be queued; the README's `walkers` loop is re-shot after it (a pose or frame range in which the spider crosses the frame), with the caption brought back to its walk.
+
+### The exposure is too bright at the beginning of a dug tunnel (owner, 2026-11-27)
+
+The owner, during the dig session of 2026-11-27 (forest at 15:00, floor profile, bake thread on,
+`depth`), looking down a pit he had just dug: "exposure is too bright on beginning of tunnel". In
+his screenshot the pit's upper walls read a light blue-grey (the sky term) around a black bottom,
+brighter than shaded rock a metre under the grass should look. Not attributed. Candidates to
+read: the exposure metering on a frame that is mostly the pit's dark interior (it opens up, so
+the mouth over-exposes); the sky visibility the walls near the mouth hold; the far-normal band.
+A stability-of-look matter: his to judge again after a reading names the cause. The screenshot is
+kept outside the repo in the main checkout's `live/owner-notes/2026-11-27-pit-mouth-exposure.png`.
+
 ### The pre-roll's end on a streamed world rides a 30-step recheck (2026-11-26)
 
 From [Plan 0106](plans/done/0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md), Rulings 4 and 5 (readings in `docs/plans/logs/0106.md`, Phases 10 and 11). **[Plan 0109](plans/0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md), in progress; its owner question was restated 2026-11-27 ("Phase 4, restated": the catch-up never lands in view on the tree) and is asked in one sitting with Plan 0108's Phase 2 (that plan's amendment of 2026-11-27).** This entry leaves when the owner answers.
@@ -50,21 +83,42 @@ Read in [Plan 0109](plans/0109-a-blocked-chunk-is-checked-again-when-its-blocker
 - **What it takes:** the rule lowers the radius only for the term a smaller radius can lower (the pool units), or the reservation's records follow the two radii. A testbed-and-mirror-budget change with a unit test on `RadiusRule`. Cousin of "The HUD paints a bounded level's full record reservation as mirror pressure" below.
 - **Pick up:** before the next plan that reads a streamed start on lavapipe for more than a few frames; Plan 0109's Phases 2b to 3b stay on the RTX or on `--frames 3` for this reason.
 
-### The outdoor soak goldens are red on the tree (2026-11-26)
+### `depth` on the present tree flashes slightly more than on 2026-11-26's binary: blind A/B, accepted by the owner, cause not found (2026-11-27)
 
-From [Plan 0106](plans/done/0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md), Ruling 12 (readings in `docs/plans/logs/0106.md`, Phase 6c). `gpu_outdoor_golden`'s soak test `outdoor_forest_sunset_golden` fails at its golden on lavapipe at `43a3a141`: 29.7292 % of pixels over 2/255 against 0.1 %, the same in two runs. Main's backlog already holds its neighbour ("A soak golden red on the tree: the cave mouth lit from outside", 99.95 %); **this entry takes that one over, and the two are one item once both are on main.** The soak tier is in no gate, so the weekly run is red on these until they are read. A moved picture is a stable-image matter: nothing here is re-blessed or fixed before the owner has seen it.
+From [Plan 0105](plans/done/0105-the-digs-flash-at-depth-a-held-estimate-that-follows-the-holes-own-light.md), "Amended 2026-11-27 (architect, the blind look ...)"; the facts and the series table are in `docs/plans/logs/0105.md`, "Phase 7b4, the blind look, 2026-11-27". Blind, the owner read `live/bin/p6/flythrough` (`7b1725c2`) as flashing less than `live/bin/p7b3/flythrough` (`e1060437`), then accepted the present one ("b is acceptable as well"). Session 7 read the same way on `526bee74`.
 
-- **Established:** the two failures and their figures, each repeatable; both PNGs last written at `a5e5f99b` (2026-11-21, Plan 0095 Phase 10). **Not established:** which merge moved each, whether one or several, whether today's lavapipe still draws `a5e5f99b`'s goldens, whether the binary's third soak test (`outdoor_goldens_differ_by_time_of_day`: noon, sunset, night) is red too, and which of picture and golden is wrong. **Leads, from history only:** `248d64db` (Plan 0098 Phase 4, the calm defaults) re-blessed the gate goldens, the same rig's `outdoor_forest_afternoon.png` among them, and none of this binary's five soak PNGs; Plan 0097 (the exposure's anchor) merged after the bless; the weekly soak of 2026-11-23 on `123964e7` did not list this binary. The underground eye's reference (2026-11-24, below) had this shape: a default moved on purpose, the soak side not re-read.
-- **The reading (a chore of its own, `chore-outdoor-soak-goldens` off main's tip; owner skill dev; no test, golden or source file changes; the log is `docs/plans/logs/chore-outdoor-soak-goldens.md`).** Builds in one scratch worktree checked out at each commit, 4 jobs in a 6 GiB scope, outside the lock; every run alone under the perf lock on lavapipe: `-p flythrough --test gpu_outdoor_golden --profile soak --run-ignored only --no-capture`. (1) Main's tip, the three soak tests as written: which fail, each printed percent (a test stops at its first red image). (2) The renders: at each commit visited, one run with the bless variable set **in the scratch worktree only** (`SVET_BLESS`; `VXE_BLESS` before the rename, `be97152a`), which writes that commit's five pictures there; they are copied out as `live/<sha>-<name>.png` and the scratch tree's golden directory is checked out again. Later assertions of a blessed run may fail and are not read. (3) Off the lock, each render against `a5e5f99b`'s committed PNG by the test's own rule (share of pixels over 2/255) and against the tip's render. (4) The commits: `a5e5f99b` first, then a bisect over main's first-parent merges after `123964e7` that touch `crates/` or `apps/` (about fourteen, so four steps). For each picture: the first merge whose render leaves the golden; if that merge's render is not the tip's, a second mover lies between them and is bisected for the sunset and the cave mouth while the budget lasts. (5) For each moved picture, the difference's character: a difference image and the pair side by side in `live/`, where the pixels differ (the sky, lit ground, under the canopy, or the whole frame evenly, which is exposure), each side's mean luma, and the commit inside the merge that names the changed default, from `git log` alone.
-- **Budget and stops:** about 75 s a run as last read (Plan 0032; unread today, projected from the first run), at most ten runs, **15 minutes of lock in all**: at the cap the reading reports what it has. Stops, nothing changed to pass: `a5e5f99b`'s render not matching its own golden on today's lavapipe (the driver, or a golden blessed red: report the box's Mesa and LLVM and go no further); a render differing between two runs of one commit (a pace on the picture: both renders kept); a commit that does not build.
-- **Done when:** the log holds the table (commit by picture, percent against the golden), the moving merge or merges per picture, the difference's character, and the paths of the pairs. No file under `apps/` or `crates/` differs from main, no PNG under `tests/golden/` is touched in any committed tree.
-- **Then:** the architect reads the pairs against each test's claim, and the owner is asked per picture: the picture the defaults now draw is the one picked in the window (the golden is stale: a re-bless at the tip, the bars as written, as the underground eye's reference went) or it is a fault (a fix, planned). With the test able to pass, Plan 0106's open row lands: `let _ = bare.device.poll(wgpu::PollType::wait_indefinitely());` before `exposure_readout` in `outdoor_forest_sunset_golden` (the form `zenith_exposure` took), three passes by name with the printed exposure equal across them and equal to the unwaited form's.
+- **Established:** an ordinary dig's held bytes are equal by the code, and a headless burst of four digs into a settled store reads the two equal twice (lamp on, the spawn's camera). The two launches of the look were two flights (lamp on against off, first dig at 46 s on an idle queue against 27 s on 2500 chunks, the time of day stepped in the second). The dig's frame is longer in the new binaries in every run read: the render thread's wait 9 to 10 ms at the median against 13 to 19, 13 to 17 at most against 45 to 53.
+- **Candidates, none read** (the amendment's table has the code sites): the dig's longer frame (Plan 0101's rule and re-lists in the queue's step at an edit, Phase 5's listing of a whole chunk, the bake thread); the deeper queue behind a dig (`ring 3` on about 2000 chunks against 340); `store_dig_held` answering a pixel at an ordinary dig; F1's drop in a burst or on provisional records; chains of digs.
+- **The reading that would find it (dev, no source change):** the owner's flight reproduced headless on both binaries, each run alone under the perf lock on the RTX 3080 Laptop: `--source outdoor --spawn forest --trees forest --time 15:00 --profile floor --lamp off --eye` straight down at the spawn, a dozen digs four frames apart from frame 300 of an unsettled start (no pre-roll flag), lockstep and thread, one `--still` a run at the frames after the last dig; per pair the whiter and darker shares in the dig's region as Phase 7b2 printed them, and each run's `bake dig call` line. Then, only if the pair differs, the same over binaries built at `d7cf21c4` (main's first merge), `7786593a` (Phase 5), `92f3aff5` (7a), `421609a9` (main's second merge), `55432ec1` (F2), `6dfc0b1a` (F1), `595d211a` (F4): scratch worktrees built outside the lock and left in place while their binaries run (a binary reads its assets from its build's path); a hold under 20 minutes, projected from its first run.
+- **Pick up:** when the owner says the dig bothers him again, or with the next plan that edits the queue's step at an edit. Plan 0105's last phases read two of the candidates, neither to an answer (`docs/plans/logs/0105.md`, "Phase 7c2" and "Phase 7d"; `docs/nfr/04-edits.md`, "The held estimate at depth").
+- **Read at the close, the third candidate:** the print named `dig_held pixels` counts every pixel whose moments' w is 2, which a stale ring face's sky pair also writes: 10^5 pixels frame-wide at `digs whole 0`, equal under `depth` and `surface`. It does not count `store_dig_held`'s pixels; a count of them needs a mark of their own in the moments (the leftovers entry below).
+- **Read at the close, the first candidate:** the dig frame's `bake dig call` p50 of the closing binary is 0 to 10 ms over the old one's on two bursts of four dig frames and 6 to 10 ms over it in the owner's two flights, every run loaded or not the same digs: not resolved, and not split between Plan 0105's work at an edit and Plan 0101's.
+
+### Plan 0105's leftovers (close review, 2026-11-27)
+
+From [Plan 0105](plans/done/0105-the-digs-flash-at-depth-a-held-estimate-that-follows-the-holes-own-light.md)'s close; the review's rulings are in `docs/plans/logs/0105.md`, "Close review". None blocked the close.
+
+- **The edit's wait against its line, on a quiet machine.** `docs/nfr.md` section 4 pins the edit's wait at most lockstep's bake call on the same dig frames (Plan 0099). Plan 0105 added work to the queue's step at an edit (the far rays, a whole dig's block) and read the D+0 step and the held estimate's time, but not that line again, and every reading of 2026-11-27 is loaded. **What it takes:** Plan 0099 Phase 6d's `--dig-at` pairs (thread on and off, in view waits and after) on the RTX 3080 Laptop at load1 under 2, one hold; the line met or missed written into `docs/nfr/04-edits.md`. **Pick up:** the first quiet hour; before the next tester archive.
+- **A whole dig's look, judged by nobody on purpose.** The ground beside the hole darker on 0.46 / 0.43 % of the ring for two frames, 1.37 % of the hole black over 32 levels before the landing (lavapipe, sequence B's fifth dig; bars asserted in the soak test). The second figure read 0.25 % at Phase 7a and its rise is not explained. Accepted as F4's cost. **Pick up** if the owner names a dark blink when digging into ground far from any baked light, with a flight to unbaked ground under `--dig-estimate depth`.
+- **The shader's read of the dig's mark has no gate test.** `store_dig_held` and the moments' w 2 are held by the soak test `a_fresh_hole_holds_its_value_until_its_light_lands` and the reading `whole_dig_ring`; the gate holds the CPU side alone (`bake/queue/split_tests/whole.rs`). With the forest's two readings (the entry "The forest dig at depth is checked by name on the RTX alone"), a change to `temporal.wgsl`'s dig path is caught weekly, not at a push.
+- **A small `dev` chore, no plan:** (1) `DigEstimate::Depth`'s doc comment, `--dig-estimate`'s help text and its row in `docs/flythrough.md` describe Phase 3's estimate ("the same with no floor", "the root of its openness"); the shipped one also asks a ray to reach its base's height, slides the share to its root, holds a whole dig and moves the dig's faces alone (`bake/held.rs`'s module comment has it right). (2) The print `dig_held pixels` in `gpu_outdoor/dig_depth.rs` is renamed to what it counts (the moments' w 2: a dig's mark or a stale ring face), or given a mark of its own if the entry above on the slight flash is picked up. (3) `QueueStats::held_ns`'s comment names `held_visibilities`; the call is `held_cells`. (4) `bake/held.rs` and `shaders/temporal.wgsl` stand at 1197 lines each against the cap of 1200: the next change to either splits it first.
+- **Two `surface` figures read higher under load:** `wide` `surface` at 7 m, the held estimate 4.10 ms and the D+0 step 5.8 to 11.5 ms at load1 44 to 49 (Phase 5's quiet reads 0.25 to 0.74 ms and 2.3 to 4.3 ms). `surface` is not the default; read again with the first item if the setting is still offered.
+
+### Done: the cave mouth's seal half reads a pose the test never bakes
+
+Done 2026-11-27 (cf66dac7): `the_cave_mouth_is_lit_from_outside` keeps its golden and its opening-against-wall bar; the seal's claim is `gpu_bake`'s gate test `a_sealed_pit_takes_no_sky_light_after_its_rebake` (lavapipe: floor `+z` 0.2108 mean unsealed against the form factor's 0.200, 0.0 sealed; the hand-break without `rebake_digs` fails). The second ruling's record is this file at `6ac67661`.
+
+### The sky record's one step in a dark cave mouth: black, or tens of display levels (2026-11-27, arithmetic, unread)
+
+Raised by the second ruling above; nobody has reported it. A record's sky visibility is a `u8` from at most 256 rays a brick direction, so the least light a baked face can show is 1/255 of the open sky's irradiance: 0.60 at noon (152.8 for open ground, [`logs/0086.md`](plans/logs/0086.md)), 87 times the 6.8e-3 that shows as 0.72 of 255 deep in the tunnel at exposure 1, so tens of display levels under any display curve once the eye has opened to the dark (the outdoor auto exposure's top is 4). Where the truth is between a tenth of a step and a step (the tunnel between stations 5 and 6, roughly 40 to 100 voxels past the roof slot's inner end; the last metre of light in any cave mouth or deep pit), a brick direction holds 0, 1 or 2 by the luck of its rays, and the mean is right only over many bricks. What the screen makes of it is unread: the store's blend between cells, the smoothed normal, the sky bounce and the filter all spread it, and the pictures of the tunnel the owner has accepted went through this band. It is a still pattern, not a flicker.
+
+- **What it takes first:** one headless still, no code beyond a reading: the tunnel baked at the defaults, the camera at station 5.5 facing in, the outdoor auto exposure settled, beside the same pose with no store baked and `light history on` (the frame's ray on its running mean draws the term) as the reference. Blotches a brick or two wide in the first and not the second make it a look matter for the owner, with the two stills; a smooth falloff closes this entry.
+- **If it is real, the candidates** (none read): a wider visibility word where the value is small (the record has two spare bytes, ADR-0070), more sky rays where the first 256 find few, or a floor under which the read fades to the column's answer.
+- **Pick up** if the owner names blotches or a hard edge of light inside a cave mouth or a pit, or with the next plan that touches the sky channel's record.
 
 ### A dig flashes with light, bothering past 2 to 3 m deep (owner, 2026-11-26)
 
-Said after [Plan 0099](plans/done/0099-the-bake-step-off-the-main-thread-a-bake-thread-write-lists-and-the-in-view-drain.md)'s window (forest at 15:00, RTX 3080 Laptop, Floor, the bake thread on, binary `cde2e966`): "there is only one issue with dig - it flashes with light when digging, it is mostly fine when near the surface and sunlight, but when I dig deeper, more than 2-3 meters it is already bothers. lets think what to do - but as a separate plan". A separate plan by his word, not a fix pass in Plan 0099 (its question 8 stays answered (a)). Asked later whether lockstep (`--bake-thread off`) shows it too: "yes same"; what it looks like: "bright than darker", "one blink". So the bake thread does not make it. **Taken by Plan 0105** (the dig's flash at depth, drafted 2026-11-26 on branch `arch-dig-flash`; this entry leaves when that draft merges).
-
-- **A plan reads first:** a headless dig clip at depth, thread off and on, frame by frame around the dig: which frames are brighter, and which write lands in each (the held block, the dig fade, ring 1). Beside "A dig's landing" below, which holds the held estimate's distance from the baked record.
+Taken by [Plan 0105](plans/done/0105-the-digs-flash-at-depth-a-held-estimate-that-follows-the-holes-own-light.md), closed 2026-11-27 (v0.80.0): the held estimate `depth` is the default and the owner accepts it. What it left is "Plan 0105's leftovers" below and the two entries above that name the plan.
 
 ### The plan after 0098: a sun fixed in the world (2026-11-23)
 
@@ -106,7 +160,7 @@ The W3 verdict's words and stills are in Plan 0098's "Amendment at W3" and its `
 
 ### A dig's landing: the slight colour change, and the dig delayed until its light is ready (owner, 2026-11-24)
 
-From [Plan 0098](plans/done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md)'s window 98e. Under `--dig-hold on` the owner accepts the dig on the RTX and on the Radeon at Portable ("so much better, not ideal but acceptable"; "change of color is there, but slight"; the Radeon "almost good", "same slight color change"). What is left is the held estimate's distance from the baked record, shown as one 4-frame fade when ring 1 lands one or two frames after the dig, and again smaller when the chunk's second job lands. Parked, not needed now (owner). Pick up if the owner asks for it or a consumer's digging reads as a flicker. At depth it does (owner, 2026-11-26: a flash past 2 to 3 m deep): the held estimate there is [Plan 0105](plans/0105-the-digs-flash-at-depth-a-held-estimate-that-follows-the-holes-own-light.md)'s; the delay and the two switches below stay parked.
+From [Plan 0098](plans/done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md)'s window 98e. Under `--dig-hold on` the owner accepts the dig on the RTX and on the Radeon at Portable ("so much better, not ideal but acceptable"; "change of color is there, but slight"; the Radeon "almost good", "same slight color change"). What is left is the held estimate's distance from the baked record, shown as one 4-frame fade when ring 1 lands one or two frames after the dig, and again smaller when the chunk's second job lands. Parked, not needed now (owner). Pick up if the owner asks for it or a consumer's digging reads as a flicker. At depth it does (owner, 2026-11-26: a flash past 2 to 3 m deep): the held estimate there is [Plan 0105](plans/done/0105-the-digs-flash-at-depth-a-held-estimate-that-follows-the-holes-own-light.md)'s; the delay and the two switches below stay parked.
 
 - **The measured form of it:** the soak image test's sequence B against the queue's full landing (the form before the owner's pick of the groups at ring 1's landing) reads 3.01 % of the hole's pixels over 4 levels above and 4.72 % below their settled value in the two frames before the next dig; under 32 levels nothing (0.33 / 0.18 %). The histogram is in `docs/plans/logs/0098.md` ("Step 1: the histogram").
 - **Way 1, a held value nearer the landed one:** the estimate is a value a cell and direction from 12 short rays and the removed surface's record (`bake/held.rs`); more rays, the brick's own emitters, or the chunk's coarse answer as a second term. Cheap to try on the rig; the error table of Plan 0098's Phase 14 is the instrument.
@@ -379,7 +433,6 @@ From Plan 0106's close review (readings in `docs/plans/logs/0106.md`, Phase 6b).
 From [Plan 0106](plans/done/0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md)'s close. None blocks; each names who takes it.
 
 - **Two soak sites the script cannot see** (no token): Ruling 6's `ages.iter().any(..)` over 240 unwaited frames in `gpu_frame_waits.rs`, and Ruling 7's build-stage race in `gpu_loading.rs`'s streamed load. Accepted with their margins in the tests' doc comments. **The march timer's rate of delivery in the fly-through has no gate form** since Ruling 6 (a printed reading). Pick up if either goes red in the weekly soak.
-- **The sweep is one soak row short:** `outdoor_forest_sunset_golden`'s unwaited `exposure_readout`, which travels with "The outdoor soak goldens are red on the tree" above.
 - **The `--spawn-hash` wait has never waited:** all 18 children of Phase 6a read `0.0 ms, 0 chunks`. Correct by construction (`Streamer::wait_idle`), unobserved. Plan 0109 Phase 1's shorter pre-roll is where it should first read above 0 (Ruling 8): that lane reads the `diag: spawn hash: waited` line of the two soak switch tests once and logs it.
 - **Two `svet-world` lock tests are weakened, never failed, by pace** (`apply_waits_for_the_store_write_lock`, `the_store_write_lock_never_sees_half_an_op` in `tests/stream.rs`: 10 000 yields stand in for "the other thread reached its lock"). Allow-listed as such. A causal form needs a hook inside `World::apply`; not asked for.
 - **Nits:** `a_reset_pixel_starts_from_its_record`'s doc promises four printed means and three are of nothing (Ruling 10); `a_lap_takes_the_calls_inside_it` asserts `render[S_SETUP] < 0.5`, zero by construction (the tally is thread-local), so not a clock.
@@ -395,9 +448,9 @@ From [Plan 0106](plans/done/0106-no-gate-test-passes-by-a-clock-the-red-dig-test
 
 Plan 0093's Phase 4 rendered a hero candidate from 20 m above the forest floor at sunset, lamp off (`hero` candidate 9; the command is in that plan's readings log and in the candidates' legend): the canopy sits under a sunset gradient with a black band across the whole width between the canopy's top and the sky. Unread: whether it is the residency's edge (absent is sky, so a dark band would be terrain or canopy in shadow, not a gap), the far normal's band, the fog's lower bound, or the sky's own horizon term below the eye. **What it takes:** the still, the same pose at noon and with `--far-normal` off, and a strip across the band; then the pass that draws it is named. It is a visible fault in a pose a consumer's camera can reach (any high viewpoint), so it is a look item, not a README item. Plan 0033 (the far field) changes what lies beyond the residency; read this before its Phase 9 or beside it.
 
-### A soak golden red on the tree: the cave mouth lit from outside (2026-11-26)
+### A soak dig test red since Plan 0098's defaults (2026-11-26)
 
-`gpu_outdoor_golden`'s soak test `the_cave_mouth_is_lit_from_outside` fails on lavapipe with 99.95 % of its pixels differing, the same on Plan 0101's lane before and after its Phase 2 (one run each), so it predates that plan; the golden was last blessed at `a5e5f99b` (Plan 0095). Unread: which merge moved the picture (the bake thread, Plan 0100's sun, Plan 0104's removals and Plan 0098's defaults landed since), and whether the picture is right and the golden stale or the picture wrong. The weekly soak run fails on it until then. **What it takes:** an architect's reading of the still against the golden and the test's claim, then a re-bless or a fix. Found beside the soak test Plan 0106's amendment already ruled (`a_reset_pixel_starts_from_its_record`); it is not a clock, so it is not that plan's sweep.
+`gpu_outdoor`'s soak test `flicker::a_dig_changes_nothing_outside_its_reach` fails at `assert_eq!(n.history, 0b11)`: the word reads `0b10100010` at the dig's frame and at every still frame before it (Plan 0105 Phase 7a's log, lavapipe; its picture bars pass: outside the reach 0.574 % against a line of 0.852 %, no ray cast outside, no restart). Read from `frame/encode.rs` by Plan 0105's architect: bit 1 is the upscaler's history, bits 5 and 7 are `hold_digs` under `DigHold::On`, and bit 0 (the light history) is clear by default since ADR-0082. So the assertion is stale against the defaults Plan 0098 shipped (2026-11-23/24), not an engine fault; not bisected, and not run on the RTX. Nobody owned it: the soak tier is in no gate and Plan 0098's close ran none. The weekly soak fails on it. Its neighbour `gpu_sun` `a_reset_pixel_starts_from_its_record` broke the same way and is fixed (Plan 0106 Phase 9, `2c9389b7`). **What it takes:** a small `dev` chore, no plan: the clause restated to its claim, "the dig's frame changes no frame-wide history flag": the word at N equals the word at N - 1, bit 1 set, and bit 0 set where the rig's lighting keeps the light history; the test's other assertions as they are; one run by name on lavapipe (about 7.5 minutes).
 
 ### The RENOIR's line slice is mostly a dispatch's fixed cost (2026-11-25)
 
@@ -934,7 +987,7 @@ creature that hunts or flees rather than wanders.
 
 ### Hundreds or thousands of entities
 
-Parked 2026-11-16 by the owner ("minecraft can have thousands of entities"). Today: `MAX_ENTITIES` 64, `MAX_ENTITY_PARTS` 512 (`svet-render` `entities.rs`), 6 instance bits in the hit record. The cost is the trace, not the caps: Plan 0062 Phase 4 (`docs/plans/logs/0062.md`) read 64 walkers at +3.4 to 4.4 ms on the RTX 3080 Laptop and +32 to 34 ms on the Radeon iGPU, growing with screen cover and shadowing lights. **Hundreds:** wider caps and hit bits, the instance tree built on the GPU, coarse far models, shadow rays testing only entities near their light (one or two plans, no ADR). **Thousands:** entities rasterized into the hit buffer beside the traced world, which reverses ADR-0050's choice: an ADR and a spike first. **The owner's direction (2026-11-16): trace only the near ones, merge the crowded ones.** Distance tiers: near entities traced in full; mid ones traced on a coarse merged model (parts folded into one volume at detail 1); far ones as one box or impostor, or dropped below a pixel. Clusters: entities sharing a spot re-voxelized together at low resolution on the GPU each frame (or every few) into one cluster volume, walked once per ray instead of once per overlapping entity. Shadow rays test the near tier only. The server's ray query stays exact per entity; the tiers are render-only. Pick up when a consumer needs more than 64 on screen. Sharpened 2026-11-19 (Bonsai's 1.1.0 and 1.3.10 notes): the CPU side needs a per-chunk entity list as the broadphase (the mover's sweeps and the entity ray query walk the chunk's list, not every instance) and an LRU eviction of models from the pool when the library outgrows it, on top of Plan 0078's free list.
+Parked 2026-11-16 by the owner ("minecraft can have thousands of entities"). Today: `MAX_ENTITIES` 64, `MAX_ENTITY_PARTS` 512 (`svet-render` `entities.rs`), 6 instance bits in the hit record. The cost is the trace, not the caps: Plan 0062 Phase 4 (`docs/plans/logs/0062.md`) read 64 walkers at +3.4 to 4.4 ms on the RTX 3080 Laptop and +32 to 34 ms on the Radeon iGPU, growing with screen cover and shadowing lights. **Hundreds:** wider caps and hit bits, the instance tree built on the GPU, coarse far models, shadow rays testing only entities near their light (one or two plans, no ADR). **Thousands:** entities rasterized into the hit buffer beside the traced world, which reverses ADR-0050's choice: an ADR and a spike first. **The owner's direction (2026-11-16): trace only the near ones, merge the crowded ones.** Distance tiers: near entities traced in full; mid ones traced on a coarse merged model (parts folded into one volume at detail 1); far ones as one box or impostor, or dropped below a pixel. Clusters: entities sharing a spot re-voxelized together at low resolution on the GPU each frame (or every few) into one cluster volume, walked once per ray instead of once per overlapping entity. Shadow rays test the near tier only. The server's ray query stays exact per entity; the tiers are render-only. Pick up when a consumer needs more than 64 on screen. Sharpened 2026-11-19 (another voxel engine's 1.1.0 and 1.3.10 release notes): the CPU side needs a per-chunk entity list as the broadphase (the mover's sweeps and the entity ray query walk the chunk's list, not every instance) and an LRU eviction of models from the pool when the library outgrows it, on top of Plan 0078's free list.
 
 ### Jelly entities: see-through glowing voxels, and true soft bodies
 
@@ -1222,6 +1275,13 @@ Taken 2026-11-13 by [Plan 0074](plans/done/0074-the-syncs-light-stages-placement
 
 ## Tooling and process
 
+### A script test needs `target/` to exist (2026-11-27)
+
+`scripts/shoot-images.test.mjs`, "the CLI prints a candidate's commands...", makes its temporary
+directory inside `target/`, which exists only after a cargo build. CI builds first, so it passes
+there; in a fresh checkout the test fails. Found by the Windows path fix on 2026-11-27. Owed: the
+test makes its directory under the system's temporary folder, or creates `target/` itself.
+
 ### A harness chore after Plan 0098's windows: rehearsed windows, live settings, live banners
 
 Raised 2026-11-23 (owner: "go" on the harness list after windows W2 and W3). Three windows
@@ -1414,7 +1474,7 @@ Per-frame and per-chunk readings are affected little. Readings should name the c
 boot), is the owner's call. Pick up: at the owner's next reboot, or before any plan's budget
 readings are compared with ones from before 2026-11-05. Sharpened 2026-11-19: Plan 0091's
 profiler reads `Instant` (through its backend) and the GPU timestamps, never a raw `rdtsc` as
-Bonsai does, so this entry stays a question of reading cost, not of correctness; per-brick laps
+another voxel engine does, so this entry stays a question of reading cost, not of correctness; per-brick laps
 inside hot loops stay out of the profiler's scopes for the same reason.
 
 ### The HUD paints a bounded level's full record reservation as mirror pressure
@@ -1456,7 +1516,7 @@ spike after it lands; the spike's own question, a different compiler on the same
 
 ### A bugs journal: date, hours lost, tags, the lesson
 
-Raised 2026-11-19 (Bonsai's `bugs.md`: one heading per bug with the date, the hours it cost,
+Raised 2026-11-19 (another voxel engine's `bugs.md`: one heading per bug with the date, the hours it cost,
 whether it is closed, tags such as `concurrency`, and a paragraph on what it was and what to
 remember). Our defects live in plan logs and close reviews, spread over many files, so the
 same class of mistake (a held lock, an unstable clock, a stale golden) is not counted. **What
@@ -1493,7 +1553,7 @@ roadmap, budgets) plus rustdoc, with CI as a link and render guard; a getting-st
 a gallery only once the look is picked (after Plans 0067 and 0058) and Plan 0045 has moved the
 files. Starlight's npm tree falls outside `cargo deny`, and mdBook is the lighter alternative,
 so it takes an ADR. Pick up when the owner asks. Sharpened 2026-11-19: a cheap first step
-needs no site: four numbered guides in `docs/` the way Bonsai's `docs/00_getting_started.md`
+needs no site: four numbered guides in `docs/` the way another voxel engine's `docs/00_getting_started.md`
 to `03_async.md` read (get started, build, a first consumer, the threads), each under a page.
 
 ### The tester mode's key filter is structural, not tested in the frame loop
@@ -1505,16 +1565,68 @@ Taken by [Plan 0080](plans/done/0080-the-fly-throughs-menu-one-overlay-a-palette
 Done 2026-11-13 (4ea561f): a `--path` benchmark starts the lamp off unless `--lamp` is given, and `run.json` names it. **Bench readings of the cave and castle paths from before 4ea561f ran with the lamp on and are not compared with readings after it.**
 
 
-## Ideas from Bonsai
+### The clip example's frames differ run to run on one adapter (2026-11-26)
 
-Parked 2026-11-19: the owner pointed at [Bonsai](https://github.com/scallyw4g/bonsai), a C++
+From [Plan 0093](plans/done/0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) Phase 2d (its section "Amended 2026-11-26 (architect, a loop's tolerance)", C3; readings in `docs/plans/logs/0093.md`). Two runs of `clip --clip walk --seed 1 --fps 25` on the RTX 3080 Laptop gave PNG frames that are the same for frames 0 to 11 and differ from frame 12 on in about a hundred scattered pixels of 921600 (largest channel difference 14), nowhere near the model; an earlier pair of the same command was bit-identical, and the walker's two pairs were.
+
+- **What the code says:** the example's loop is paced by the frame number, starts no live queue and no bake thread, and reads no clock and no non-waiting read-back, so the cause is inside `Frame::step`'s passes or the driver. Not attributed; not a wall-paced wait, so not Plan 0106's.
+- **What it would take:** a reading on that adapter: pairs of runs with one pass or setting off at a time (the upscaler at scale 1, the filter, the temporal pass, the entity pool) until the frames are bit-identical, and the same pairs on lavapipe, where the golden images are blessed.
+- **Pick it up when:** a golden image or a loop's check turns flaky and this is the suspect, or a plan asks for bit-identical frames from a fixed-step tool. Plan 0093 carries it as noise inside its loops' tolerances.
+- **2026-11-27, the same finding again (Plan 0093, G12):** a seventh render of the spider's loop left the common frames at PNG frame 6, earlier than any of the fifteen pairs of its set (frames 7 to 24), with 55 to 79 pixels of 921600 differing by at most 5 levels; encoded, that is 0.0044 of the loop's cells against a set whose largest pair was 0.0020. The load was the night's lowest (load1 2.21), so the load is not what moves it. A reading here should count the departures over some twenty runs and the frame each leaves at, before switching passes off.
+
+### A settled start's still differs in one patch with the machine's load (2026-11-26)
+
+From [Plan 0093](plans/done/0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) Phase 2e (its section "Amended 2026-11-26 (architect, a loop's wrong pictures)", D3; readings in `docs/plans/logs/0093.md`). Eight `--settled-start` renders of the outdoor forest shot on the RTX 3080 Laptop print the same `settled:` counts, and the two taken under load differ from the other six by up to 60 levels in one patch of 24 x 24 pixels of the 1600 x 900 file: a far tree crown, the same outline, another shading.
+
+- **What the logs say:** the settle ends on chunks and jobs, not on the light store. Each run's first `bake queue:` line after it prints a depth near 7600 and `in view 134 waiting`; the pre-roll's coarse pass, ended by its 5 s wall box, left 1675 to 1807 coarse chunks in the six and 1489 and 1311 in the two. Not attributed to a chunk or a record.
+- **What it would take:** the same shot with the pre-roll ended by its coarse pass (Plan 0106's stepped pre-roll) under load and idle, the patch read in each; if it still splits, the queue's record for the crown's chunk in both states.
+- **Pick it up when:** Plan 0093 reads the hero's set again before its final shoot (its B3 note), or a still or golden taken after a settled start turns out to depend on load.
+
+### A settled start ends in more than one light state: the lamp cave, a second case (2026-11-27)
+
+From [Plan 0093](plans/done/0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) Phase 6d (its section "Amended 2026-11-27 (architect, a zero set refuted)", G9; readings in `docs/plans/logs/0093.md`). Six `--settled-start` renders of the lamp-lit cave still on the RTX 3080 Laptop were identical as PNG; a seventh by the same command, under a higher load, differs in scattered pixels at voxel edges over the lamp pool (53 of 22600 cells past 4 levels, the largest 10.56; largest channel difference 40). The entry above is the same finding outdoors.
+
+- **What the logs say:** every run prints the same `settled:` chunk counts. The queue steps to the settle's end range from 3023 to 19562 inside the identical six, so the step count names nothing. The first `bake queue:` line after the settle prints `baked` 5380, 5300 and 5050 (four times) in the six and 5370 in the seventh; the pre-roll's coarse pass, ended by its 5 s wall box, left 1754 to 2543 coarse chunks in the six and 2564 in the seventh. The cave's dig still settled at 5318 baked once against 5074 with an identical PNG; the chapel still's two baked counts (5636, 5062) are two PNGs with no cell past the level. Not attributed to a chunk, a record or a pass.
+- **Why it matters:** a still or a golden taken after a settled start is claimed to be one picture per command. It is one picture most of the time.
+- **What it would take:** the lamp-cave entry rendered some twenty times with the pre-roll ended by its coarse pass (the stepped pre-roll) and as it is, the PNGs grouped; if the groups remain, the light records of the chunks under the differing pixels in both states, and whether the settle's end should wait on the light store and not only on chunks and jobs.
+- **A third state (Plan 0093 Phase 6d2):** of fourteen renders twelve are one PNG, the seventh another, and the fourteenth (the third check's) a third: 0.001239 of the cells against the common one, largest channel difference 21, with 5238 baked and 2472 coarse at the box, both inside the common group's ranges. Six more renders taken for the purpose were all the common PNG, so the other states are rare and no count in the log separates them.
+- **Pick it up when:** the stepped pre-roll goes onto the README's entries (the entry below), or a plan asks a golden image of a settled start to be bit-identical.
+
+### The README's images after the unattended close (owner, 2026-11-26)
+
+From [Plan 0093](plans/done/0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) (its section "Amended 2026-11-26, late evening", G1 to G8; readings in `docs/plans/logs/0093.md`). The owner: "all good, just use what we have as images, merge and push. no need to wait for me. and tag". The plan closed without his confirmation of the re-shoots, without Plan 0105 and without Plan 0106's `--pre-roll-stepped`. What that left, none of it blocking:
+
+- **His corrections to the default picks.** `dig`, `walkers` and `castle` were picked by the dev against the plan's bars (the log's Phase 5d, with every tile's path and the candidate not taken). A correction is the entry's flags and `node scripts/shoot-images.mjs --only ID`. **`dig` done 2026-11-27** (the readme-dig chore): his "(a) Your candidate 3 with the lamp on", shot as a still with `--lamp on` and its noise set read again (the numbers are in the entry's `note`); `--pre-roll-stepped` was tried on it and dropped, since that render did not finish in the script's 300 s.
+- **His glance at the page on GitHub.** No command reads whether each loop plays in a browser, whether the title, the tagline and the whole hero show at a 1080p width without scrolling, how it reads on a phone, and the opening read aloud. A loop that shows as a still takes its entry's GIF `fallback`.
+- **The dig after Plan 0105.** The `dig` entry was shot on the dig before Plan 0105's default (a still of the settled dig instead of the loop if the log's Phase 5d read a flash). **Pick it up when** Plan 0105 is in main: `node scripts/shoot-images.mjs --only dig,skylight`, the loop back in place of a still, and the two entries' noise sets read again.
+- **The stepped pre-roll after Plan 0106. Ready since v0.79.0** (close review, 2026-11-27): `--pre-roll-stepped` was in the tree at the final shoot (main `cbedce57` merged), and the entries were shot without it as the plan's G2 ruled before the merge. It is the first follow-up to take: it may also make `walkers` judged. The `flythrough` entries shoot on `--settled-start` with the pre-roll's wall box, so the hero may hold the patch of the entry above ("A settled start's still differs in one patch"). **Pick it up when** the flag is in main: the entries take it, `validate` asks for it, and the hero's set and every entry marked `unjudged` in `docs/images/shots.json` (`node scripts/check-images.mjs` names them) are read again.
+- **The noise sets kept by the script.** Every `--check` in that plan's last phases drew a render outside some entry's six-render set, and the sets were enlarged by hand from rigs under an untracked `live/` (its G13). The script could keep each entry's set renders and read the tolerances itself (`--noise N` adds N renders to the sets; `--check` on unchanged sources offers its render to the set), and a new set after a change of the look should start nearer fourteen renders than six. **Pick it up when** the entries are next re-shot.
+- **A castle under the sun.** His "castle 2, maybe its better under sunlight". The castle stands in the streamed cave; `--vox` is ignored on `--source outdoor`. A castle placed on a hill is code and scene work, a plan of its own if he wants the shot.
+
+**What the close review saw on the page (2026-11-27), for him to correct:**
+
+- **`dig` does not show a dig.** The first feature image is a near-black frame: one over-bright ore corner at the lower left and two ore specks; no opening, no carved wall reads (mean luma 12 of 255 by the log's Phase 5b, whose own line says "the dig does not read"). It is his "dig 3 but no lamp", picked by the letter of the bar (rock reads in one corner). Its alt text and caption say what it is: almost black, the headlamp off. Raising the exposure does not help: `--exposure-comp 1` gives the same bytes, since the eye is at its ceiling. **The fallback** is candidate 3, the same pose with the headlamp on (`"flags"` of the `dig` entry with `--lamp on`, then `node scripts/shoot-images.mjs --only dig` and its noise set), or the loop once Plan 0105's default is in main (the bullet above). **Done 2026-11-27 by the fallback** (the owner's pick): the page shows the dug cave lit by the headlamp, a still; the loop after Plan 0105 is still owed.
+- **`walkers` has no judged tolerance.** Twice its largest pair (0.014828) is over a third of its smallest wrong share (0.035982, the loop one frame late), so `--check` renders it and counts nothing. Accepted at the close: the size cap, the manifest row and the alt text are gated, and the picture is the picked one. The cause is the measure, not the still: the spider moves little from one frame to the next, so "one frame late" is nearly the same loop. **What would judge it:** a wrong picture scaled to the motion (the loop late by the number of frames at which its share passes three times the set's doubled pair; the yaw turned 2 degrees already reads 0.526575, which would give a tolerance of 0.02 under a ceiling of 0.175), an architect's ruling since the plan's G2 forbade swapping the wrong picture on the night; or a quieter set once the stepped pre-roll is on the entries.
+- **`walkers` reads as a spider standing among crystals.** At the first, middle and last frame its box moves by under 10 pixels of 1280; the legs step. The caption said "wandering". **Caption corrected 2026-11-27** (the owner's ruling, `chore-readme-walkers-hud`): the image stays; its caption, alt text and the entry's `shows` say a spider standing and turning on its legs, one second of motion (frames 60..120) played over three at 20 fps; the entry stays `unjudged`. The re-shoot of the loop waits on the entry "A wandering spider turns on the spot and does not travel (2026-11-27)" under Next up: with the wander on, the spider does not travel, so no pose or frame range shows it crossing the frame.
+- **`hud` shows a red and two yellow lines** (a 36.67 ms worst frame, the mirror at its full pressure, the light queue's line) and four lines run off the right edge at 1600 px. It is the overlay as it is; a shot after the start-up frames would read calmer. **Left as it is by the owner, 2026-11-27.** No flag fits it: the HUD's letters are a fixed 16 px and its longest row is 399 characters, so no render width the cap allows holds every row; a still at frame 900 would drop the red line but not the cut rows; wrapping the HUD's rows is a code change nobody asked for.
+- **`hall` and `chapel` are dark** but read: ores and crystals in the hall, the stone front and its window in amber in the chapel.
+- **Two bullets say a little more than the code:** "each casting a shadow" (a per-light flag, on by default; the sixteen include the headlamp, and the 720p profile caps the list at four) and "every render pass" in the overlay (the per-pass times need timestamp queries on the adapter).
+- **The 8.3 ms figure is a headless reading with the bake thread on** (`docs/nfr.md` section 2, quiet). The README's "Try it" lines open a window, where the bake thread is on by default, so the sentence holds; the line to keep true is the forest's wall p50 row there.
+
+### The old hero example still writes `docs/images/hero.png` by default (2026-11-27)
+
+From [Plan 0093](plans/done/0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) (G11). `apps/flythrough/examples/hero.rs`, `out_path`: without `--out` it writes `docs/images/hero.png`, a file the plan removed; the README's hero is now the manifest's `hero` entry, shot by the fly-through. A file written there is refused by `node scripts/check-images.mjs` (an image the manifest neither names nor freezes), so the default cannot slip into a commit unseen. **What it would take:** either the default moved under `target/` (one line and the example's usage comment), or the example retired if nothing reads its shots any more (`--shot all` and `--carve` have readers in older plans' logs; check before removing). **Pick it up when** the example is next edited, or at the next tidy of `apps/flythrough/examples/`.
+
+## Ideas from another voxel engine
+
+Parked 2026-11-19: the owner pointed at another voxel engine, a C++
 voxel engine with meshed chunks, GL deferred shading and an in-engine editor, under WTFPL, active.
-The source paths below are Bonsai's. What we already carry was left out: octree LOD, generation-time
+The source paths below are that engine's. What we already carry was left out: octree LOD, generation-time
 stamping, AO, traced shadows, OIT, particles, the profiler, debug views, settings files, the
 sky. A second pass (2026-11-19, read against this file) added the entries from "Per-job
 performance tracking" on, the profiler (Plan 0091) and WGSL hot reload (Plan 0092).
 
-**Rejected as alternatives (2026-11-19), so nobody re-opens them from Bonsai:** its 2.0 moved
+**Rejected as alternatives (2026-11-19), so nobody re-opens them from that engine:** its 2.0 moved
 generation and editing to the GPU; ours stay on the CPU in `svet-world`, headless and
 deterministic (ADR-0001, the non-negotiables), and a GPU source would break replay from seed
 plus log (ADR-0007). Its 1.6.2 stores a 16-bit HSV colour per voxel; ours stores a material id
@@ -1523,7 +1635,7 @@ edit, not a re-write of every voxel.
 
 ### A hybrid far field: raster the far LOD as meshes, march near
 
-Raised 2026-11-19 in the Bonsai comparison: Bonsai rasterizes meshed chunks. For us the hit pass
+Raised 2026-11-19 in the comparison with that engine, which rasterizes meshed chunks. For us the hit pass
 reads 1.4 to 1.9 ms of a 7.8 ms GPU frame (RTX 3080, hills, the 86c window's HUD); the rest is
 light, denoise and FSR 2, which raster would not remove. Meshing every 10 cm voxel would also cost
 triangles, edit latency and memory beside the brick map. Where raster can win is a long view, where
@@ -1549,7 +1661,7 @@ normal's band", under Engine mechanisms) was taken by Plan 0098.
 
 ### World-space debug lines: lines, boxes and a highlighted voxel over the frame
 
-Raised 2026-11-19 (Bonsai's `src/engine/debug_draw.cpp`: lines, AABBs, a highlighted voxel,
+Raised 2026-11-19 (that engine's `src/engine/debug_draw.cpp`: lines, AABBs, a highlighted voxel,
 chunk boxes). We have a cutaway view, the HUD's text grid and the entity mark (ADR-0074); no
 way to draw a chunk's box, a sweep's path, a light's reach or a job's chunk in the world.
 **What it takes:** a line list the app fills each frame (world-space segments with a colour),
@@ -1561,7 +1673,7 @@ to see where a job or a sweep went.
 
 ### Per-job performance tracking: reserve, retire and scopes per streaming and bake job
 
-Raised 2026-11-19 (Bonsai's `work_queue.h` `TrackPerformance` flag; its debug view draws a
+Raised 2026-11-19 (that engine's `work_queue.h` `TrackPerformance` flag; its debug view draws a
 job's scopes over its reserve-to-retire span). Our streaming workers (`svet-world`
 `stream/mod.rs`) and the bake queue's jobs are timed as stages and per-second lines, never as
 one job from its queueing to its retirement, so a job that waits long and runs short reads the
@@ -1573,7 +1685,7 @@ streaming or settle entry above asks why a chunk arrived late rather than why it
 
 ### Fan-in continuations: "generate these chunks, then bake their light" as one dependency
 
-Raised 2026-11-19 (Bonsai's `OnComplete`, `docs/03_async.md`): a job may name a continuation
+Raised 2026-11-19 (that engine's `OnComplete`, `docs/03_async.md`): a job may name a continuation
 that runs once every job in its group has retired, so a fan-out of chunk jobs fans in without
 polling. Ours poll: the live queue re-checks each frame whether a chunk's reach is resident
 before its bake may run (the "reach-bound" census). **What it takes:** a group counter on the
@@ -1584,7 +1696,7 @@ readings (the entries under Next up) name the poll's latency, not the bake, as t
 
 ### Edit coalescing per chunk per tick: a check first
 
-Raised 2026-11-19 (Bonsai's 1.6.1 notes, per the research pass: several edits on one chunk in a
+Raised 2026-11-19 (that engine's 1.6.1 notes, per the research pass: several edits on one chunk in a
 tick give one re-mesh). Ours should already coalesce: `sync` visits the world's dirty-chunk set
 (`svet-render` `gpu_world/mod.rs`), a set, so two ops on one chunk between syncs should give one
 upload. Not asserted anywhere read. **What it takes:** a headless test that applies two carves
@@ -1593,31 +1705,31 @@ the fix is in the dirty set's handling. Size S. **Pick up** at the next sync or 
 
 ### Hot-reload a logic component, then replay to the current tick
 
-Bonsai reloads its game library when the file changes (`game_loader.cpp`). We can go further:
+That engine reloads its game library when the file changes (`game_loader.cpp`). We can go further:
 swap the WASM component when it is rebuilt, then replay the op and input log from the seed to
 the current tick, so state stays exact (determinism is what makes this possible). **What it
 takes:** a watcher in the fly-through and a re-instance in `svet-script-wasm`, driven through
 `svet-net`'s log. Size S to M. **Pick up with** the authoring loop (ADR-0072), or sooner if
 writing logic gets slow. Sharpened 2026-11-19: one mtime watcher in the fly-through should
 serve every reloadable file: the WGSL (Plan 0092 builds the watcher), this component, and the
-settings file (Bonsai's `settings.init` and `hotkeys.init` are parsed by struct member name,
+settings file (that engine's `settings.init` and `hotkeys.init` are parsed by struct member name,
 its 1.4.2 notes), so a second reload adds a path and a handler, not a second poll.
 
 ### A two-stage world source: shape, then decorate by slope
 
-Bonsai's generation shapes (solid or air, with colour), takes the gradient, then decorates with
+That engine's generation shapes (solid or air, with colour), takes the gradient, then decorates with
 the surface normal in hand: cliff rock on steep faces, grass on flat ground. Its user stages
 hot-reload in a playground (`docs/terrain_gen.md`). **What it takes:** a `WorldSource` helper in
-`svet-world`, on the CPU, because Bonsai's GPU generation would break the headless world. Add a
+`svet-world`, on the CPU, because that engine's GPU generation would break the headless world. Add a
 reloadable parameters file in the fly-through for tuning. Size S to M.
 **Pick up with** M10's outdoor work or a consumer's surface source. Sharpened 2026-11-19: the
-part worth copying first is Bonsai's noise-to-value remap through a polyline (a table of
+part worth copying first is that engine's noise-to-value remap through a polyline (a table of
 `(in, out)` points, integer-friendly) and the small visualizer that draws the curve while it is
 edited (its 1.3.0 release notes); terrace, plateau and cliff come from that one remap.
 
 ### Edit algebra: smooth booleans, shape modifiers, more primitives
 
-Bonsai's edits union, intersect and subtract, each also smooth with a blend radius, and every
+That engine's edits union, intersect and subtract, each also smooth with a blend radius, and every
 shape takes hollow, rounding, stretch, repeat and rotation over rect, sphere, line, cylinder,
 plane, torus and pyramid (`src/engine/editor.h`, `shaders/terrain/world_edit.fragmentshader`).
 We have sphere, box and capsule with carve, fill and replace (`svet-world` `shape.rs`). **What it
@@ -1627,7 +1739,7 @@ a consumer wants arches, rounded rooms or hollow shells as single edits.
 
 ### Layered procedural brushes as one op
 
-A Bonsai brush stacks up to 16 layers. Each layer is a shape or a noise (Perlin, Voronoi, white,
+A brush of that engine stacks up to 16 layers. Each layer is a shape or a noise (Perlin, Voronoi, white,
 lattice), with a blend (add, subtract, multiply) and clamps or thresholds, and is saved as a
 `.brush` file (`docs/editor.md`). That gives crater, erosion and growth brushes instead of perfect
 spheres. **What it takes:** an op kind in `svet-world` that names its brush by content id, like
@@ -1636,7 +1748,7 @@ ADR. **Pick up after** the edit algebra above.
 
 ### Edits you can still change: named layers, hide, reorder, regenerate
 
-Bonsai keeps a level as records of edits (region, brush, rotation, order, hidden), grouped into
+That engine keeps a level as records of edits (region, brush, rotation, order, hidden), grouped into
 named layers. Chunks re-apply the edits that overlap them when they are generated
 (`editor.h`, `world.cpp`). We replay an append-only log (ADR-0007) and persist edited chunks
 (ADR-0003); moving, hiding or reordering a past edit is new. **What it takes:** a level document
@@ -1649,12 +1761,12 @@ against ADR-0072's authoring text first. **Pick up with** the editor entries und
 adjacencies and solves a new volume by constraint propagation, in the style of WFC. One
 hand-made sample would give endless cave or room variants. **What it takes:** baking the rules in
 `svet-assets`, and a seeded solver as a `WorldSource` in `svet-world`. Size M to L. Unverified:
-whether Bonsai 2.0 still wires it into generation. **Pick up when** a consumer wants generated
+whether that engine's 2.0 still wires it into generation. **Pick up when** a consumer wants generated
 interiors from samples.
 
 ### Versioned saves and logs, migrated on load
 
-Bonsai's serialisation versions each struct and keeps the old layouts (`world_edit_0`), which it
+That engine's serialisation versions each struct and keeps the old layouts (`world_edit_0`), which it
 converts forward on load (`serdes.h`). Our spill and log files refuse any other version
 (`persist.rs`, `wire.rs`). **What it takes:** pure migration functions in `svet-world`, one per
 version step, each tested on fixed vectors. Size S to M. **Pick up before** the first consumer
@@ -1662,18 +1774,18 @@ ships a save or a recorded log that must survive an engine upgrade.
 
 ### Inspector rows derived from struct annotations
 
-Bonsai's `poof(@do_editor_ui ...)` generates a live inspector for any struct, with ranges,
+That engine's code generator (a `@do_editor_ui` annotation) generates a live inspector for any struct, with ranges,
 conditions and skip flags, so brushes, particles and nodes need no hand-written UI. Our field
 table (ADR-0058) covers only the render settings. **What it takes:** a small proc-macro crate
 that derives overlay menu rows, used by the apps. Materials, brushes, sources and poses would
 then get rows for free. `crates/` gains no UI dependency. Size M. **Pick up with** the
 editor-interface entry under Later apps. Sharpened 2026-11-19: the annotation set to copy is
 small: a range (`@ui_value_range`), a skip (`@ui_skip`) and an escape to a hand-written row
-(`@custom_ui`), as Bonsai's `render_settings.h` uses them; the derive needs no more at first.
+(`@custom_ui`), as that engine's `render_settings.h` uses them; the derive needs no more at first.
 
 ### Bloom from HDR emission
 
-Bonsai gathers emission above 1.0 into a luminance target and blurs it through a three-level
+That engine gathers emission above 1.0 into a luminance target and blurs it through a three-level
 downsample and upsample chain (`src/engine/bloom.h`, `shaders/bloom_*`). We have no bloom.
 Glowing lamps and ores in the dark suit the first consumer. **What it takes:** a pass in
 `svet-render` after the upscaler, as a render setting (ADR-0055). It must add no flicker
@@ -1686,7 +1798,7 @@ engine levers.
 
 ### Lit world-space sprites (cards)
 
-Bonsai's cards are instanced quads written into the g-buffer, so they are depth-tested, lit and
+That engine's cards are instanced quads written into the g-buffer, so they are depth-tested, lit and
 occluded like geometry. They can billboard, take a tint and an alpha cutoff, and share one sprite
 array (`src/engine/card.h`). Uses: markers, decals, cheap debris, and the impostors that "hundreds
 of entities" names. **What it takes:** sprites traced or merged into `svet-render`'s hit buffer,

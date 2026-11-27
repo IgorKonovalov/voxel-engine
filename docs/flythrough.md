@@ -67,7 +67,7 @@ window's top-right corner reads `fps <n>  frame <median> ms p99 <ms>` while it i
 | `W` `A` `S` `D` | Fly (or walk, in walk mode) |
 | `Space` / `C` | Rise / sink; walking, `Space` jumps, or climbs a ledge with a standable top within 1.2 m |
 | `Shift` | Faster |
-| Left click | Dig at the crosshair; the edit result prints to the terminal. In placement mode: place the ghost |
+| Left click | Dig at the crosshair; the edit result prints to the terminal, and once the dig's rings 1 and 2 are baked a `dig settled: rings 1 and 2 ...` line whose `digs whole N` counts the chunks the dig reached that held no light block (with the bake thread on, known a frame or more after the edit, so not on the edit's line). In placement mode: place the ghost |
 | `E` | In placement mode: place the ghost, as the left click does; out of it nothing (in the menu it types) |
 | Right click | Fill at the crosshair. In placement mode: leave it |
 | Wheel | Enter placement mode at the belt's selected slot; in the mode, step the slot (down the next, wrapping at nine) |
@@ -271,6 +271,9 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--dig-at F,..` | Dig at each of these frames |
 | `--bench-at F,..` | A bench input at each of these frames |
 | `--still PATH`, `--mode-text PATH` | With `--headless` and `--frames`: write the last frame's output (no HUD) as a binary PPM, and the first frame's banner, the mode banner as it shows at its start, the mode rows and the stats HUD's rows as text; `scripts/rehearse-window.mjs` renders a live session's runs with them before the window opens |
+| `--still-at F,..`, `--still-dir DIR` | Write each listed drawn frame (counted from 0, as `--dig-at` counts) as an RGB PNG, `DIR/<scene>-<F:05>.png` (`showcase-hall`, `outdoor-15-00` from the start's clock, `castle-nave`, `cave`, `room-40`), headless or in a window, and print `still: DIR/<file> WxH frame F`; the frame's output, or with the stats HUD showing the output under the overlay as drawn. Under `--frames N` each frame is under `N`. `DIR` defaults to `target/stills` and is made if missing |
+| `--eye X,Y,Z,YAW,PITCH` | Start the camera at this point in voxels (as the HUD reads it), facing YAW degrees (counter-clockwise from +x, 90 north) and PITCH degrees up, on any source, in place of its spawn, shot, castle shot or pose; a streamed world centres on it. Refused with `--path`; a source switch starts the next source at its own camera (a live session's, a rehearsal's or a still's pose) |
+| `--settled-start` | With `--headless` only (refused in a window): after the light pre-roll and before frame 0, step the stream until full residency (nothing queued or in flight, nothing pending on the mirror), then the stream and the live queue in lockstep at 40 ms a step until the queue has no job and nothing to refine on 3 steps in a row; ended by that state, never by wall time. Prints `settled: F full, L lod chunks, J jobs, C to refine, P provisional after S steps (R to residency, Q of the queue), T ms`; past 50 000 steps it prints `settled start: not settled ...` and the run exits non-zero without drawing a frame |
 | `--sync-budget MIB` | The mirror's upload bytes a frame |
 | `--sync-ms MS` | The mirror's upload time a frame [none; 0 is none] |
 | `--workers N` | The streamer's generation workers, at least 1 [half the logical cores] |
@@ -301,7 +304,6 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 |------|------|
 | `--source cave\|level\|showcase\|outdoor` | The world: the streamed noise cave [default], the bounded level, the showcase cavern (a bounded 72 m hall lit by four ores; the lamp off, light radius 19 and its `hall` shot unless told otherwise; no `--save`, `--replay`, `--vault`, `--autopilot`, `--room` or `--castle`), or the streamed outdoor hills with a cave mouth under a sky (no `--level`, `--castle`, `--vault`, `--room`, a rig, `--save` or `--replay`). The banner's line starts `source NAME` |
 | `--spawn outside\|inside\|forest` | Where `--source outdoor` starts: 30 m before the cave mouth facing it, 2 m up [default], 3 m inside the tunnel facing out, or 64 m north of the mouth facing north, 2 m up, 10 degrees down |
-| `--eye X,Y,Z,YAW,PITCH` | With `--source outdoor`, start the camera at this point in voxels (as the HUD reads it), facing YAW degrees (counter-clockwise from +x, 90 north) and PITCH degrees up, in place of `--spawn`'s camera; the streamer centres on it (a live session's or a rehearsal's pose) |
 | `--trees none\|sparse\|forest` | Trees on the outdoor hills: about 9 % or 94 % of the 48-voxel cells of a 3072-voxel box between the mouth and the forest spawn; the banner's source reads `outdoor, trees NAME` [sparse] |
 | `--leaf-fill N` | The canopy voxels kept, of 256, 1 to 256 [64] |
 | `--leaf-shadow brick\|voxel\|absorb` | How a canopy shadows the sun and the sky: as its 8^3 bricks (a light's shadow ray stops where it enters a brick holding leaves, so no fleck shows through), voxel by voxel, or as a transmittance (the key light's ray and the sky rays pass the leaves, attenuated by `exp(-0.15 x)` over the path `x` in voxels through them); the banner reads `leaf shadow brick` or `leaf shadow absorb` with a sky set and names nothing for `voxel` [voxel] |
@@ -320,6 +322,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--landing-fade on\|off` | A landing block's sky visibilities ride the store's fade with its direction values and key visibilities (`Lighting::landing_fade`); off, they change in the frame the block lands and only the light history softens it; the banner reads `landing fade on`, and the debug page's `landing fade` switches it [off] |
 | `--source-fade on\|off` | A landing's switch of source fades (`Lighting::source_fade`): a block records the frame its chunk's first block landed, and where a pixel takes no light history its sky term mixes from the column's answer to the block's baked term over 16 frames; off, the term switches in the frame the block lands; the banner reads `source fade on`, and the debug page's `source fade` switches it [off] |
 | `--dig-hold on\|rays\|off` | What a dig shows until its re-bake lands where a pixel takes no light history (`Lighting::dig_hold`). Every edit box is held from its frame until the live queue holds no dig and 17 frames more. `on`: at the edit each brick the box dilated by one voxel touches takes a record in the light store made on the CPU against the world, a value per cell and direction: the up visibility of the nearest store record at or above the cell (the surface the dig cut through; else the chunk summary's), no more than the cell's own old record's, times the square root of the share of 12 fixed rays from the empty voxel before up to 8 of the cell's faces of that direction that leave 16 voxels without meeting an opaque voxel (a ray that does not rise is closed), at least 0.02; the light pass reads it as any record (no ray, no pair kept) and the store fades it to the bake's record over the dig's fade (4 frames) when the job lands; a ring face whose record the dig marked stale keeps its record's baked term. `rays`: the ring as `on`, and the box's sky visibility takes its pair's history over the cast rays, seeded by the stale record or the column's answer. `off`: the ring shows the cast ray's seed and the hole the seed's estimate until the re-bake lands. The banner reads `dig hold rays` or `dig hold off`, and the debug page's `dig hold` cycles it [on] |
+| `--dig-estimate surface\|depth` | The record a dig holds under `--dig-hold on` until its re-bake lands (`Lighting::dig_estimate`). `surface`: the value `--dig-hold on` names, at least 0.02 of the open sky, and a cell with no face its base at least 0.02. `depth`: the same value with no floor, so a dug face none of whose 12 rays leaves 16 voxels holds 0 and rises to its baked light over the dig's fade. `surface` flashes at depth: a dug face starts brighter than its landed light (the owner's window, Plan 0105). The banner and the HUD's lighting row read `dig estimate surface` [depth] |
 | `--penumbra disc\|approach` | The key light's penumbra near (ADR-0079): `approach` casts one shadow ray toward the sun's or moon's disc centre and scores how close it passes the rock beside it (a voxel of an absorbing material, such as `--leaf-shadow absorb`'s leaves, does not count), times the ray's transmittance, taken as the value with no history: the same every frame, on the lit side of an edge only; with `--light-history off` and `--key-far column` (the defaults) a world face casts no key ray for it, and it scores `--key-cover ray`'s ray where that is cast and changes nothing else; `disc` casts one ray a frame toward a random point of the disc and keeps its running mean, which is shown only where the mean has a history: with `--light-history off` and `--key-far baked` or `column` (the defaults) a world face shows the far estimate instead and no disc penumbra, and an entity or a field surface shows the frame's one sample; the banner reads `penumbra approach` with a sky set (nothing for the default) [disc] |
 | `--sky-normal face\|smoothed` | The normal a cube face's baked sky light reads its visibilities by: the face's own (the far normal's blend far off), or the 27-count gradient's at every distance, so a tread and a riser of a one-voxel stair read the slope's blend; the surface and the sun keep the face normal; the banner reads `sky normal face` with a sky set [smoothed] |
 | `--key-cover off\|ray` | The source that adds the key light back on a cube face where its column horizon (read at the hit) reads under 1; the face shows the larger of the horizon and the source, so a source only adds (ADR-0084, Plan 0100 Phase 6). `ray`: near (the far normal's weight under one half), one ray from the face's centre toward the sun's or moon's disc centre, times its transmittance through absorbing leaves, cast every frame with no random number and no history; `--penumbra approach` scores its closest approach instead, `--key-cap` caps its length; past the half the horizon alone. Entities, field surfaces, `--light-history on` and `--key-far ray` are as without it. Named on the lighting row and in the banner off `off`; the debug page's `key cover` cycles it. Default `off`. |
@@ -627,3 +630,53 @@ picks the monitor (the first `gpu-screen-recorder --list-capture-options` names 
 `--dry-run` prints the schedule and the commands and records nothing, and `--format`,
 `--width`, `--fps`, `--crop` (in screen pixels, `W:H:X:Y`), `--colors` and `--crf` go to the
 encode.
+
+## Shooting the README's images
+
+Every image under `docs/images/` is a row of [`docs/images/shots.json`](images/shots.json),
+or named in its `frozen` map (kept, never re-rendered). A row says how the image is made: the
+`source` (`flythrough`, or `clip` for the example above), its `flags`, the frame (`still_at`,
+or a range `A..B` for a loop from the fly-through, `A..B/S` for every `S`-th frame of it: a
+headless frame is 1/60 s, so a loop of every third frame at `fps` 20 plays in real time), the
+seed, the encoded `width`, `quality` and, for a loop, `fps`, and the `tolerance` that `--check` holds it to, with the reading
+behind it in `note`.
+
+`node scripts/shoot-images.mjs` builds the fly-through and the `clip` example in release (in a
+6G memory-capped scope), renders the rows headless into `target/shots/<id>/`, and after each
+hold encodes the frames with ffmpeg into the row's file: a still as WebP, a loop as animated
+WebP, scaled to `width` with lanczos. It takes the GPU lock once per batch of rows, starts no
+render once a hold is 600 s old and gives a render 300 s, so no hold passes 15 minutes; it
+prints each hold's wait and length, each file's bytes, and its cap when over it. A
+`flythrough` row runs `--headless --settled-start`, so its frames count from a world that has
+finished loading and baking (the manifest is refused without both). After a look change,
+refreshing the images is this command and a commit.
+
+```sh
+node scripts/shoot-images.mjs                     # every row
+node scripts/shoot-images.mjs --only hero         # one row
+node scripts/shoot-images.mjs --print hero        # the row's commands, copy-pasteable
+node scripts/shoot-images.mjs --check             # re-render and compare with the committed files
+```
+
+| Option | Does |
+|--------|------|
+| `--only ID,..` | Shoot these rows only |
+| `--print ID` | Print the row's three commands (clear its frames, render, encode) and exit |
+| `--check` | Render and encode into `target/shots/check/`, decode the new and the committed file, cut each frame into 8 x 8 cells, and print the share of cells whose mean in one channel is more than 4 of 255 apart (and the largest cell difference) against the row's `tolerance`, and for a loop its worst frame and that frame's share, unjudged; exit 1 when one is over |
+| `--no-build` | Use the release binaries as already built |
+| `--manifest FILE` | Read `FILE` instead of `docs/images/shots.json` |
+
+A frame is not bit-identical from run to run on every scene (the outdoor hills differ in a few
+pixels in a thousand), and the lossy encoder spreads a small change over its blocks, so
+`--check` compares cell means: noise averages out inside a cell, while a changed scene, a
+missing pass or another hour moves whole cells. A row's tolerance is read from six runs or
+more in that quantity (every pair of them), not assumed, and `note` names the reading. A loop
+is judged by its share over all its frames; run-to-run noise there is a spike in a few frames,
+so the worst frame is printed beside it and not judged.
+
+A row whose runs differ from each other by more than a third of what a wrong picture reads
+(the same row with its yaw turned 2 degrees, or a loop started one frame late) has no
+tolerance the check could hold: its `tolerance` is `null` and it carries `unjudged`, a line
+with the largest pair, the smallest wrong share and the date. `--check` still renders it and
+prints its share marked unjudged, but never counts it towards the exit code, and
+`node scripts/check-images.mjs` names every unjudged row on each run.

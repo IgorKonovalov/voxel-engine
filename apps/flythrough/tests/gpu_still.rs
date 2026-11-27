@@ -1,6 +1,6 @@
 //! `--still` and `--mode-text`: a headless run writes its last frame as a PPM whose pixels are
 //! not all one colour, and a mode text naming a flag it was given (the window rehearsal's
-//! inputs, `scripts/rehearse-window.mjs`).
+//! inputs, `scripts/rehearse-window.mjs`); `--still-at` writes the listed frame as a PNG.
 
 use std::process::Command;
 
@@ -58,4 +58,127 @@ fn a_headless_run_writes_a_still_and_a_mode_text_naming_its_flags() {
     assert!(modes.contains("look trilinear8"), "{text}");
     println!("{other} of {} pixels differ from the first", px.len() / 3);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--still-at 1 --still-dir DIR` on the closed 4 m room at 320 x 180 on lavapipe for 2
+/// frames: the run prints `still: DIR/room-40-00001.png 320x180 frame 1`, and the file is a PNG
+/// of 320 x 180 whose pixels are not all one colour.
+#[test]
+fn still_at_writes_a_png_of_the_listed_frame() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("flythrough-still-at-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let out = Command::new(env!("CARGO_BIN_EXE_flythrough"))
+        .args([
+            "--headless",
+            "--adapter",
+            "llvmpipe",
+            "--room",
+            "4",
+            "--render",
+            "320x180",
+            "--frames",
+            "2",
+            "--still-at",
+            "1",
+            "--still-dir",
+        ])
+        .arg(&dir)
+        .output()
+        .expect("the fly-through runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if !out.status.success() && stderr.contains("no adapter") {
+        println!("skipped: no adapter ({})", stderr.trim());
+        return;
+    }
+    assert!(out.status.success(), "stdout:\n{stdout}\nstderr:\n{stderr}");
+    let file = dir.join("room-40-00001.png");
+    let line = format!("still: {} 320x180 frame 1", file.display());
+    assert!(
+        stdout.lines().any(|l| l == line),
+        "no `{line}` in:\n{stdout}"
+    );
+    let written: Vec<_> = std::fs::read_dir(&dir)
+        .expect("the still dir is made")
+        .map(|e| e.expect("an entry").file_name())
+        .collect();
+    assert_eq!(written, ["room-40-00001.png"], "one still, frame 1's");
+
+    let decoder = png::Decoder::new(std::io::BufReader::new(
+        std::fs::File::open(&file).expect("the still opens"),
+    ));
+    let mut reader = decoder.read_info().expect("a PNG");
+    let mut px = vec![0; reader.output_buffer_size().expect("a size")];
+    let info = reader.next_frame(&mut px).expect("its pixels decode");
+    assert_eq!((info.width, info.height), (320, 180));
+    assert_eq!(info.color_type, png::ColorType::Rgb);
+    let px = &px[..info.buffer_size()];
+    let first = &px[..3];
+    let other = px.chunks_exact(3).filter(|p| *p != first).count();
+    assert!(other > 0, "the still is all one colour {first:?}");
+    println!("{other} of {} pixels differ from the first", 320 * 180);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--settled-start` on a small streamed outdoor world (`--residency 2,2`: the smallest full
+/// radius that holds the 33 near chunks the start waits for; at 1 the start never ends) at
+/// 320 x 180 on lavapipe for 2 frames: the run prints `settled: F full, L lod chunks, 0 jobs,
+/// 0 to refine, ...` before frame 0, and F is the closing stats row's `world F full + L lod
+/// chunks`. Soak: 148 s release on lavapipe (2026-11-26), 120 s of it the pre-roll's cap,
+/// whose 125 near chunks cannot bake inside a full radius of 2.
+#[test]
+#[ignore = "soak"]
+fn settled_start_waits_for_full_residency_and_an_idle_queue() {
+    let out = Command::new(env!("CARGO_BIN_EXE_flythrough"))
+        .args([
+            "--headless",
+            "--adapter",
+            "llvmpipe",
+            "--source",
+            "outdoor",
+            "--residency",
+            "2,2",
+            "--render",
+            "320x180",
+            "--frames",
+            "2",
+            "--settled-start",
+        ])
+        .output()
+        .expect("the fly-through runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if !out.status.success() && stderr.contains("no adapter") {
+        println!("skipped: no adapter ({})", stderr.trim());
+        return;
+    }
+    assert!(out.status.success(), "stdout:\n{stdout}\nstderr:\n{stderr}");
+    let settled = stdout
+        .lines()
+        .find_map(|l| l.strip_prefix("settled: "))
+        .unwrap_or_else(|| panic!("no `settled:` line in:\n{stdout}"));
+    let words: Vec<&str> = settled
+        .split([' ', ','])
+        .filter(|w| !w.is_empty())
+        .collect();
+    let count = |after: &str| -> u64 {
+        let i = words
+            .iter()
+            .position(|w| *w == after)
+            .unwrap_or_else(|| panic!("no `{after}` in `{settled}`"));
+        words[i - 1].parse().expect("a count")
+    };
+    assert_eq!(count("jobs"), 0, "{settled}");
+    assert_eq!(count("to"), 0, "chunks to refine: {settled}");
+    let full = count("full");
+    let closing = stdout
+        .lines()
+        .rev()
+        .find_map(|l| l.trim().strip_prefix("world ")?.split_once(" full + "))
+        .unwrap_or_else(|| panic!("no closing `world N full` row in:\n{stdout}"))
+        .0;
+    assert_eq!(closing.parse::<u64>().ok(), Some(full), "{settled}");
+    assert!(full > 0, "{settled}");
+    println!("{settled}");
 }

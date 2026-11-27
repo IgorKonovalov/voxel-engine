@@ -30,6 +30,8 @@ svet-script-wasm = { workspace = true, features = ["host"], optional = true }
 svet-audio.workspace = true
 svet-assets.workspace = true
 svet-entity.workspace = true
+# `--still-at`'s PNGs.
+png.workspace = true
 
 # The peak working set behind `run.json`'s `peak_rss_bytes` on Windows.
 [target.'cfg(windows)'.dependencies]
@@ -38,7 +40,6 @@ windows-sys.workspace = true
 [dev-dependencies]
 svet-render = { workspace = true, features = ["test-support"] }
 criterion.workspace = true
-png.workspace = true
 pollster.workspace = true
 
 [[test]]

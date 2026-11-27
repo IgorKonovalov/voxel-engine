@@ -883,6 +883,11 @@ impl Modes {
             out.push_str(self.lighting.dig_hold.name());
             out.push_str(", ");
         }
+        if self.lighting.dig_estimate != crate::default_lighting().dig_estimate {
+            out.push_str("dig estimate ");
+            out.push_str(self.lighting.dig_estimate.name());
+            out.push_str(", ");
+        }
         if self.lighting.light_history_far {
             out.push_str("light history far on, ");
         }

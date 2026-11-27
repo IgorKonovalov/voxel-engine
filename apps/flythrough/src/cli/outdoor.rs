@@ -13,9 +13,6 @@ use crate::trees::{LEAF_FILL, TreeDensity};
 pub struct OutdoorArgs {
     /// `--spawn outside|inside`: where `--source outdoor` stands the camera.
     pub(crate) spawn: Spawn,
-    /// `--eye X,Y,Z,YAW,PITCH`: the camera's start in voxels and its view in degrees, in place
-    /// of the spawn's camera; the streamer centres on its voxel.
-    pub(crate) eye: Option<[f32; 5]>,
     /// `--time` and `--day-length`: the clock the run starts with, its cycle paused.
     pub(crate) clock: Clock,
     /// `--sky on|off`: a sky is set; unset, on for `--source outdoor` alone.
@@ -56,6 +53,9 @@ pub struct OutdoorArgs {
     /// `--dig-hold on|rays|off`: what a dig shows until its re-bake lands
     /// (`Lighting::dig_hold`); unset, the renderer's default.
     pub(crate) dig_hold: Option<svet_render::DigHold>,
+    /// `--dig-estimate surface|depth`: the held record's estimate under `--dig-hold on`
+    /// (`Lighting::dig_estimate`); unset, the renderer's default.
+    pub(crate) dig_estimate: Option<svet_render::DigEstimate>,
     /// `--sky-normal face|smoothed`: the normal the baked sky term reads its visibilities by.
     pub(crate) sky_normal: svet_render::SkyNormal,
     /// `--sky-bounce B`: the baked sky term's bounce floor, 0 to 1.
@@ -159,33 +159,6 @@ pub(super) fn source_flags() -> Vec<Flag<Parsing>> {
     )]
 }
 
-/// `--eye`: the outdoor camera's start point and view.
-fn eye_flag() -> Flag<Parsing> {
-    Flag::value(
-        &["--eye"],
-        "X,Y,Z,YAW,PITCH",
-        "with --source outdoor, start the camera at this point in voxels (as the HUD \
-             reads it), facing YAW degrees (counter-clockwise from +x, 90 north) and \
-             PITCH degrees up, in place of --spawn's camera; the streamer centres on it",
-        |p: &mut Parsing, v| {
-            let n: Vec<f32> = v
-                .text
-                .split(',')
-                .map(|s| s.trim().parse::<f32>())
-                .collect::<Result<_, _>>()
-                .map_err(|_| v.takes("five numbers X,Y,Z,YAW,PITCH"))?;
-            let eye: [f32; 5] = n
-                .try_into()
-                .map_err(|_| v.takes("five numbers X,Y,Z,YAW,PITCH"))?;
-            if eye.iter().any(|f| !f.is_finite()) || eye[4].abs() > 89.0 {
-                return Err(v.takes("finite numbers, the pitch within 89 degrees"));
-            }
-            p.args.outdoor.eye = Some(eye);
-            Ok(())
-        },
-    )
-}
-
 /// The outdoor testbed's section.
 pub(super) fn sections() -> Vec<Section<Parsing>> {
     let mut flags = vec![
@@ -201,7 +174,6 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
                 Ok(())
             },
         ),
-        eye_flag(),
         Flag::value(
             &["--trees"],
             "none|sparse|forest",
@@ -327,6 +299,7 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
     flags.extend(key_face_flags());
     flags.extend(ray_lever_flags());
     flags.push(dig_hold_flag());
+    flags.push(dig_estimate_flag());
     flags.extend(ceiling_flags());
     vec![Section {
         title: "Outdoors and the sky",
@@ -376,6 +349,25 @@ fn dig_hold_flag() -> Flag<Parsing> {
         |p: &mut Parsing, v| {
             p.args.outdoor.dig_hold =
                 Some(v.named(svet_render::DigHold::from_name, "on, rays or off")?);
+            Ok(())
+        },
+    )
+}
+
+/// `--dig-estimate`: the held record's estimate under `--dig-hold on`
+/// (`Lighting::dig_estimate`).
+fn dig_estimate_flag() -> Flag<Parsing> {
+    Flag::value(
+        &["--dig-estimate"],
+        "surface|depth",
+        "the record a dig holds under --dig-hold on until its re-bake lands: surface, the \
+             surface's sky visibility times the root of a near openness, at least 0.02 of the \
+             open sky; depth, the same with no floor, so a dug face no ray of which leaves \
+             the hole holds 0 and rises to its light at the landing; surface flashes at depth \
+             [depth]",
+        |p: &mut Parsing, v| {
+            p.args.outdoor.dig_estimate =
+                Some(v.named(svet_render::DigEstimate::from_name, "surface or depth")?);
             Ok(())
         },
     )

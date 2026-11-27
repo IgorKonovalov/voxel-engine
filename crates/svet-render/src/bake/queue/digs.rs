@@ -1,11 +1,11 @@
 //! The queue's digs: the boxes to rebake, their opening, and the fades they start.
 
 use super::*;
-use crate::bake::held::{Opaque, apply_held, held_visibilities};
+use crate::bake::held::{HeldCell, HeldPart, Opaque, apply_held_cells, held_cells};
 use crate::bake::job_loop::JobCtx;
 
-/// A chunk's held visibilities ([`held_visibilities`]): by touched brick, a value a cell.
-type Held = Vec<(u16, Vec<Option<[f32; 6]>>)>;
+/// A chunk's held cells ([`held_cells`]): by touched brick, a value a cell.
+type Held = Vec<(u16, Vec<HeldCell>)>;
 
 impl BakeQueue {
     /// Reads the edit boxes since the last step into the waiting digs, against the store as the
@@ -19,8 +19,11 @@ impl BakeQueue {
     /// ([`provisional_block`]): its kept bricks' records, and a brick the edit opened its
     /// neighbours' mean, so no dug face reads no value while its job waits; the job then fades
     /// from it. Under [`BakeQueue::dig_store_hold`] each touched brick's cells hold the held
-    /// visibilities instead ([`held_visibilities`]: the removed surface's times a near openness
-    /// read against the world), which the light pass reads as a record.
+    /// visibilities instead ([`held_cells`]: the removed surface's times a near openness
+    /// read against the world, under [`BakeQueue::dig_estimate`]), which the light pass reads
+    /// as a record. A chunk the box touched that held no block is a whole dig; under
+    /// [`BakeQueue::holds_whole`] it takes a provisional block and held records too, placed new,
+    /// and its job fades from them as any dig's.
     pub(in crate::bake) fn take_boxes(
         &mut self,
         run: &BakeRun<'_>,
@@ -79,6 +82,9 @@ impl BakeQueue {
                     e.near = true;
                     self.touched.insert(c);
                     self.faceless.remove(&c);
+                    if self.holds_whole() {
+                        dug.push((c, near));
+                    }
                 }
                 continue;
             }
@@ -97,14 +103,19 @@ impl BakeQueue {
         }
         let classes = self.classes(run.world.materials());
         let listed = self.list_dug(run, &store.words, &boxes, &dug, &classes);
-        for ((c, near), (faces, held)) in dug.into_iter().zip(listed) {
+        for ((c, near), (faces, held, trace, ns)) in dug.into_iter().zip(listed) {
+            self.held_trace.extend(trace);
+            self.stats.held_ns += ns;
             let coord = ChunkCoord(c);
             if let Some(m) = self.prepared.remove(&c) {
                 self.prepared_bytes -= m.masks.bytes();
             }
-            let Some(&(first, words)) = store.blocks.get(&c) else {
+            // A whole dig ([`BakeQueue::holds_whole`]) holds no block: its provisional one takes
+            // a new place, and the pool refusing it leaves the dig whole, its faces unheld.
+            let had = store.blocks.get(&c).copied();
+            if had.is_none() && faces.faces() == 0 {
                 continue;
-            };
+            }
             if faces.faces() == 0 {
                 self.fades.remove(&c);
                 store.remove(coord);
@@ -115,17 +126,20 @@ impl BakeQueue {
                 continue;
             }
             let mut block = provisional_block(store, c, &faces, record, &near);
-            apply_held(&mut block, &held, record);
+            apply_held_cells(&mut block, &held, record);
             let len = block.len() as u64;
             // The old place is freed only once the new one is held: a refused place leaves the
             // old block where the chunk table points, and its dig waits in `digs`.
-            let at = if len <= words {
-                store.release(first + len, words - len);
-                first
-            } else {
-                match store.alloc(len) {
+            let at = match had {
+                Some((first, words)) if len <= words => {
+                    store.release(first + len, words - len);
+                    first
+                }
+                _ => match store.alloc(len) {
                     Ok(at) => {
-                        store.release(first, words);
+                        if let Some((first, words)) = had {
+                            store.release(first, words);
+                        }
                         at
                     }
                     Err(BakeError::PoolFull { .. }) => {
@@ -133,9 +147,13 @@ impl BakeQueue {
                         continue;
                     }
                     Err(e) => return Err(e),
-                }
+                },
             };
             self.fades.remove(&c);
+            if had.is_none() {
+                // A whole dig's first block: its summary is stale until the job's block lands.
+                store.held_whole.insert(c);
+            }
             store.put(coord, at, block);
             self.listed.insert(c, faces);
         }
@@ -166,8 +184,9 @@ impl BakeQueue {
 
     /// The dug chunks' listings, across threads (a `B` press touches tens of chunks, listed as
     /// the pre-roll's are), each with its touched bricks' held visibilities under
-    /// [`BakeQueue::dig_store_hold`] ([`held_visibilities`], made against the world from the
-    /// blocks as the edit found them, `words`), else none.
+    /// [`BakeQueue::dig_store_hold`] ([`held_cells`], made against the world from the
+    /// blocks as the edit found them, `words`), else none, and the call's time in ns (a reading,
+    /// [`QueueStats::held_ns`]; 0 for none).
     fn list_dug(
         &self,
         run: &BakeRun<'_>,
@@ -175,12 +194,13 @@ impl BakeQueue {
         boxes: &[[[i32; 3]; 2]],
         dug: &[([i32; 3], Vec<u16>)],
         classes: &Arc<Vec<u8>>,
-    ) -> Vec<(ChunkFaces, Held)> {
+    ) -> Vec<(ChunkFaces, Held, Vec<HeldPart>, u64)> {
         let threads = std::thread::available_parallelism()
             .map_or(4, std::num::NonZero::get)
             .clamp(1, 16);
         let per = dug.len().div_ceil(threads).max(1);
-        let (cell, hold) = (self.settings.cell, self.dig_store_hold);
+        let (cell, hold, traced) = (self.settings.cell, self.dig_store_hold, self.trace_held);
+        let estimate = self.dig_estimate;
         std::thread::scope(|scope| {
             let handles: Vec<_> = dug
                 .chunks(per)
@@ -189,16 +209,36 @@ impl BakeQueue {
                         part.iter()
                             .map(|(c, near)| {
                                 let faces = self.list(run.world, ChunkCoord(*c), classes).0;
+                                let mut trace = Vec::new();
+                                let mut ns = 0u64;
                                 let held = if hold {
-                                    let mut solid =
-                                        Opaque::about(run.world, &classes[..], *c, near);
-                                    held_visibilities(
-                                        &mut solid, words, boxes, *c, &faces, near, cell,
-                                    )
+                                    let mut solid = Opaque::about(
+                                        run.world,
+                                        &classes[..],
+                                        *c,
+                                        near,
+                                        cell,
+                                        estimate,
+                                    );
+                                    let t = stopwatch();
+                                    let held = held_cells(
+                                        &mut solid,
+                                        words,
+                                        boxes,
+                                        *c,
+                                        &faces,
+                                        near,
+                                        cell,
+                                        estimate,
+                                        traced.then_some(&mut trace),
+                                    );
+                                    ns = u64::try_from(stopwatch().duration_since(t).as_nanos())
+                                        .unwrap_or(u64::MAX);
+                                    held
                                 } else {
                                     Vec::new()
                                 };
-                                (faces, held)
+                                (faces, held, trace, ns)
                             })
                             .collect::<Vec<_>>()
                     })
@@ -301,7 +341,10 @@ impl BakeQueue {
                 d.ring1 = d.slots.clone();
             }
             let coord = ChunkCoord(c);
+            // A whole dig keeps no record: under `holds_whole` its block is the held one
+            // `take_boxes` placed, which its job replaces whole.
             let kept: KeptBricks = match store.words.get(&c) {
+                Some(_) if d.whole && self.holds_whole() => KeptBricks::default(),
                 Some(block) => records_of(block, record)
                     .into_iter()
                     .filter(|(slot, _)| !d.slots.contains(slot))
@@ -503,6 +546,14 @@ impl BakeQueue {
             self.counted_idle = false;
             self.quiet_until = self.steps;
         }
+    }
+
+    /// Whether a whole dig (a chunk the box touched that held no block) holds the dig at the
+    /// edit as a chunk with a block does: under [`BakeQueue::dig_store_hold`] and
+    /// [`DigEstimate::Depth`]. Under [`DigEstimate::Surface`] its faces read no record until
+    /// its job lands.
+    pub(in crate::bake) fn holds_whole(&self) -> bool {
+        self.dig_store_hold && self.dig_estimate == crate::DigEstimate::Depth
     }
 
     /// A brick record's words under the settings' cell.

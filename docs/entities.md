@@ -18,17 +18,16 @@ entry in it.
 
 | Entry | Parts | Clips | Materials (table rows) | |
 |-------|-------|-------|------------------------|-|
-| `walker` | torso, head, legs, arms | `idle`, `walk`, `turn` | `walker`, `walker_eye` | ![The walker striding in place in the showcase hall, cyan crystals behind it](images/walker-walk.gif) |
-| `spider` | body, abdomen, eight legs on their own phases, palps, fangs | `walk`, `idle`, `rear` | `shell`, `rubble`, `rock`, `ore`, `crystal`, `amethyst`, `ember`, `walker`, `walker_eye` | ![The spider walking in place in the showcase hall](images/spider-walk.gif) |
+| `walker` | torso, head, legs, arms | `idle`, `walk`, `turn` | `walker`, `walker_eye` | ![The walker striding in place in the showcase hall, cyan crystals behind it](images/walker-walk.webp) |
+| `spider` | body, abdomen, eight legs on their own phases, palps, fangs | `walk`, `idle`, `rear` | `shell`, `rubble`, `rock`, `ore`, `crystal`, `amethyst`, `ember`, `walker`, `walker_eye` | ![The spider walking in place in the showcase hall](images/spider-walk.webp) |
 
 The rows `crystal`, `amethyst` and `ember` are the showcase's, so the spider builds against the
 showcase's table (`--source showcase`) and not the streamed cave's. The `walker` rows are in
 every table the fly-through builds.
 
-The two GIFs are regenerated with `scripts/record-clip.sh --width 800 --out
-docs/images/spider-walk -- --clip walk` and `scripts/record-clip.sh --width 480 --out
-docs/images/walker-walk -- --rig apps/flythrough/assets/entities/walker/walker.rig --clip walk
---ahead 70 --orbit 24,3,-10 --aim 9`.
+The two loops are rows of [`docs/images/shots.json`](images/shots.json), which holds the
+`clip` example's flags for each; `node scripts/shoot-images.mjs --only spider-walk,walker-walk`
+renders them again.
 
 ### The icons
 

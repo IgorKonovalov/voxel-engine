@@ -683,6 +683,32 @@ fn dig_hold_is_on_rays_and_off_names_itself() {
     assert!(parse_args_from(argv(&["--dig-hold", "maybe"])).is_err());
 }
 
+/// Plan 0105 Phase 7a (the owner's window): `Lighting::dig_estimate` is `depth` by default
+/// and the banner does not name it; `--dig-estimate surface` sets it and the banner and the
+/// lighting row name it; `--dig-estimate depth` sets the default; `--dig-estimate maybe` is
+/// refused.
+#[test]
+fn dig_estimate_is_surface_or_depth_and_names_itself() {
+    use svet_render::DigEstimate;
+    let base = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
+    assert_eq!(base.start_lighting().dig_estimate, DigEstimate::Depth);
+    let banner = base.start_modes(0.0).banner(0.0).unwrap();
+    assert!(!banner.contains("dig estimate"), "{banner}");
+    let mut row = String::new();
+    base.start_modes(0.0).write_diag(&mut row);
+    assert!(!row.contains("dig estimate"), "{row}");
+    let r = parse_args_from(argv(&["--source", "outdoor", "--dig-estimate", "depth"])).unwrap();
+    assert_eq!(r.start_lighting().dig_estimate, DigEstimate::Depth);
+    let r = parse_args_from(argv(&["--source", "outdoor", "--dig-estimate", "surface"])).unwrap();
+    assert_eq!(r.start_lighting().dig_estimate, DigEstimate::Surface);
+    let banner = r.start_modes(0.0).banner(0.0).unwrap().replace('\n', ", ");
+    assert!(banner.contains("dig estimate surface, "), "{banner}");
+    let mut row = String::new();
+    r.start_modes(0.0).write_diag(&mut row);
+    assert!(row.contains("dig estimate surface, "), "{row}");
+    assert!(parse_args_from(argv(&["--dig-estimate", "maybe"])).is_err());
+}
+
 /// No `--key-at` or `--key-horizon` flag stands (unknown arguments), and
 /// `--key-cover record` is refused by `--key-cover`'s own error, which names what it takes.
 #[test]
@@ -759,7 +785,7 @@ fn the_profiles_keep_the_key_defaults() {
 #[test]
 fn eye_places_the_outdoor_camera() {
     let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
-    assert_eq!(r.outdoor.eye, None);
+    assert_eq!(r.eye, None);
     let r = parse_args_from(argv(&[
         "--source",
         "outdoor",

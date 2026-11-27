@@ -339,7 +339,8 @@ seeded, integer-only 72 x 58 x 24 m hall with pillars, cones, ledges, a chasm an
 lit with the lamp off by four emissive ores. By the owner's Phase 6 call no ore lies on the
 roof, about half the floor is dark and the crystal clusters are the main light. `hero`
 defaults to the showcase's `hall` shot at 1920x1080 with indirect light at spacing 32 and our
-upscaler at 1.5, and `docs/images/hero.png` is re-shot from it. It shows M2's lighting and
+upscaler at 1.5, and the README's hero still was re-shot from it (the README's images are now
+the rows of `docs/images/shots.json`). It shows M2's lighting and
 changes no engine crate.
 
 Plan 0040, eye adaptation, closed 2026-10-28 (v0.34.0, ADR-0033 accepted with an Outcome):
@@ -677,7 +678,7 @@ a cheap query.
   Per-entity voxel damage stays out (`docs/backlog.md`).
 - **ADRs:** ADR-0050 (entity representation; accepted at Plan 0062's close, with an Outcome), ADR-0051 (rigs and clips; accepted at Plan 0063's close, with an Outcome), ADR-0062 (surface locomotion as a kinematic sphere in `svet-sim`; accepted at Plan 0079's close, with an Outcome); ADR-0064 (a part's scale and its children) with Plan 0082; ADR-0068 (variants as recipes) and ADR-0069 (the bake and the stamp) with Plan 0085.
 
-### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views and the profiler across passes remain, and Plan 0068 closed the benchmark lane's first form, the tester build (camera paths, run reports, Linux and Windows archives; shipped in v0.54.0, the first release, 2026-11-15); Plan 0088 added its fourth scene, the outdoor hills, trees and tunnel on a computed path, v0.63.0, 2026-11-17; Plan 0026 closed gamepad flight, v0.21.0; Plan 0043 closed the test tiers, v0.29.1; Plan 0042 closed the generated castle, v0.30.0; Plan 0066 closed the 10 s soak line, 2026-11-11; Plan 0075 closed the loading screen, v0.58.0: start-up stepped on the app's frame loop behind an engine loading frame, 2026-11-16; Plan 0083 closed structures from any `.vox`, v0.66.0, 2026-11-19: every palette entry a material row and the table a text file reloaded live (ADR-0065), prefabs as bricks and a stamp that outlives residency as a placement (ADR-0066), a structure as a belt item placed under a coarse ghost of itself (ADR-0078))
+### M7: Tooling (Plan 0008 closed prefab stamping (runtime and generation time); Plan 0010 closed the stats HUD, v0.9.0, and Plan 0016 its allocation-free refresh, v0.13.0; Plan 0025 closed the cutaway view, v0.20.0; the other debug views and the profiler across passes remain, and Plan 0068 closed the benchmark lane's first form, the tester build (camera paths, run reports, Linux and Windows archives; shipped in v0.54.0, the first release, 2026-11-15); Plan 0088 added its fourth scene, the outdoor hills, trees and tunnel on a computed path, v0.63.0, 2026-11-17; Plan 0026 closed gamepad flight, v0.21.0; Plan 0043 closed the test tiers, v0.29.1; Plan 0042 closed the generated castle, v0.30.0; Plan 0066 closed the 10 s soak line, 2026-11-11; Plan 0075 closed the loading screen, v0.58.0: start-up stepped on the app's frame loop behind an engine loading frame, 2026-11-16; Plan 0083 closed structures from any `.vox`, v0.66.0, 2026-11-19: every palette entry a material row and the table a text file reloaded live (ADR-0065), prefabs as bricks and a stamp that outlives residency as a placement (ADR-0066), a structure as a belt item placed under a coarse ghost of itself (ADR-0078); Plan 0093 closed the README rewrite, v0.79.1, 2026-11-27: every README image a row of `docs/images/shots.json` shot by one script, an image gate in CI, the README's two code examples checked by tests)
 
 - Prefab stamping with rotation and masks; debug views (material ids, acoustic properties,
   coarse grids, flags); an in-app profiler overlay with GPU timestamps; a benchmark lane
@@ -763,7 +764,7 @@ a cheap query.
   positional voice as an audio source through M4's occlusion.
 - **ADRs expected:** transport; voice codec.
 
-### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0; Plan 0094 closed 2026-11-20, v0.68.0; Plan 0095 closed 2026-11-21, v0.69.0; Plan 0097 closed 2026-11-23, v0.70.0; Plan 0096 closed 2026-11-23, v0.71.0; Plan 0098 closed 2026-11-24, v0.72.0; Plan 0100 closed 2026-11-25, v0.75.0; Plan 0099 closed 2026-11-26, v0.76.0; Plan 0104 closed 2026-11-26, v0.77.0; Plan 0101 closed 2026-11-26, v0.78.0)
+### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0; Plan 0094 closed 2026-11-20, v0.68.0; Plan 0095 closed 2026-11-21, v0.69.0; Plan 0097 closed 2026-11-23, v0.70.0; Plan 0096 closed 2026-11-23, v0.71.0; Plan 0098 closed 2026-11-24, v0.72.0; Plan 0100 closed 2026-11-25, v0.75.0; Plan 0099 closed 2026-11-26, v0.76.0; Plan 0104 closed 2026-11-26, v0.77.0; Plan 0101 closed 2026-11-26, v0.78.0; Plan 0105 closed 2026-11-27, v0.80.0)
 
 The open-sky half of the "Floor, profiles and scene scale" decision, as general engine
 mechanisms: the first consumer is underground, so nothing here is on its P0 list, and terrain
@@ -904,7 +905,19 @@ against the baked store: no probe or store term takes sun or sky light.
   RTX's drain slice against 0.85, and the RTX forest's view is final at 17.9 and 19.0 s
   against 10 (every chunk in view has some light at about 8 s; the hills meet at 6.5 s).
   Left open: the feed's levers and the readings not taken (the backlog), and a flash when
-  digging deeper than 2 to 3 m, the same with the thread off (Plan 0105, drafted).
+  digging deeper than 2 to 3 m, the same with the thread off (Plan 0105).
+- **The dig's flash at depth** ([Plan 0105](plans/done/0105-the-digs-flash-at-depth-a-held-estimate-that-follows-the-holes-own-light.md),
+  closed 2026-11-27, v0.80.0; ADR-0082's Outcome added to): the record a dig holds until its
+  re-bake lands had a floor above black, which under an eye in the hole read +78 to +100
+  display levels over a landed 0. The held estimate is a render setting,
+  `Lighting::dig_estimate`; the default `depth` holds no floor, counts a ray open only where
+  it reaches its base's height, holds a dig into a chunk with no light block on a record, and
+  moves the dig's faces alone. The owner at his window: `surface` flashes, `depth` does not,
+  the dark start "is not visible at all". **Disclosed:** a 1 m dig starts 4.5 levels under its
+  settled look (accepted by eye); a dig into unbaked ground darkens 0.46 % of the ground beside
+  it for two frames (seen by no one on purpose); blind, the owner read the binary of the day
+  before as flashing slightly less and accepted the closing one, cause not found; the forest
+  at depth is asserted by name on the RTX 3080 Laptop alone. All four are in the backlog.
 - **A surface detail layer** ([Plan 0081](plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
   drafted 2026-11-16, awaits the owner's go; ADR-0063 proposed): grass, moss, strands,
   fungus caps, flowers, pebbles and snow tufts as a procedural shell marched in the hit pass
