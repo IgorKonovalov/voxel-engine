@@ -1871,6 +1871,7 @@ rest.
 | 6c: the noise sets and the tolerances | dev | done: 76 renders in four holds (1798 s, the longest 631 s), eleven tolerances, `walkers` unjudged (twice its largest pair over the ceiling; G2 read as covering it); `--check` exit 0; files beyond the list: the image gate's seeded fixture and its README; readings in [the log](logs/0093.md) | `23871869` |
 | 6d: the tip | dev | stopped: the second `--check` exits 1, `lamp-cave` 0.002345 over its 0 (log); Phase 6's owed doctest item (`29fee52d`, the window fence marked `rust ignore` and `readme_example.rs` with it, beyond the item's file) and old images removed (`150ad734`); README commands headless exit 0; no draft; gate tier 1464 passed, 1128 s; readings in [the log](logs/0093.md) | committed with this row (wip) |
 | 6d2: `lamp-cave`'s set read again, the third check | dev | stopped: the third `--check` exits 1, `spider-walk` 0.004395 over its 0.004 (log); thirteen `lamp-cave` renders, two groups (12 and r7), largest pair 0.002345, tolerance 0.005 (G10); `dig` and `chapel` 0; readings in [the log](logs/0093.md) | committed with this row (wip) |
+| 6d3: every set takes the checks' renders, the final check (closes 6d) | dev | done: eleven tolerances by G13 (hero 0.02, hall 0.003, canopy 0.006, skylight 0.006, spider-walk 0.01, castle 0.003, hud 0.03; lamp-cave, walker-walk, dig, chapel unchanged), `walkers` unjudged; final `--check` exit 0, no entry over, one 275 s hold; readings in [the log](logs/0093.md) | committed with this row |
 
 ### Notes
 
@@ -1977,11 +1978,11 @@ each. Empty is fine.)_
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:** docs-chore-only (the testbed's three flags and two scripts)
-- **Public API changed:** none in `crates/`; the fly-through's flags
-- **Budget readings:** none in `nfr.md`; the gate's line and the shoot's wall time in the log
-- **Gate at the tip:** the commands run (build, nextest, doctests, clippy, fmt, deny), exit codes, test counts
-- **Outstanding `human` phases:** which, or none
+- **What shipped:** docs-chore-only (the testbed's three flags, the shoot script and the image gate, the README rewrite and its images, the `minimal_window` example, a README doctest in `svet-world`)
+- **Public API changed:** none in `crates/`'s library APIs; the fly-through's flags (`--still-at`, `--still-dir`, `--eye`, `--settled-start`), the `svet-app` example
+- **Budget readings:** none in `nfr.md`; the shoot's and the checks' holds (the final check 275 s held) and the README's image bytes (1240720 of 5000000) in the log
+- **Gate at the tip:** Phase 6d (log): `cargo nextest run --workspace --profile gate` exit 0, 1464 passed, 247 skipped, 1128 s; the `--sole` run exit 0, 1 passed; clippy, fmt, `cargo test --workspace --doc` (4 passed, 1 ignored), `cargo deny check` exit 0. Phases 6d2 and 6d3 changed only `docs/`: the script tests (44 pass), `check-images.mjs`, `check-doc-links.mjs`, `check-plan-size.mjs`, `check-index-rows.mjs` exit 0; the final `shoot-images.mjs --check --no-build` exit 0 (11 of 11, `walkers` unjudged)
+- **Outstanding `human` phases:** none (Phase 7 is the orchestrator's check after the push, not a phase)
 - **Owed at the close (architect, not dev):** the scrub of A9 rule 3, after Phase 7
 
 ## Followups

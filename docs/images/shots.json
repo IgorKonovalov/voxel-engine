@@ -9,7 +9,7 @@
       "seed": 1,
       "flags": ["--headless", "--settled-start", "--source", "outdoor", "--trees", "forest", "--spawn", "forest", "--time", "18:10", "--render", "1920x1080", "--frames", "96", "--eye", "0,640,579,180,15", "--lamp", "off"],
       "still_at": 95,
-      "tolerance": 0.008,
+      "tolerance": 0.02,
       "cap_bytes": 300000,
       "shows": "The hills at sunset from the forest spawn (the castle on a hill is not placeable: --vox is ignored outdoors)",
       "candidates": [
@@ -23,7 +23,7 @@
         ["--eye", "0,640,579,180,15", "--lamp", "off"],
         ["--eye", "0,640,800,180,-5", "--lamp", "off"]
       ],
-      "note": "the flags are candidate 8, the owner's pick; tolerance: cell share at C 8, L 4; eight renders of this entry (Phase 6a's shoot and seven more), 28 pairs, largest pair 0.007743, rounded up to one significant figure (a still's rule); smallest wrong share 0.614602 (the yaw turned 2 degrees); 2026-11-26, the release binaries of 3c3e82e2, RTX 3080 Laptop, loaded"
+      "note": "the flags are candidate 8, the owner's pick; tolerance: cell share at C 8, L 4; ten renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 45 pairs, largest pair 0.007743, twice the largest pair (G13), rounded up to one significant figure; smallest wrong share 0.614602 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
     },
     "dig": {
       "kind": "still",
@@ -44,7 +44,7 @@
         ["--eye", "32,32,32,180,-10", "--lamp", "off"],
         ["--eye", "32,32,32,180,-10", "--lamp", "off", "--exposure-comp", "1"]
       ],
-      "note": "the flags are candidate 4, a default picked by the bar (Plan 0093 Phase 5d) for the owner to correct; a still of the loop's last frame by G3's flash read (the mean over the changed pixels is over the last frame's at frames 40..92, two renders identical); the loop for the re-shoot was kind loop, still_at 36..96, fps 20, width 800, quality 70, cap_bytes 700000, fallback gif; tolerance: cell share at C 8, L 4; six renders of this entry (Phase 6a's shoot and five more), 15 pairs, largest pair 0, every pair 0, and both checks' renders 0 against the committed file: eight renders, 0 until a render differs (G10); smallest wrong share 0.182080 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2, RTX 3080 Laptop, loaded"
+      "note": "the flags are candidate 4, a default picked by the bar (Plan 0093 Phase 5d) for the owner to correct; a still of the loop's last frame by G3's flash read (the mean over the changed pixels is over the last frame's at frames 40..92, two renders identical); the loop for the re-shoot was kind loop, still_at 36..96, fps 20, width 800, quality 70, cap_bytes 700000, fallback gif; tolerance: cell share at C 8, L 4; eight renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 28 pairs, largest pair 0, every pair 0, so 0 (G13: 0 until a render differs); smallest wrong share 0.182080 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
     },
     "hall": {
       "kind": "still",
@@ -55,7 +55,7 @@
       "seed": 1,
       "flags": ["--headless", "--settled-start", "--source", "showcase", "--shot", "crystals", "--render", "1920x1080", "--frames", "64"],
       "still_at": 63,
-      "tolerance": 0.002,
+      "tolerance": 0.003,
       "cap_bytes": 300000,
       "shows": "The showcase hall, the lamp off (Rendering)",
       "candidates": [
@@ -63,7 +63,7 @@
         ["--shot", "chasm"],
         ["--shot", "crystals"]
       ],
-      "note": "tolerance: cell share at C 8, L 4; six renders of this entry (Phase 6a's shoot and five more), 15 pairs, largest pair 0.001195, rounded up to one significant figure (a still's rule); smallest wrong share 0.383894 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2, RTX 3080 Laptop, loaded"
+      "note": "tolerance: cell share at C 8, L 4; eight renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 28 pairs, largest pair 0.001195, twice the largest pair (G13), rounded up to one significant figure; smallest wrong share 0.383894 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
     },
     "lamp-cave": {
       "kind": "still",
@@ -86,7 +86,7 @@
         ["--eye", "32,32,32,180,0", "--exposure", "0.5"],
         ["--eye", "32,32,32,180,0", "--exposure", "0.25"]
       ],
-      "note": "tolerance: cell share at C 8, L 4; thirteen renders of this entry (Phase 6a's shoot, five more, the second check's render and six more), 78 pairs, largest pair 0.002345 (two states: twelve renders identical, the second check's render apart, which refuted the first six's 0), states: twice the largest pair (G10), rounded up to one significant figure; smallest wrong share 0.556637 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
+      "note": "tolerance: cell share at C 8, L 4; fourteen renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 91 pairs, largest pair 0.002345, twice the largest pair (G13), rounded up to one significant figure; smallest wrong share 0.556637 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
     },
     "canopy": {
       "kind": "still",
@@ -97,7 +97,7 @@
       "seed": 1,
       "flags": ["--headless", "--settled-start", "--source", "outdoor", "--trees", "forest", "--spawn", "forest", "--time", "15:00", "--eye", "0,640,579,270,30", "--render", "1920x1080", "--frames", "96"],
       "still_at": 95,
-      "tolerance": 0.003,
+      "tolerance": 0.006,
       "cap_bytes": 300000,
       "shows": "The canopy at 15:00 from under the trees (Outdoors)",
       "candidates": [
@@ -108,7 +108,7 @@
         ["--eye", "0,640,579,270,5"],
         ["--eye", "0,640,579,45,60"]
       ],
-      "note": "tolerance: cell share at C 8, L 4; six renders of this entry (Phase 6a's shoot and five more), 15 pairs, largest pair 0.002611, rounded up to one significant figure (a still's rule); smallest wrong share 0.398717 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2, RTX 3080 Laptop, loaded"
+      "note": "tolerance: cell share at C 8, L 4; eight renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 28 pairs, largest pair 0.002611, twice the largest pair (G13), rounded up to one significant figure; smallest wrong share 0.398717 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
     },
     "skylight": {
       "kind": "still",
@@ -119,7 +119,7 @@
       "seed": 1,
       "flags": ["--headless", "--settled-start", "--source", "outdoor", "--spawn", "inside", "--eye", "96,0,535,180,60", "--dig-at", "30", "--render", "1920x1080", "--frames", "91"],
       "still_at": 90,
-      "tolerance": 0.003,
+      "tolerance": 0.006,
       "cap_bytes": 300000,
       "shows": "The skylight dig: the tunnel's roof opened to the sky (Outdoors or the gallery)",
       "candidates": [
@@ -131,7 +131,7 @@
           "still_at": 60
         }
       ],
-      "note": "tolerance: cell share at C 8, L 4; six renders of this entry (Phase 6a's shoot and five more), 15 pairs, largest pair 0.002257, rounded up to one significant figure (a still's rule); smallest wrong share 0.216416 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2, RTX 3080 Laptop, loaded"
+      "note": "tolerance: cell share at C 8, L 4; eight renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 28 pairs, largest pair 0.002743, twice the largest pair (G13), rounded up to one significant figure; smallest wrong share 0.216416 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
     },
     "walkers": {
       "kind": "loop",
@@ -155,8 +155,8 @@
         ["--entities", "1", "--lamp", "off", "--model", "apps/flythrough/assets/entities/spider/spider.rig", "--eye", "190,384,218,0,-65"],
         ["--entities", "1", "--lamp", "off", "--model", "apps/flythrough/assets/entities/spider/spider.rig", "--shot", "crystals", "--eye", "680,300,215,0,-65"]
       ],
-      "unjudged": "twice the largest pair, 0.014828 (largest pair 0.007414 of 15, six renders), is over the ceiling 0.011994, a third of the smallest wrong share 0.035982 (the loop started one frame late); 2026-11-27",
-      "note": "the flags are candidate 6, a default picked by the bar (Plan 0093 Phase 5d) for the owner to correct; no tolerance: cell share at C 8, L 4 over the 61 frames; six renders of this entry (Phase 6a's shoot and five more), 15 pairs, largest pair 0.007414, twice it 0.014828 (a loop's rule) over the ceiling 0.011994; smallest wrong share 0.035982 (the loop started one frame late), the yaw turned 2 degrees 0.526575; unjudged until the set is read again; 2026-11-27, the release binaries of 3c3e82e2, RTX 3080 Laptop, loaded"
+      "unjudged": "twice the largest pair, 0.014828 (largest pair 0.007414 of 28, eight renders), is over the ceiling 0.011994, a third of the smallest wrong share 0.035982 (the loop started one frame late); G13, 2026-11-27",
+      "note": "the flags are candidate 6, a default picked by the bar (Plan 0093 Phase 5d) for the owner to correct; no tolerance: cell share at C 8, L 4 over the 61 frames; eight renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 28 pairs, largest pair 0.007414, twice it 0.014828 (G13) over the ceiling 0.011994; smallest wrong share 0.035982 (the loop started one frame late), the yaw turned 2 degrees 0.526575; unjudged (G2); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
     },
     "spider-walk": {
       "kind": "loop",
@@ -167,10 +167,10 @@
       "source": "clip",
       "seed": 1,
       "flags": ["--clip", "walk"],
-      "tolerance": 0.004,
+      "tolerance": 0.01,
       "cap_bytes": 700000,
       "fallback": "gif",
-      "note": "tolerance: cell share at C 8, L 4 over the 40 frames; six renders of this entry (Phase 6a's shoot and five more), 15 pairs, largest pair 0.001987, twice it rounded up to one significant figure (a loop's rule); smallest wrong share 0.079048 (the loop started one frame late); 2026-11-26, the release binaries of 3c3e82e2, RTX 3080 Laptop, loaded"
+      "note": "tolerance: cell share at C 8, L 4 over the 40 frames; eight renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 28 pairs, largest pair 0.004781, twice the largest pair (G13), rounded up to one significant figure; smallest wrong share 0.079048 (the loop started one frame late); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
     },
     "walker-walk": {
       "kind": "loop",
@@ -184,7 +184,7 @@
       "tolerance": 0.003,
       "cap_bytes": 700000,
       "fallback": "gif",
-      "note": "tolerance: cell share at C 8, L 4 over the 25 frames; eight renders of this entry (Phase 6a's shoot and seven more), 28 pairs, largest pair 0.001137, twice it rounded up to one significant figure (a loop's rule); smallest wrong share 0.038882 (the loop started one frame late); 2026-11-26, the release binaries of 3c3e82e2, RTX 3080 Laptop, loaded"
+      "note": "tolerance: cell share at C 8, L 4 over the 25 frames; ten renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 45 pairs, largest pair 0.001137, twice the largest pair (G13), rounded up to one significant figure; smallest wrong share 0.038882 (the loop started one frame late); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
     },
     "chapel": {
       "kind": "still",
@@ -205,7 +205,7 @@
         ["--eye", "20,32,34,0,0", "--lamp", "off"],
         ["--eye", "32,32,32,0,15", "--lamp", "off"]
       ],
-      "note": "tolerance: cell share at C 8, L 4; six renders of this entry (Phase 6a's shoot and five more), 15 pairs, largest pair 0, every pair 0, and both checks' renders 0 against the committed file: eight renders, 0 until a render differs (G10); smallest wrong share 0.277434 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2, RTX 3080 Laptop, loaded"
+      "note": "tolerance: cell share at C 8, L 4; eight renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 28 pairs, largest pair 0, every pair 0, so 0 (G13: 0 until a render differs); smallest wrong share 0.277434 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
     },
     "castle": {
       "kind": "still",
@@ -216,7 +216,7 @@
       "seed": 1,
       "flags": ["--headless", "--settled-start", "--castle-shot", "nave", "--render", "1920x1080", "--frames", "64"],
       "still_at": 63,
-      "tolerance": 0.002,
+      "tolerance": 0.003,
       "cap_bytes": 300000,
       "shows": "The castle's nave under its vault (Audio)",
       "candidates": [
@@ -227,7 +227,7 @@
         ["--castle-shot", "nave", "--sky", "on", "--sun", "20,120", "--lamp", "off"],
         ["--castle-shot", "nave", "--sky", "on", "--sun", "20,120", "--lamp", "on"]
       ],
-      "note": "the flags are candidate 2, the owner's pick, kept by the bar (Plan 0093 Phase 5d): no sunlit candidate has sun on the nave; tolerance: cell share at C 8, L 4; six renders of this entry (Phase 6a's shoot and five more), 15 pairs, largest pair 0.001018, rounded up to one significant figure (a still's rule); smallest wrong share 0.515398 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2, RTX 3080 Laptop, loaded"
+      "note": "the flags are candidate 2, the owner's pick, kept by the bar (Plan 0093 Phase 5d): no sunlit candidate has sun on the nave; tolerance: cell share at C 8, L 4; eight renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 28 pairs, largest pair 0.001062, twice the largest pair (G13), rounded up to one significant figure; smallest wrong share 0.515398 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
     },
     "hud": {
       "kind": "still",
@@ -238,14 +238,14 @@
       "seed": 1,
       "flags": ["--headless", "--settled-start", "--source", "showcase", "--hud", "--shot", "crystals", "--render", "1920x1080", "--frames", "64"],
       "still_at": 63,
-      "tolerance": 0.02,
+      "tolerance": 0.03,
       "cap_bytes": 300000,
       "shows": "The stats overlay with its pass list over the hall (Tooling)",
       "candidates": [
         ["--shot", "hall"],
         ["--shot", "crystals"]
       ],
-      "note": "tolerance: cell share at C 8, L 4; six renders of this entry (Phase 6a's shoot and five more), 15 pairs, largest pair 0.011460, rounded up to one significant figure (a still's rule); smallest wrong share 0.358805 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2, RTX 3080 Laptop, loaded"
+      "note": "tolerance: cell share at C 8, L 4; eight renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 28 pairs, largest pair 0.012743, twice the largest pair (G13), rounded up to one significant figure; smallest wrong share 0.358805 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
     }
   },
   "frozen": {
