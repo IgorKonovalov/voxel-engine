@@ -889,10 +889,12 @@ mod dig_line {
         /// frame before the next group's dig); the ring's at 4 levels in every frame from
         /// the first dig; the dots against the settled frame's; the ring's and the frame's
         /// shift before the first landing; the largest step away from a group's settled mean
-        /// after its landing; and the histogram's text.
+        /// after its landing; the hole's worst white shares (%) over 8 and over 16 levels from
+        /// each dig's frame to its landing plus [`DIG_FADE`]; and the histogram's text.
         pub(crate) struct Claims {
             pub land: Vec<Option<usize>>,
             pub before: [f64; 2],
+            pub white: [f64; 2],
             pub after: [f64; 2],
             pub ring: [f64; 2],
             pub dots: [f64; 2],
@@ -1122,6 +1124,7 @@ mod dig_line {
             let land: Vec<Option<usize>> = land.iter().zip(&run.digs).map(|(l, d)| l.map(|l| l - d.0)).collect();
             Some(Claims {
                 before: [worst(at(32), &is_early, |f| f.white_hole), worst(at(32), &is_early, |f| f.black_hole)],
+                white: [worst(at(8), &is_early, |f| f.white_hole), worst(at(16), &is_early, |f| f.white_hole)],
                 after: [worst(f4, &is_late, |f| f.white_hole), worst(f4, &is_late, |f| f.black_hole)],
                 ring: [worst(f4, &from_first, |f| f.white_ring), worst(f4, &from_first, |f| f.black_ring)],
                 dots: [worst(f4, &from_first, |f| f.dots), f4[last].dots],

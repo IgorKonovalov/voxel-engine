@@ -1,11 +1,11 @@
 //! The queue's digs: the boxes to rebake, their opening, and the fades they start.
 
 use super::*;
-use crate::bake::held::{HeldPart, Opaque, apply_held, held_visibilities};
+use crate::bake::held::{HeldCell, HeldPart, Opaque, apply_held_cells, held_cells};
 use crate::bake::job_loop::JobCtx;
 
-/// A chunk's held visibilities ([`held_visibilities`]): by touched brick, a value a cell.
-type Held = Vec<(u16, Vec<Option<[f32; 6]>>)>;
+/// A chunk's held cells ([`held_cells`]): by touched brick, a value a cell.
+type Held = Vec<(u16, Vec<HeldCell>)>;
 
 impl BakeQueue {
     /// Reads the edit boxes since the last step into the waiting digs, against the store as the
@@ -19,7 +19,7 @@ impl BakeQueue {
     /// ([`provisional_block`]): its kept bricks' records, and a brick the edit opened its
     /// neighbours' mean, so no dug face reads no value while its job waits; the job then fades
     /// from it. Under [`BakeQueue::dig_store_hold`] each touched brick's cells hold the held
-    /// visibilities instead ([`held_visibilities`]: the removed surface's times a near openness
+    /// visibilities instead ([`held_cells`]: the removed surface's times a near openness
     /// read against the world, under [`BakeQueue::dig_estimate`]), which the light pass reads
     /// as a record. A chunk the box touched that held no block is a whole dig; under
     /// [`BakeQueue::holds_whole`] it takes a provisional block and held records too, placed new,
@@ -126,7 +126,7 @@ impl BakeQueue {
                 continue;
             }
             let mut block = provisional_block(store, c, &faces, record, &near);
-            apply_held(&mut block, &held, record);
+            apply_held_cells(&mut block, &held, record);
             let len = block.len() as u64;
             // The old place is freed only once the new one is held: a refused place leaves the
             // old block where the chunk table points, and its dig waits in `digs`.
@@ -184,7 +184,7 @@ impl BakeQueue {
 
     /// The dug chunks' listings, across threads (a `B` press touches tens of chunks, listed as
     /// the pre-roll's are), each with its touched bricks' held visibilities under
-    /// [`BakeQueue::dig_store_hold`] ([`held_visibilities`], made against the world from the
+    /// [`BakeQueue::dig_store_hold`] ([`held_cells`], made against the world from the
     /// blocks as the edit found them, `words`), else none, and the call's time in ns (a reading,
     /// [`QueueStats::held_ns`]; 0 for none).
     fn list_dug(
@@ -221,7 +221,7 @@ impl BakeQueue {
                                         estimate,
                                     );
                                     let t = stopwatch();
-                                    let held = held_visibilities(
+                                    let held = held_cells(
                                         &mut solid,
                                         words,
                                         boxes,

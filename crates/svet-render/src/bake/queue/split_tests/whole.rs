@@ -473,3 +473,161 @@ fn a_whole_dig_moves_no_face_it_did_not_make() {
         "failed clauses {failed:?} (printed above)"
     );
 }
+
+/// Each touched brick's directions with a face, for the box `lo..=hi` (inclusive voxel bounds)
+/// dilated by one voxel: (slot, direction, kept faces, dig faces), from `faces`' keys.
+fn touched_directions(
+    faces: &ChunkFaces,
+    lo: [i32; 3],
+    hi: [i32; 3],
+) -> Vec<(usize, usize, usize, usize)> {
+    let inside = |g: [i32; 3]| (0..3).all(|k| (lo[k] - 1..=hi[k] + 1).contains(&g[k]));
+    let mut rows = Vec::new();
+    for (slot, keys) in &faces.bricks {
+        let b = brick_of_slot(usize::from(*slot));
+        if !(0..3).all(|k| b[k] * 8 + 7 >= lo[k] - 1 && b[k] * 8 <= hi[k] + 1) {
+            continue;
+        }
+        for f in 0..6 {
+            let (mut kept, mut dug) = (0, 0);
+            for &key in keys.iter().filter(|&&k| usize::from(k & 7) == f) {
+                let v = i32::from(key >> 3);
+                let g = [b[0] * 8 + v % 8, b[1] * 8 + (v / 8) % 8, b[2] * 8 + v / 64];
+                if inside(g) {
+                    dug += 1;
+                } else {
+                    kept += 1;
+                }
+            }
+            if kept + dug > 0 {
+                rows.push((usize::from(*slot), f, kept, dug));
+            }
+        }
+    }
+    rows
+}
+
+/// Plan 0105 Phase 7b3 (F4): under `Depth` a dig's face whose direction its cell shares with a
+/// face the dig kept holds its value for the dig's faces alone ([`record_dig_visibility`], what
+/// a dig's face inside a held box reads), and the record reads as before for every other read.
+/// (1) The whole dig of [`a_whole_dig_moves_no_face_it_did_not_make`] (ground the queue never
+/// baked: no base): each of the directions with a kept face reads [`record_visibility`] `None`
+/// and [`record_dig_visibility`] `Some(0.0)` (the held value with no base); each direction all
+/// the dig's reads one value through both. (2) A chunk with a block whose listed records hold a
+/// sky value in every direction but up ([`VIS_BAKED`], no key words), but those of the strip
+/// x < 16 (beyond the box's reach), which hold up 0.6, so the summary's up is 0.6; the same box: under `Depth` the touched directions with a kept face that read no sky value
+/// read a dig value over 0 and at most the summary's; under `Surface` no record of the block
+/// reads a dig value where [`record_visibility`] reads none (no record holds the mark).
+#[test]
+fn a_dig_face_beside_unrecorded_ground_holds_its_value() {
+    const BOX: ([i32; 3], [i32; 3]) = ([24, 24, 4], [40, 40, 8]);
+    // (1) the whole dig.
+    let mut rig = ground_rig(true);
+    let [lo, hi] = carve_box(&mut rig, BOX.0, BOX.1);
+    rig.step();
+    let classes = rig.queue.classes(rig.world.materials());
+    let faces = rig.queue.list(&rig.world, ChunkCoord(GROUND), &classes).0;
+    let held = rig
+        .store
+        .block_words(ChunkCoord(GROUND))
+        .expect("depth: GROUND holds a block at the edit")
+        .to_vec();
+    let rows = touched_directions(&faces, lo, hi);
+    let read = |block: &[u32], slot: usize, f: usize| {
+        let r = brick_record(block, slot).expect("a touched brick's record");
+        (record_visibility(r, f), record_dig_visibility(r, f))
+    };
+    let mixed: Vec<_> = rows
+        .iter()
+        .filter(|r| r.2 > 0 && r.3 > 0)
+        .map(|r| (r.0, r.1, read(&held, r.0, r.1)))
+        .collect();
+    let all_dug: Vec<_> = rows
+        .iter()
+        .filter(|r| r.2 == 0)
+        .map(|r| (r.0, r.1, read(&held, r.0, r.1)))
+        .collect();
+    let unmarked: Vec<_> = mixed.iter().filter(|m| m.2 != (None, Some(0.0))).collect();
+    let apart: Vec<_> = all_dug.iter().filter(|m| m.2.0 != m.2.1).collect();
+
+    // (2) a chunk with a block, its records' up and key words cleared, its summary's up 0.6.
+    let base = 0.6f32;
+    let prepared = |estimate: DigEstimate| {
+        let mut rig = ground_rig(false);
+        rig.settings.dig_estimate = estimate;
+        let block = rig.store.words.get_mut(&GROUND).expect("GROUND's block");
+        for slot in 0..CHUNK_BRICKS {
+            let d = block[slot];
+            if d == 0 {
+                continue;
+            }
+            let run = (d >> 11) as usize;
+            let r = &mut block[run - BRICK_WORDS..run];
+            // The bricks of the strip x < 16, which the box's reach does not touch, keep up:
+            // the chunk's summary, made from its records, holds their up.
+            let keep = brick_of_slot(slot)[0] < 2;
+            let mask: u32 = if keep { 0x3F } else { 0x1F };
+            r[6] = (r[6] & 0xFFFF) | mask << 16;
+            r[VIS_WORD..VIS_WORD + 2]
+                .copy_from_slice(&visibility_words([0.5, 0.5, 0.5, 0.5, 0.5, base]));
+            r[KEY_WORD] = 0;
+            r[KEY_WORD + 1] = 0;
+        }
+        let [lo, hi] = carve_box(&mut rig, BOX.0, BOX.1);
+        rig.step();
+        let faces = rig.queue.list(&rig.world, ChunkCoord(GROUND), &classes).0;
+        let block = rig
+            .store
+            .block_words(ChunkCoord(GROUND))
+            .expect("GROUND's block")
+            .to_vec();
+        (block, touched_directions(&faces, lo, hi))
+    };
+    let (block, rows) = prepared(DigEstimate::Depth);
+    let based: Vec<_> = rows
+        .iter()
+        .filter(|r| r.2 > 0 && r.3 > 0)
+        .map(|r| (r.0, r.1, read(&block, r.0, r.1)))
+        .filter(|m| m.2.0.is_none())
+        .collect();
+    let off_base: Vec<_> = based
+        .iter()
+        .filter(|m| !m.2.1.is_some_and(|v| v > 0.0 && v <= base))
+        .collect();
+    let (block, _) = prepared(DigEstimate::Surface);
+    let mut surface_marked = Vec::new();
+    for slot in 0..CHUNK_BRICKS {
+        if let Some(r) = brick_record(&block, slot) {
+            for f in 0..6 {
+                if record_dig_visibility(r, f) != record_visibility(r, f) {
+                    surface_marked.push((slot, f));
+                }
+            }
+        }
+    }
+
+    eprintln!(
+        "(1) {} directions with a kept face and dig faces, {} all the dig's; not (None, Some(0)): {unmarked:?}; the two reads apart: {apart:?}",
+        mixed.len(),
+        all_dug.len()
+    );
+    eprintln!(
+        "(2) depth: {} kept-face directions reading no sky value: {based:?}",
+        based.len()
+    );
+    eprintln!("(2) surface: directions with a dig value: {surface_marked:?}");
+    let failed: Vec<u8> = [
+        (1, !mixed.is_empty() && unmarked.is_empty()),
+        (2, !all_dug.is_empty() && apart.is_empty()),
+        (3, !based.is_empty() && off_base.is_empty()),
+        (4, surface_marked.is_empty()),
+    ]
+    .into_iter()
+    .filter(|&(_, ok)| !ok)
+    .map(|(n, _)| n)
+    .collect();
+    assert!(
+        failed.is_empty(),
+        "failed clauses {failed:?} (printed above)"
+    );
+}

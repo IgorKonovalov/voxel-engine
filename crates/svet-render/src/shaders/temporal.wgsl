@@ -737,7 +737,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     var direct = textureLoad(direct_in, px, 0);
     // This frame's sky visibility sample, where the light pass cast the sky rays.
     let vis = textureLoad(vis_in, px, 0);
-    let sky_cast = vis.a > 0.5;
+    var sky_cast = vis.a > 0.5;
     // The pair where no ray was cast: the baked visibility at age `sky_history`, or none.
     var seed = vec4<f32>(0.0);
     // A reset pair's seed where the ray was cast (`pair_step`): the face's record visibility,
@@ -827,7 +827,17 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
         // missing-light chain's, coloured by the sky now. An entity keeps its sky rays.
         var sky_term = vec3<f32>(0.0);
         if (!on_entity && sky_on()) {
-            let rv = store_sky_visibility(head, store_voxel(rec.p, nf), face);
+            var rv = store_sky_visibility(head, store_voxel(rec.p, nf), face);
+            // A dig's face whose direction its cell shares with a face the dig kept: the held
+            // dig value kept beside the record (`store_dig_held`), shown as a record's with no
+            // ray. The light pass, which holds no edit boxes, casts its sky rays there; this
+            // pass does not show them.
+            if (rv.y == 0.0) {
+                rv = store_dig_held(head, store_voxel(rec.p, nf), face);
+                if (rv.y > 0.0) {
+                    sky_cast = false;
+                }
+            }
             rec_voxel = store_voxel(rec.p, nf);
             rec_dir = face;
             rec_nf = nf;

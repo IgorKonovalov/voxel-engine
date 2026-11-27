@@ -18,7 +18,7 @@
 //! chunk's top for the summary; a base from the cell's own record keeps the near rays alone);
 //! the value is the base times [`depth_form`] of that share, and each of the cell's six values
 //! under one byte of the record is written as 0 ([`written`]); a face the dig did not make reads
-//! after the edit what it read before ([`held_visibilities`]).
+//! after the edit what it read before ([`held_cells`]).
 
 use std::collections::HashMap;
 
@@ -376,6 +376,91 @@ fn radiance_source(own: Option<&[u32]>, f: usize) -> (RadianceFrom, Option<f32>)
     (RadianceFrom::Filled, mean)
 }
 
+/// A cell's place and base for [`HeldAt::estimate`]: chunk `c`, the brick's global brick `gb`,
+/// the cell's global cell `g` (cells of `cell` voxels), the estimate, its floor and the base (the
+/// removed surface's up visibility and where it came from; `None` for none).
+struct HeldAt {
+    c: [i32; 3],
+    gb: [i32; 3],
+    g: [i32; 3],
+    cell: u32,
+    estimate: DigEstimate,
+    floor: f32,
+    up: Option<(f32, HeldBase)>,
+}
+
+impl HeldAt {
+    /// The dig's faces' (`new`, voxels in the brick) estimate of direction `f` with its parts
+    /// (value, openness, reach, base, its source), where the cell has a base: the base (capped
+    /// by `own_f`, the cell's old record's value) times the openness's form.
+    fn estimate(
+        &self,
+        solid: &mut Opaque<'_>,
+        new: &[[i32; 3]],
+        f: usize,
+        own_f: Option<f32>,
+    ) -> Option<(f32, f32, f32, f32, HeldBase)> {
+        let (up, from) = self.up?;
+        let n = face_normal(f).map(|x| x as i32);
+        let picks = new.len().min(HELD_FACES);
+        let capped = own_f.is_some_and(|o| o < up);
+        let base = own_f.map_or(up, |o| o.min(up));
+        // Under `Depth` a far ray rises to the height the base was read at: the top of the
+        // record's cell above, the chunk's top for the summary; a base from the cell's own
+        // record keeps the near rays alone.
+        let top = match (self.estimate, from) {
+            (DigEstimate::Surface, _) | (_, HeldBase::Above(0)) => None,
+            _ if capped => None,
+            (_, HeldBase::Above(k)) => Some((self.g[2] + k + 1) * self.cell as i32),
+            (_, HeldBase::Summary) => Some((self.c[2] + 1) * 64),
+        };
+        let [open, reach] = (0..picks)
+            .map(|i| {
+                let lv = new[i * new.len() / picks];
+                let o = [0, 1, 2].map(|k| self.gb[k] * 8 + lv[k] + n[k]);
+                openness(solid, o, f, top)
+            })
+            .fold([0.0; 2], |s, x| [s[0] + x[0], s[1] + x[1]])
+            .map(|s| s / picks as f32);
+        let value = match self.estimate {
+            DigEstimate::Surface => (base * open.sqrt()).max(self.floor),
+            DigEstimate::Depth => base * depth_form(reach),
+        };
+        Some((value, open, reach, up, from))
+    }
+}
+
+/// [`held_cells`]' held visibilities alone (`None`: no held record).
+#[cfg(test)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the edit's inputs and a reading's trace"
+)]
+pub(crate) fn held_visibilities(
+    solid: &mut Opaque<'_>,
+    words: &BTreeMap<[i32; 3], Vec<u32>>,
+    boxes: &[[[i32; 3]; 2]],
+    c: [i32; 3],
+    faces: &ChunkFaces,
+    touched: &[u16],
+    cell: u32,
+    estimate: DigEstimate,
+    trace: Option<&mut Vec<HeldPart>>,
+) -> Vec<(u16, Vec<Option<[f32; 6]>>)> {
+    held_cells(
+        solid, words, boxes, c, faces, touched, cell, estimate, trace,
+    )
+    .into_iter()
+    .map(|(slot, cells)| (slot, cells.into_iter().map(|h| h.0).collect()))
+    .collect()
+}
+
+/// A cell of [`held_cells`]: its held visibilities (`None`: no held record) and, under
+/// [`DigEstimate::Depth`], the held value of the dig's faces of each direction that takes no
+/// held value because a kept face shares it (NaN where none): the base times [`depth_form`],
+/// 0 with no base, as an all-dig direction's ([`apply_held_cells`] keeps it beside the record).
+pub(crate) type HeldCell = (Option<[f32; 6]>, [f32; 6]);
+
 /// The held visibilities of chunk `c`'s bricks `touched` that `faces` lists, a `[f32; 6]` a
 /// cell in cell order, from the store's blocks as the edit found them (`words`), the edit
 /// boxes and the opacity about them: a direction's value is the mean over the cell's faces of
@@ -390,14 +475,18 @@ fn radiance_source(own: Option<&[u32]>, f: usize) -> (RadianceFrom, Option<f32>)
 /// dilated box is kept whether or not the cell's record holds its direction; a cell with no
 /// base holds 0 at the dig's faces and its kept faces' values beside them; a direction with a
 /// kept face its old record holds no sky value for takes no held value (NaN, left out of the
-/// mask by [`apply_held`]); a cell with no held direction, or whose old record held such a
+/// mask by [`apply_held_cells`]); a cell with no held direction, or whose old record held such a
 /// direction's stored value, is `None` (it keeps its provisional record). Each dig direction's
 /// parts of a cell with a base are pushed to `trace` where given (a reading).
+///
+/// With each cell, under [`DigEstimate::Depth`], the held value of the dig's faces of each
+/// direction that takes no held value ([`HeldCell`]); a cell whose old record held such a
+/// direction's stored value keeps none (its key words are not free).
 #[allow(
     clippy::too_many_arguments,
     reason = "the edit's inputs and a reading's trace"
 )]
-pub(crate) fn held_visibilities(
+pub(crate) fn held_cells(
     solid: &mut Opaque<'_>,
     words: &BTreeMap<[i32; 3], Vec<u32>>,
     boxes: &[[[i32; 3]; 2]],
@@ -407,7 +496,7 @@ pub(crate) fn held_visibilities(
     cell: u32,
     estimate: DigEstimate,
     mut trace: Option<&mut Vec<HeldPart>>,
-) -> Vec<(u16, Vec<Option<[f32; 6]>>)> {
+) -> Vec<(u16, Vec<HeldCell>)> {
     let floor = match estimate {
         DigEstimate::Surface => HELD_FLOOR,
         DigEstimate::Depth => 0.0,
@@ -440,7 +529,7 @@ pub(crate) fn held_visibilities(
             // walk's reach): no record under `Surface`; under `Depth` the dig's faces hold 0,
             // which errs dark, and the kept faces are read as any cell's.
             if up.is_none() && estimate == DigEstimate::Surface {
-                cells.push(None);
+                cells.push((None, [f32::NAN; 6]));
                 continue;
             }
             let own = cell_record(words, g, cell, record);
@@ -466,12 +555,22 @@ pub(crate) fn held_visibilities(
             // takes no held record at all.
             let mut faced = 0u32;
             let mut unheld = false;
+            // Under `Depth`, the dig's faces' value of a direction that takes no held value.
+            let mut dig = [f32::NAN; 6];
+            let at = HeldAt {
+                c,
+                gb,
+                g,
+                cell,
+                estimate,
+                floor,
+                up,
+            };
             for f in 0..6 {
                 let list = &by_dir[f];
                 if list.is_empty() {
                     continue;
                 }
-                let n = face_normal(f).map(|x| x as i32);
                 let own_f = own.and_then(|r| any_visibility(r, f));
                 // A face outside every box dilated by one voxel held its record's value and
                 // only gained sky by the dig; the rest are the dig's faces. Under `Surface` a
@@ -487,6 +586,11 @@ pub(crate) fn held_visibilities(
                         // Its mask bit goes with it, and the direction's stored value: where
                         // the old record held that value, the cell takes no held record.
                         unheld |= own.is_some_and(|r| (r[6] >> (16 + f)) & 1 != 0);
+                        // Its dig faces' value is kept beside the record, read by them alone.
+                        if !new.is_empty() {
+                            let v = at.estimate(solid, &new, f, None).map_or(0.0, |e| e.0);
+                            dig[f] = written(v, estimate);
+                        }
                         continue;
                     }
                 }
@@ -499,31 +603,9 @@ pub(crate) fn held_visibilities(
                 let mut parts = None;
                 // Under `Depth` a cell with no base holds 0 at the dig's faces (`sum` gains
                 // nothing), after the split: its kept faces keep their records' values.
-                if let (false, Some((up, from))) = (new.is_empty(), up) {
-                    let picks = new.len().min(HELD_FACES);
-                    let capped = own_f.is_some_and(|o| o < up);
-                    let base = own_f.map_or(up, |o| o.min(up));
-                    // Under `Depth` a far ray rises to the height the base was read at: the top
-                    // of the record's cell above, the chunk's top for the summary; a base from
-                    // the cell's own record keeps the near rays alone.
-                    let top = match (estimate, from) {
-                        (DigEstimate::Surface, _) | (_, HeldBase::Above(0)) => None,
-                        _ if capped => None,
-                        (_, HeldBase::Above(k)) => Some((g[2] + k + 1) * cell as i32),
-                        (_, HeldBase::Summary) => Some((c[2] + 1) * 64),
-                    };
-                    let [open, reach] = (0..picks)
-                        .map(|i| {
-                            let lv = new[i * new.len() / picks];
-                            let o = [0, 1, 2].map(|k| gb[k] * 8 + lv[k] + n[k]);
-                            openness(solid, o, f, top)
-                        })
-                        .fold([0.0; 2], |s, x| [s[0] + x[0], s[1] + x[1]])
-                        .map(|s| s / picks as f32);
-                    let value = match estimate {
-                        DigEstimate::Surface => (base * open.sqrt()).max(floor),
-                        DigEstimate::Depth => base * depth_form(reach),
-                    };
+                if let (false, Some((value, open, reach, up, from))) =
+                    (new.is_empty(), at.estimate(solid, &new, f, own_f))
+                {
                     sum += new.len() as f32 * value;
                     parts = Some((value, open, reach, new.len(), old.len(), up, from));
                 }
@@ -559,20 +641,20 @@ pub(crate) fn held_visibilities(
             // record held a dropped direction's stored value, takes no held record.
             let held: Vec<f32> = vis.iter().copied().filter(|v| !v.is_nan()).collect();
             if estimate == DigEstimate::Depth && (held.is_empty() || unheld) {
-                cells.push(None);
+                cells.push((None, if unheld { [f32::NAN; 6] } else { dig }));
                 continue;
             }
             let fill = match (held.is_empty(), up) {
                 (true, Some((up, _))) => up.max(floor),
                 _ => held.iter().sum::<f32>() / held.len() as f32,
             };
-            cells.push(Some(std::array::from_fn(|f| {
-                match (vis[f].is_nan(), faced & 1 << f != 0) {
+            let vis: [f32; 6] =
+                std::array::from_fn(|f| match (vis[f].is_nan(), faced & 1 << f != 0) {
                     (false, _) => written(vis[f], estimate),
                     (true, false) => written(fill, estimate),
                     (true, true) => f32::NAN,
-                }
-            })));
+                });
+            cells.push((Some(vis), dig));
         }
         out.push((*slot, cells));
     }
@@ -586,7 +668,33 @@ pub(crate) fn held_visibilities(
 /// of the mask, which takes its stored value out too (the light pass's `store_cell` and
 /// `store_sky_cell` and shade's `sky_baked` read the one mask): its faces read the cell as
 /// they read no record of that direction.
+#[cfg(test)]
 pub(crate) fn apply_held(block: &mut [u32], held: &[(u16, Vec<Option<[f32; 6]>>)], record: usize) {
+    each_cell(block, held, record, |r, v| {
+        if let Some(v) = v {
+            write_held(r, v);
+        }
+    });
+}
+
+/// `apply_held` over [`held_cells`]' cells, then each cell's dig-only values ([`HeldCell`])
+/// kept beside its record ([`mark_dig_held`]).
+pub(crate) fn apply_held_cells(block: &mut [u32], held: &[(u16, Vec<HeldCell>)], record: usize) {
+    each_cell(block, held, record, |r, (v, dig)| {
+        if let Some(v) = v {
+            write_held(r, v);
+        }
+        mark_dig_held(r, dig);
+    });
+}
+
+/// `f` over each listed cell's record in `block` of `held`'s bricks with its entry.
+fn each_cell<T>(
+    block: &mut [u32],
+    held: &[(u16, Vec<T>)],
+    record: usize,
+    mut f: impl FnMut(&mut [u32], &T),
+) {
     for (slot, cells) in held {
         let dir = block[usize::from(*slot)];
         if dir == 0 {
@@ -594,21 +702,44 @@ pub(crate) fn apply_held(block: &mut [u32], held: &[(u16, Vec<Option<[f32; 6]>>)
         }
         let run = (dir >> 11) as usize;
         for (i, v) in cells.iter().enumerate() {
-            let Some(v) = v else {
-                continue;
-            };
-            let mask = (0..6)
-                .filter(|&f| !v[f].is_nan())
-                .fold(0u32, |m, f| m | 1 << f);
             let at = run - record + BRICK_WORDS * i;
-            let r = &mut block[at..at + BRICK_WORDS];
-            r[VIS_WORD..VIS_WORD + 2].copy_from_slice(&visibility_words(
-                v.map(|x| if x.is_nan() { 0.0 } else { x }),
-            ));
-            r[KEY_WORD] = 0;
-            r[KEY_WORD + 1] = 0;
-            r[6] = (r[6] & 0xFFFF) | mask << 16;
+            f(&mut block[at..at + BRICK_WORDS], v);
         }
+    }
+}
+
+/// Cell record `r` holding the held visibilities `v` (`apply_held`).
+fn write_held(r: &mut [u32], v: &[f32; 6]) {
+    let mask = (0..6)
+        .filter(|&f| !v[f].is_nan())
+        .fold(0u32, |m, f| m | 1 << f);
+    r[VIS_WORD..VIS_WORD + 2].copy_from_slice(&visibility_words(
+        v.map(|x| if x.is_nan() { 0.0 } else { x }),
+    ));
+    r[KEY_WORD] = 0;
+    r[KEY_WORD + 1] = 0;
+    r[6] = (r[6] & 0xFFFF) | mask << 16;
+}
+
+/// Keeps the dig-only values `dig` (NaN: none) in cell record `r` (ADR-0082, under
+/// [`DigEstimate::Depth`]): direction `f`'s sky byte holds its value and bit `f` of the first key
+/// word ([`DIG_HELD`]) marks it, where the record reads no sky value for `f`
+/// ([`record_visibility`]: its mask lacks the direction, or it holds no [`VIS_BAKED`]) and its
+/// key words are free ([`KEY_BAKED`] clear: no key reader takes the word). Nothing else of the
+/// record changes, so its kept faces, the other cells' taps, the stored value and the summary
+/// read it as before; a dig's face inside a held box reads it ([`record_dig_visibility`]).
+fn mark_dig_held(r: &mut [u32], dig: &[f32; 6]) {
+    if r[KEY_WORD + 1] & KEY_BAKED != 0 {
+        return;
+    }
+    for (f, &v) in dig.iter().enumerate() {
+        if v.is_nan() || record_visibility(r, f).is_some() {
+            continue;
+        }
+        let (w, at) = (VIS_WORD + f / 4, 8 * (f % 4));
+        let byte = (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+        r[w] = (r[w] & !(255 << at)) | byte << at;
+        r[KEY_WORD] |= 1 << f;
     }
 }
 
