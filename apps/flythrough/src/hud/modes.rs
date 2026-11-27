@@ -268,6 +268,15 @@ pub fn mirror_pack_row(p: svet_render::Packing) -> String {
     format!("mirror pack {}", p.name())
 }
 
+/// The streamed mirror's sync budget in the start-up banner (`--sync-ms`):
+/// `mirror sync 6 ms a frame`, or `mirror sync unbudgeted` under `--sync-ms 0`.
+pub fn mirror_sync_row(t: Option<std::time::Duration>) -> String {
+    match t {
+        Some(d) => format!("mirror sync {} ms a frame", d.as_millis()),
+        None => "mirror sync unbudgeted".to_owned(),
+    }
+}
+
 impl HudRow {
     pub const ALL: [Self; 8] = [
         Self::Look,
@@ -324,7 +333,7 @@ impl Modes {
             look: svet_render::LookParams::default(),
             preset: crate::LookPreset::DEFAULT,
             field_surface: false,
-            mirror_pack: svet_render::Packing::Inline,
+            mirror_pack: svet_render::Packing::default(),
             upscaler: UpscalerBanner::new(UpscalerMode::Off, "1"),
             scale: "1.5",
             pan: None,

@@ -371,11 +371,13 @@ Readings: [`logs/0111.md`](logs/0111.md).
 | 2: the four paths headless, quiet, then loaded | dev | done; unmet as stated: chunks resident at the path's end (no line prints it; the nearest printed counts given); Hold C runs its own 8-worker cave beside `--workers 4` | dc1337b6 |
 | 3: the same paths in the tester's window | human | done 2026-11-27 20:12-20:43; folders `live/owner-notes/2026-11-27-0111-p3/{q-cave,q-showcase,q-castle,q-outdoor,l-cave,l-castle,l-outdoor}` (+ `q-cave-try1`, `q-showcase-try1`, a first attempt before the owner's restart); owner: quiet "nope all good", loaded "a bit" more; deviations: launched as the tester's command lines by the runner, not through `svet-tester`; exit codes not recorded | (no commit) |
 | 4: the window's tables, and the stop lines read | dev | done; stop lines 1 to 5 read, none fires; deviations: `q-showcase` and `q-outdoor` started at load1 2.31 and 2.87, labelled loaded | committed with this row |
-| 5: the architect's amendment | human | not started | |
+| 5: the architect's amendment | human | done 2026-11-27 (the amendments of that date: Phase 5, the owner's answers, 6a's bars, 6a''s reading) | (docs) |
 | 6: the remedies (not written) | dev | not written | |
 | 6a: the shadow's notes across a window move are a delta | dev | code and test landed; bars missed: quiet `build` max (10.540, 10.871 against under 8) and `build`-led slow frames (11, 9 against 0); `build` p99 bars met; at the architect; deviations in the log | 1795738b (code), fffd2847 (reading) |
 | 6a': the z move's every-column read goes | dev | done; bar missed: quiet F lines' `build` mean (7.118, 6.597 against under 6.0); the other bars met, stop rule not fired; deviations in the log | 0c7d353b (code), 6b2cd2d8 (reading) |
-| 6b: the slab's frame, read in four arms | dev | done (a reading on `0c7d353b`, no code); Hold D (Plan 0107's conditions) run; deviations: D before C, D's `--report` dropped (`over_33ms` from the summary), D's full residency not reached in any run, the copy-led split over the printed lines only | committed with this row |
+| 6b: the slab's frame, read in four arms | dev | done (a reading on `0c7d353b`, no code); Hold D (Plan 0107's conditions) run; deviations: D before C, D's `--report` dropped (`over_33ms` from the summary), D's full residency not reached in any run, the copy-led split over the printed lines only | 6c926800 |
+| 6c: the picks from 6b | human | done 2026-11-28 (the amendment "6c's picks": both defaults flip as one pair; ADR-0089 proposed) | 14f500ea |
+| 6d: the picked defaults, and the identity test the flip owes | dev | code and tests landed (`--sync-ms 6` and `--mirror-pack workers` the defaults, `MirrorConfig::new` packs `Workers`, the banner's `mirror sync` row); the holds pending; deviations in the log | committed with this row |
 | 7: the owner flies the same paths | human | not started | |
 
 ### Notes
