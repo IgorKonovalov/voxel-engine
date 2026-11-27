@@ -186,15 +186,14 @@ pub(crate) const DIG_HELD: u32 = 0x3F;
 
 /// Direction `face`'s sky visibility of record `r` as a dig's face inside a held dig box reads
 /// it (the boxes `Lighting::dig_hold` keeps, dilated by one voxel): [`record_visibility`], else
-/// the dig's held value where [`DIG_HELD`] marks the direction (with [`KEY_BAKED`] clear) and the
-/// record is not [`SKY_STALE`]; `None` for neither.
+/// the dig's held value where [`DIG_HELD`] marks the direction (with [`KEY_BAKED`] clear), also in
+/// a record a later dig's ring marks [`SKY_STALE`]; `None` for neither.
 pub fn record_dig_visibility(r: &[u32], face: usize) -> Option<f32> {
     if let Some(v) = record_visibility(r, face) {
         return Some(v);
     }
     let marked = r[KEY_WORD + 1] & KEY_BAKED == 0 && (r[KEY_WORD] & DIG_HELD) >> face & 1 != 0;
-    (marked && !record_sky_stale(r))
-        .then(|| ((r[VIS_WORD + face / 4] >> (8 * (face % 4))) & 255) as f32 / 255.0)
+    marked.then(|| ((r[VIS_WORD + face / 4] >> (8 * (face % 4))) & 255) as f32 / 255.0)
 }
 
 /// Whether record `r`'s visibilities are marked [`SKY_STALE`] (a dig's ring before its

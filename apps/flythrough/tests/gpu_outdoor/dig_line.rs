@@ -890,9 +890,13 @@ mod dig_line {
         /// the first dig; the dots against the settled frame's; the ring's and the frame's
         /// shift before the first landing; the largest step away from a group's settled mean
         /// after its landing; the hole's worst white shares (%) over 8 and over 16 levels from
-        /// each dig's frame to its landing plus [`DIG_FADE`]; and the histogram's text.
+        /// each dig's frame to its landing plus [`DIG_FADE`]; each dig's ring's black share at 4
+        /// levels at its own frame and the next (D+0, D+1); the label of the frame whose ring
+        /// share at 4 levels (white or black) is the run's worst; and the histogram's text.
         pub(crate) struct Claims {
             pub land: Vec<Option<usize>>,
+            pub ring_at: Vec<[f64; 2]>,
+            pub ring_worst: String,
             pub before: [f64; 2],
             pub white: [f64; 2],
             pub after: [f64; 2],
@@ -901,6 +905,47 @@ mod dig_line {
             pub shift: f64,
             pub away: f64,
             pub text: String,
+        }
+
+        /// `flicker::a_fresh_hole_holds_its_value_until_its_light_lands`' bars: each dig's ring
+        /// black share at 4 levels at D+0 and D+1 (%), A then B. B's dig 5 is Plan 0105 Phase
+        /// 7a4a's group (Phase 7b3's reading 0.46 / 0.43 %); every other dig its reading rounded
+        /// up to 0.05 plus 0.05 (Phase 7b3b's, after its fix).
+        const RING_AT: [&[[f64; 2]]; 2] = [
+            // A, read 0.00 / 0.01, 0.00 / 0.02, 0.02 / 0.00.
+            &[[0.05, 0.10], [0.05, 0.10], [0.10, 0.05]],
+            // B, read 0.00 / 0.00, 0.04 / 0.04, 0.02 / 0.01, 0.17 / 0.08, 0.46 / 0.43, 0.00 / 0.00.
+            &[[0.05, 0.05], [0.10, 0.10], [0.10, 0.10], [0.25, 0.15], [0.55, 0.50], [0.05, 0.05]],
+        ];
+        /// The ring's worst frame at 4 levels (%), A and B (Phase 7b3's reading 0.03 and 1.21 %).
+        const RING_WORST: [f64; 2] = [0.10, 1.35];
+        /// The hole's black share over 32 levels before its light lands (%), A and B (Phase
+        /// 7b3's reading 0.00 and 1.37 %).
+        const BLACK_32: [f64; 2] = [0.10, 1.55];
+
+        /// Plan 0105 Phase 7b3b's bars on `c`, the claims of sequence `seq` (`A` or `B`), each a
+        /// reading of the soak test on lavapipe (Phase 7b3's, or 7b3b's after its fix where that
+        /// is lower): each dig's ring at D+0 and D+1 under [`RING_AT`], the ring's worst frame
+        /// under [`RING_WORST`], the hole's black over 32 levels before the landing under
+        /// [`BLACK_32`]. Prints each dig's ring and the worst frame's label; returns every miss.
+        pub(crate) fn bar_misses(seq: &str, c: &Claims) -> Vec<String> {
+            let mut misses = Vec::new();
+            let mut bar = |what: String, v: f64, b: f64| {
+                if v > b {
+                    misses.push(format!("{what}: {v:.2} % against {b:.2} %"));
+                }
+            };
+            let s = usize::from(seq == "B");
+            for (k, r) in c.ring_at.iter().enumerate() {
+                println!("{seq} dig {}: the ring black over 4 levels at D+0 {:.2} %, D+1 {:.2} %", k + 1, r[0], r[1]);
+                let b = RING_AT[s].get(k).copied().unwrap_or([0.0; 2]);
+                bar(format!("{seq} dig {}: the ring at D+0", k + 1), r[0], b[0]);
+                bar(format!("{seq} dig {}: the ring at D+1", k + 1), r[1], b[1]);
+            }
+            println!("{seq}: the ring's worst frame {}", c.ring_worst);
+            bar(format!("{seq}: the ring's worst frame ({})", c.ring_worst), c.ring[0].max(c.ring[1]), RING_WORST[s]);
+            bar(format!("{seq}: the hole blackens over 32 levels before its light lands"), c.before[1], BLACK_32[s]);
+            misses
         }
 
         /// Each dig's ring-1 landing: the first frame from its own whose queue trace holds no
@@ -1122,7 +1167,14 @@ mod dig_line {
                 }
             }
             let land: Vec<Option<usize>> = land.iter().zip(&run.digs).map(|(l, d)| l.map(|l| l - d.0)).collect();
+            let black_at = |i: usize| f4.get(i).map_or(f64::NAN, |f| f.black_ring);
+            let ring_at = run.digs.iter().map(|d| [black_at(d.0), black_at(d.0 + 1)]).collect();
+            let ring_worst = (first..=last)
+                .max_by(|&a, &b| f4[a].white_ring.max(f4[a].black_ring).total_cmp(&f4[b].white_ring.max(f4[b].black_ring)))
+                .map_or_else(String::new, |i| run.frames[i].label.clone());
             Some(Claims {
+                ring_at,
+                ring_worst,
                 before: [worst(at(32), &is_early, |f| f.white_hole), worst(at(32), &is_early, |f| f.black_hole)],
                 white: [worst(at(8), &is_early, |f| f.white_hole), worst(at(16), &is_early, |f| f.white_hole)],
                 after: [worst(f4, &is_late, |f| f.white_hole), worst(f4, &is_late, |f| f.black_hole)],
@@ -1264,7 +1316,8 @@ mod dig_line {
         /// One group of T3's dark ring pixels: the count, over 32 levels, the sky source words
         /// (before, frame), and in the before frame, the frame and the after frame the means of
         /// the shown sky visibility, the stored stage and the direct stage; the rays cast and the
-        /// pair's age in the frame.
+        /// pair's age in the frame; how many hold a pair's x within 0.01 and a stored value
+        /// within 0.05 of the frame before's (`steady`).
         #[derive(Default)]
         struct Group {
             n: u64,
@@ -1275,6 +1328,7 @@ mod dig_line {
             direct: [f64; 3],
             cast: u64,
             age: f64,
+            steady: u64,
         }
 
         /// T1's rows of one dig.
@@ -1408,18 +1462,22 @@ mod dig_line {
         }
 
         /// Plan 0105 Phase 7a3: what darkens B's ring at dig 5, by the light's own words (a
-        /// reading; nothing asserted). Sequence B alone on the waiting queue, the default arm,
+        /// reading; run by name it asserts Plan 0105 Phase 7b3b's bounds on T3, below). Sequence B alone on the waiting queue, the default arm,
         /// device-wait lockstep, every frame's stages read and the held trace on. Prints T1 (the
         /// edit, digs 5 and 4), T2 (the held trace, digs 4 and 5) and T3 (the ring's dark
         /// pixels at D5+0 and D5+1, the set the bar counts, by their face's voxel's chunk kind
         /// and whether dig 5's box dilated by one voxel touches its brick); written to
-        /// `live/p7a3/whole.txt`.
+        /// `live/p7b3b/whole.txt`. At D5+0 and D5+1 it also prints the lighting pixels with the
+        /// source `record`, the cast flag set and the moments' w under 1.5 (a marked dig face the
+        /// passes after the temporal one count as cast).
         #[test]
         #[ignore = "reading"]
         #[allow(clippy::too_many_lines, reason = "a reading's three tables over one run")]
         fn whole_dig_ring() {
             let mut cpu: BTreeMap<usize, DigCpu> = BTreeMap::new();
             let mut voxels: BTreeMap<usize, Vec<Option<[i32; 3]>>> = BTreeMap::new();
+            // Dig 5's frames' moments' w, by lighting pixel.
+            let mut kinds: BTreeMap<usize, Vec<f32>> = BTreeMap::new();
             let mut tap = |t: Tap<'_>, rig: &mut Rig, s: &mut Stepper| match t {
                 Tap::Start => s.frame.set_bake_queue(|q| q.trace_held = true),
                 Tap::Edit { dig, lo, hi } => {
@@ -1457,6 +1515,8 @@ mod dig_line {
                     }
                     if dig == 4 && k < 2 {
                         voxels.insert(k, frame.hits.iter().map(|h| face_voxel(&rig.world, h)).collect());
+                        let mom = svet_render::debug::read_rgba16f(&rig.device, &rig.queue, s.frame.moments());
+                        kinds.insert(k, mom.iter().map(|m| m[3]).collect());
                     }
                 }
             };
@@ -1491,6 +1551,11 @@ mod dig_line {
             let held: BTreeSet<[i32; 3]> = d5.chunks.iter().filter(|c| d5.before[*c].is_some()).copied().collect();
             const KINDS: [&str; 4] = ["whole chunk", "dug, held a block", "other", "no face voxel"];
             let (dw, dh) = (run.out[0] as usize, run.out[1] as usize);
+            // Plan 0105 Phase 7b3b's bounds at D5+0 and D5+1 (the readings 3 / 5 px and 917 / 863
+            // px, Phase 7b3): the dug chunks with a block at most 20 dark pixels, the whole
+            // chunk at most 1000, none of them shown from a record or the chunk's own summary,
+            // and no marked dig face counted as cast.
+            let mut fails: Vec<String> = Vec::new();
             for k in 0..2 {
                 let fi = run.digs[4].0 + k;
                 let Some(vox) = voxels.get(&k) else {
@@ -1541,6 +1606,11 @@ mod dig_line {
                     }
                     g.cast += u64::from(f.cast[gi]);
                     g.age += f64::from(f.pair[gi][3]);
+                    let fp = &run.frames[fi - 1];
+                    let near = |a: Option<&f32>, b: Option<&f32>, tol: f32| a.zip(b).is_some_and(|(a, b)| (a - b).abs() <= tol);
+                    g.steady += u64::from(
+                        near(f.pair.get(gi).map(|p| &p[0]), fp.pair.get(gi).map(|p| &p[0]), 0.01) && near(f.stored.get(gi), fp.stored.get(gi), 0.05),
+                    );
                 }
                 let _ = writeln!(
                     text,
@@ -1555,6 +1625,15 @@ mod dig_line {
                     fa.exposure,
                     100.0 * (f.exposure / fb.exposure.max(1e-12) - 1.0)
                 );
+                // The marked dig faces still counted as cast by the passes after the temporal
+                // one: the source `record` (the temporal pass's no-ray read), the light pass's
+                // cast flag set and the moments' w under 1.5, over the frame's lighting pixels.
+                let marked_cast = kinds.get(&k).map_or(0, |w| {
+                    (0..f.source.len())
+                        .filter(|&i| f.source[i] == defects::SOURCE_RECORD && f.cast[i] && w.get(i).is_some_and(|&w| w < 1.5))
+                        .count()
+                });
+                let _ = writeln!(text, "  record pixels cast with w under 1.5: {marked_cast} of {}", f.source.len());
                 let mut big = 0u64;
                 for ((kind, touched), g) in &by {
                     let n = g.n.max(1) as f64;
@@ -1569,7 +1648,7 @@ mod dig_line {
                     let tri = |v: &[f64; 3]| format!("{:.4} / {:.4} / {:.4}", v[0] / n, v[1] / n, v[2] / n);
                     let _ = writeln!(
                         text,
-                        "  {} / {}: {} ({:.0} %), over 32 {}; sources (before -> frame) {}; sky x (before / frame / after) {}; stored {}; direct {}; cast {:.1} %; age {:.2}",
+                        "  {} / {}: {} ({:.0} %), over 32 {}; sources (before -> frame) {}; sky x (before / frame / after) {}; stored {}; direct {}; cast {:.1} %; age {:.2}; pair and stored as the frame before's {}",
                         KINDS[*kind],
                         if *touched { "brick dig 5 touches" } else { "brick dig 5 does not touch" },
                         g.n,
@@ -1580,15 +1659,30 @@ mod dig_line {
                         tri(&g.stored),
                         tri(&g.direct),
                         100.0 * g.cast as f64 / n,
-                        g.age / n
+                        g.age / n,
+                        g.steady
                     );
                 }
                 let _ = writeln!(text, "  groups of 1000 or more: {big} of {dark} ({:.0} %)", 100.0 * big as f64 / dark.max(1) as f64);
+                let of_kind = |kind: usize| by.iter().filter(|e| e.0.0 == kind).map(|e| e.1.n).sum::<u64>();
+                let shown: u64 = by
+                    .iter()
+                    .filter(|e| e.0.0 == 0)
+                    .flat_map(|e| e.1.src.iter())
+                    .filter(|(s, _)| s.1 == defects::SOURCE_RECORD || s.1 == defects::SOURCE_OWN_SUMMARY)
+                    .map(|(_, m)| *m)
+                    .sum();
+                for (what, v, bar) in [("dug chunks with a block", of_kind(1), 20), ("the whole chunk", of_kind(0), 1000), ("the whole chunk's from a record or its own summary", shown, 0), ("record pixels cast with w under 1.5", marked_cast as u64, 0)] {
+                    if v > bar {
+                        fails.push(format!("{}: {what} {v} px against {bar}", f.label));
+                    }
+                }
             }
             println!("{text}");
-            let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../live/p7a3");
+            let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../live/p7b3b");
             std::fs::create_dir_all(&dir).expect("the reading's directory");
             std::fs::write(dir.join("whole.txt"), text).expect("the tables");
+            assert!(fails.is_empty(), "T3's bounds missed: {}", fails.join("; "));
         }
         }
     }

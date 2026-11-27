@@ -293,8 +293,8 @@ fn in_held_box(v: vec3<i32>) -> bool {
 }
 
 // Face `face` of voxel `v`'s held dig value (ADR-0082, `DigEstimate::Depth`) in x, with a 1 in
-// y: where the voxel lies in a held dig box, its own cell's record holds no KEY_BAKED, no
-// SKY_STALE and the first key word's bit `face` (`bake::DIG_HELD`), the direction's sky byte,
+// y: where the voxel lies in a held dig box, its own cell's record holds no KEY_BAKED and the
+// first key word's bit `face` (`bake::DIG_HELD`; SKY_STALE or not), the direction's sky byte,
 // which no other read takes (the record's mask lacks the direction or it holds no VIS_BAKED,
 // so `store_sky_cell` reads none). 0 in y for none. Read for the pixel's own cell alone, where
 // `store_sky_visibility` finds no direction; no 2 x 2 tap reads it.
@@ -304,8 +304,7 @@ fn store_dig_held(head: StoreHead, v: vec3<i32>, face: u32) -> vec2<f32> {
     }
     let rec = store_cell_record(head, v >> vec3<u32>(head.shift));
     if (rec == 0u || (store[rec + KEY_WORD + 1u] & KEY_BAKED) != 0u
-        || ((store[rec + KEY_WORD] >> face) & 1u) == 0u
-        || (store[rec + VIS_WORD + 1u] & SKY_STALE) != 0u) {
+        || ((store[rec + KEY_WORD] >> face) & 1u) == 0u) {
         return vec2<f32>(0.0);
     }
     let byte = (store[rec + VIS_WORD + face / 4u] >> (8u * (face % 4u))) & 255u;

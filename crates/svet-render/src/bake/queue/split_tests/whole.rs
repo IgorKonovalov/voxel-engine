@@ -517,7 +517,9 @@ fn touched_directions(
 /// sky value in every direction but up ([`VIS_BAKED`], no key words), but those of the strip
 /// x < 16 (beyond the box's reach), which hold up 0.6, so the summary's up is 0.6; the same box: under `Depth` the touched directions with a kept face that read no sky value
 /// read a dig value over 0 and at most the summary's; under `Surface` no record of the block
-/// reads a dig value where [`record_visibility`] reads none (no record holds the mark).
+/// reads a dig value where [`record_visibility`] reads none (no record holds the mark). (5) Each
+/// record of (2)'s `Depth` directions marked [`SKY_STALE`] (a later dig's ring) reads the same
+/// dig value.
 #[test]
 fn a_dig_face_beside_unrecorded_ground_holds_its_value() {
     const BOX: ([i32; 3], [i32; 3]) = ([24, 24, 4], [40, 40, 8]);
@@ -594,6 +596,17 @@ fn a_dig_face_beside_unrecorded_ground_holds_its_value() {
         .iter()
         .filter(|m| !m.2.1.is_some_and(|v| v > 0.0 && v <= base))
         .collect();
+    // (5) each of those records marked SKY_STALE (a later dig's ring) reads the same dig value.
+    let stale_apart: Vec<_> = based
+        .iter()
+        .filter(|m| {
+            let mut r = brick_record(&block, m.0)
+                .expect("a touched brick's record")
+                .to_vec();
+            r[VIS_WORD + 1] |= SKY_STALE;
+            record_dig_visibility(&r, m.1) != m.2.1
+        })
+        .collect();
     let (block, _) = prepared(DigEstimate::Surface);
     let mut surface_marked = Vec::new();
     for slot in 0..CHUNK_BRICKS {
@@ -616,11 +629,13 @@ fn a_dig_face_beside_unrecorded_ground_holds_its_value() {
         based.len()
     );
     eprintln!("(2) surface: directions with a dig value: {surface_marked:?}");
+    eprintln!("(5) marked SKY_STALE, the dig value moved: {stale_apart:?}");
     let failed: Vec<u8> = [
         (1, !mixed.is_empty() && unmarked.is_empty()),
         (2, !all_dug.is_empty() && apart.is_empty()),
         (3, !based.is_empty() && off_base.is_empty()),
         (4, surface_marked.is_empty()),
+        (5, !based.is_empty() && stale_apart.is_empty()),
     ]
     .into_iter()
     .filter(|&(_, ok)| !ok)

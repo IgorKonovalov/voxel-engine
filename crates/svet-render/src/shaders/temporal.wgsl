@@ -738,6 +738,9 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     // This frame's sky visibility sample, where the light pass cast the sky rays.
     let vis = textureLoad(vis_in, px, 0);
     var sky_cast = vis.a > 0.5;
+    // A dig's face shown from its held value (`store_dig_held`): no later pass counts it as
+    // cast, though the light pass's flag says so (the moments' w 2 at both writes below).
+    var dig_held = false;
     // The pair where no ray was cast: the baked visibility at age `sky_history`, or none.
     var seed = vec4<f32>(0.0);
     // A reset pair's seed where the ray was cast (`pair_step`): the face's record visibility,
@@ -836,6 +839,7 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 rv = store_dig_held(head, store_voxel(rec.p, nf), face);
                 if (rv.y > 0.0) {
                     sky_cast = false;
+                    dig_held = true;
                 }
             }
             rec_voxel = store_voxel(rec.p, nf);
@@ -887,10 +891,13 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
                 // This return keeps no history: a record's switch of source fades here.
                 sky_term = source_faded(sky_term, head, nr_voxel, rec, nf);
             }
-            let lit = sample.xyz + sky_term * exposure_now();
+            var lit = sample.xyz + sky_term * exposure_now();
+            if (dig_held && (params.lighting & LIGHTING_FILTER_OFF) != 0u) {
+                lit = max(lit - sky_pair_term(sky_e, seed.x, vis.a, rec.n), vec3<f32>(0.0));
+            }
             textureStore(accum_out, px, min(vec4<f32>(lit, fresh_w), vec4<f32>(HDR_MAX)));
             textureStore(direct_out, px, vec4<f32>(0.0));
-            textureStore(moments_out, px, vec4<f32>(0.0, 0.0, held, 1.0 + source_fraction(source, on_entity)));
+            textureStore(moments_out, px, vec4<f32>(0.0, 0.0, held, select(1.0, 2.0, dig_held) + source_fraction(source, on_entity)));
             textureStore(pair_out, px, seed);
             return;
         }
@@ -1108,6 +1115,15 @@ fn temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
             kind = 2.0;
         }
         t_sky = t_baked;
+    }
+    if (dig_held) {
+        // Its stored part carries the held value's baked term (`no_ray`); with the filter off
+        // the composite adds the pair's term by the light pass's flag, so it carries the
+        // difference, as the stale ring face does.
+        if ((params.lighting & LIGHTING_FILTER_OFF) != 0u) {
+            accum = vec4<f32>(max(accum.xyz - t_sky, vec3<f32>(0.0)), accum.w);
+        }
+        kind = 2.0;
     }
     var t_key = vec3<f32>(0.0);
     if (vis.z > 0.5 * KEY_FROM_STORE) {

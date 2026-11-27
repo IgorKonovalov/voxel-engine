@@ -117,7 +117,9 @@ mod flicker {
     /// A 0.10 and 0.05 %, B 0.40 and 0.15 %; after that until the next dig, the same at 4 levels; the
     /// ring's at 4 levels in every frame; dots at most the settled frame's plus 1 point; the
     /// ring and the frame within 1 level of N - 1 until the first landing; and from each
-    /// group's landing no step away from its settled mean over 1 level. `SVET_DIG`'s arm
+    /// group's landing no step away from its settled mean over 1 level; and the bars of
+    /// `dig_line::hold::bar_misses` (each dig's ring at D+0 and D+1, the ring's worst frame,
+    /// the hole's black over 32 levels before the landing). `SVET_DIG`'s arm
     /// (`support::defects::dig_spec`; `hold=rays` the bite check) replaces the defaults'. Every
     /// run steps in the stepper's device-wait mode, so a landing is a count of frames, not the
     /// device's pace.
@@ -155,6 +157,9 @@ mod flicker {
                     white_bar[k]
                 );
             }
+            // Plan 0105 Phase 7b3b's bars, every miss named (`dig_line::hold::bar_misses`).
+            let misses = super::dig_line::hold::bar_misses(seq, &c);
+            assert!(misses.is_empty(), "{}", misses.join("; "));
             assert!(c.after[0] <= 2.0 && c.after[1] <= 2.0, "{seq}: not settled after the fade: {:?}", c.after);
             assert!(c.ring[0] <= 2.0 && c.ring[1] <= 2.0, "{seq}: the ring: {:?}", c.ring);
             assert!(c.dots[0] <= c.dots[1] + 1.0, "{seq}: dots {:.2} % against {:.2} % + 1", c.dots[0], c.dots[1]);
