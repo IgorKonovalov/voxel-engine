@@ -336,10 +336,8 @@ pub struct MirrorConfig {
 }
 
 impl MirrorConfig {
-    /// A window with no sync budget, no shard cap, the default budget,
-    /// [`DEFAULT_BUDGET_BYTES`], clamped to what the device can bind, and the workers' slot
-    /// images used where a hook makes them ([`Packing::Workers`]; with no hook every record is
-    /// packed inline). The time budget is the caller's share of its frame, so none here.
+    /// A window with no sync budget, no shard cap and the default budget,
+    /// [`DEFAULT_BUDGET_BYTES`], clamped to what the device can bind.
     pub fn new(window: Window) -> Self {
         Self {
             window,
@@ -352,7 +350,7 @@ impl MirrorConfig {
             light_chunk_cap: DEFAULT_LIGHT_CHUNK_CAP,
             light_radius: DEFAULT_LIGHT_RADIUS,
             light_sync_samples: DEFAULT_LIGHT_SYNC_SAMPLES,
-            packing: Packing::Workers,
+            packing: Packing::Inline,
         }
     }
 }

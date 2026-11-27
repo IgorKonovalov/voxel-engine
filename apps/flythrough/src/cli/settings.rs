@@ -242,8 +242,7 @@ impl Args {
     /// The render settings the flags give, the scene's own values aside: a level's mirror
     /// budget follows its content, and its LOD rule and records its extent. With no flag they
     /// are the floor's but for the fly-through's own `build.record_chunks` (sized to the
-    /// residency), `build.sync_budget_time` (`--sync-ms`, 6 ms) and `output_hint` (none: a
-    /// window's size, or 1280 x 720 headless).
+    /// residency) and `output_hint` (none: a window's size, or 1280 x 720 headless).
     pub fn render_settings(&self) -> RenderSettings {
         let (kind, scale) = self.upscaler_settings(self.start_upscaler());
         let fsr2 = match self.upscaler_settings(crate::hud::UpscalerMode::Fsr2).0 {
@@ -338,13 +337,11 @@ mod tests {
 
     /// The fly-through's own values over a profile's: the records sized to the residency,
     /// the key light's penumbra ([`crate::DEFAULT_PENUMBRA`]), the bake thread on (a window's
-    /// default; every profile's is off), the streamed mirror's sync at 6 ms a frame (ADR-0089;
-    /// every profile's is none), and no output hint without `--profile`.
+    /// default; every profile's is off), and no output hint without `--profile`.
     fn fly_through(p: Profile, hint: bool) -> RenderSettings {
         let mut s = RenderSettings::profile(p);
         s.lighting.penumbra = crate::DEFAULT_PENUMBRA;
         s.bake_thread = true;
-        s.build.sync_budget_time = Some(std::time::Duration::from_millis(6));
         s.build.record_chunks = Some(crate::stream_record_chunks(s.build.residency));
         if !hint {
             s.output_hint = None;

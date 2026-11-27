@@ -273,19 +273,19 @@ fn defaults() -> RenderSettings {
         .render_settings()
 }
 
-/// The walk's defaults are the fly-through's: the streamed mirror's sync takes 6 ms a frame
-/// (ADR-0089), a `Rebuild` row the walk flips to none. No device.
+/// The walk's defaults are the fly-through's: the streamed mirror's sync takes no time
+/// budget (`--sync-ms`), a `Rebuild` row the walk flips to 2 ms. No device.
 #[test]
 fn the_walks_defaults_carry_the_sync_budget() {
     let s = defaults();
-    assert_eq!(
-        s.build.sync_budget_time,
-        Some(std::time::Duration::from_millis(6))
-    );
+    assert_eq!(s.build.sync_budget_time, None);
     let flipped = s
         .with_test_value("build.sync_budget_time")
         .expect("a test value");
-    assert_eq!(flipped.build.sync_budget_time, None);
+    assert_eq!(
+        flipped.build.sync_budget_time,
+        Some(std::time::Duration::from_millis(2))
+    );
 }
 
 /// The sun 35 degrees up, east of south-east, behind the pillar.

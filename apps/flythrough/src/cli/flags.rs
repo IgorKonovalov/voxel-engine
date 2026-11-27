@@ -367,7 +367,7 @@ fn run_flags() -> Vec<Flag<Parsing>> {
         Flag::value(
             &["--sync-ms"],
             "MS",
-            "the streamed mirror's sync time a frame [6; 0 none]",
+            "the mirror's upload time a frame (0 none)",
             |p: &mut Parsing, v| {
                 let ms: u64 = v.parse()?;
                 p.args.sync_time = (ms > 0).then(|| std::time::Duration::from_millis(ms));
@@ -390,7 +390,7 @@ fn run_flags() -> Vec<Flag<Parsing>> {
         Flag::value(
             &["--mirror-pack"],
             "inline|workers",
-            "where new mirror records are packed (key U) [workers]",
+            "where new mirror records are packed (key U)",
             |p: &mut Parsing, v| {
                 p.args.mirror_pack =
                     svet_render::Packing::parse(v.text).ok_or_else(|| v.takes("inline|workers"))?;

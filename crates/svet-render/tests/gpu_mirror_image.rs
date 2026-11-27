@@ -259,7 +259,7 @@ fn the_mirror_is_byte_identical_whichever_thread_packed() {
     assert_eq!(workers.gpu.held_images(), 0);
 }
 
-/// Plan 0111 Phase 6d (ADR-0089: `Workers` is the default). The world streamed at r_full 2
+/// Plan 0111 Phase 6d. The world streamed at r_full 2
 /// and r_lod 4, mirrored inline and from the workers' images: at the first focus, then after a
 /// move of three chunks along x that promotes LOD records to full ones (their images held from
 /// the promoting load) and demotes full records to LOD ones. After every sync, the two arms'

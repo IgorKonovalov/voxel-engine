@@ -289,11 +289,11 @@ impl SlotImage {
 
 /// Where a new full record's slot words are packed (ADR-0056): on the render thread at the
 /// upload (`Inline`), or on the stream workers into a [`SlotImage`] the upload copies
-/// (`Workers`, the default). The mirror's bytes are the same under either.
+/// (`Workers`). The mirror's bytes are the same under either.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Packing {
-    Inline,
     #[default]
+    Inline,
     Workers,
 }
 
