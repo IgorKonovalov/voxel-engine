@@ -1,4 +1,4 @@
-# 0110: The math hot paths, measured then cut: shader math, f16 by adapter, the integer root
+# 0110: The math hot paths, measured then cut: shader math and f16 by adapter
 
 > **Status:** draft
 > **Created:** 2026-11-27
@@ -17,12 +17,15 @@ register count and spills, and profiles the 64-spider mover tick. Phase 2 is the
 sweep on the Radeon. It lowers the shader clock while leaving memory alone. A pass whose time
 grows with the shader clock is limited by arithmetic, and only those passes are edited.
 
-The cuts come in three forms:
+The cuts come in two forms:
 - **`f32` rewrites:** constant `pow` becomes multiplies, `1 / length` becomes `inverseSqrt`,
   `length` compares become `dot` compares.
 - **`f16` arithmetic behind `SHADER_F16`:** one source built per adapter (ADR-0088), a render
   setting, and the owner's eye on banding and flicker.
-- **A cheaper integer square root in `svet-sim`:** only if the tick profile shows it.
+
+The deterministic crates' integer square root (`svet_sim::body::isqrt`) is left alone (owner,
+2026-11-27): it is exact and deterministic, and the tick's likely costs are not arithmetic. The
+spider tick is still profiled in Phase 1, as a reading for the backlog.
 
 A change is kept only if it saves at least 5 % of its pass or tick on the Radeon RENOIR
 (owner, 2026-11-27). Otherwise it is reverted and its reading recorded. The first thing the
@@ -73,8 +76,7 @@ The plan runs in three steps.
    counts from RADV's `shaderstats`, and the clock sweep separates arithmetic from memory.
 2. **Edit only what the readings attribute.** `f32` rewrites go in first. Then `f16` goes into
    the same passes through the `hf` alias (ADR-0088), and the owner's window decides its
-   default. The integer root gets a `u64` fast path only if the tick profile gives it at least
-   5 % of the tick.
+   default. The integer root is not touched.
 3. **Apply one keep bar to every change:** at least 5 % of the pass or tick on the Radeon
    RENOIR, and more than the spread between runs.
 
@@ -85,7 +87,9 @@ Rejected options:
 - **Keeping any measured win on the RTX.** `docs/nfr.md` says not to judge against the dev box.
 - **`f16` as storage only.** It saves bandwidth, not arithmetic (ADR-0088, Alternative B).
 - **Requiring `SHADER_F16`.** That would shut out unknown adapters (ADR-0088, Alternative A).
-- **An `f64` seed for `isqrt`.** Floats are banned in the deterministic crates.
+- **Any change to `isqrt`** (a `u64` fast path, or an `f64` seed, which the float ban rules
+  out anyway). It is exact and deterministic, and the tick's suspects are elsewhere (owner,
+  2026-11-27).
 
 ## Architecture diagram
 
@@ -100,16 +104,14 @@ flowchart LR
     D --> R{arithmetic-limited?}
     S --> R
     C --> R
-    T --> Q{isqrt >= 5% of tick?}
-    subgraph cut [Phases 3-5: cuts, each kept only at >= 5% on RENOIR]
+    T --> B[backlog: the spider tick entry]
+    subgraph cut [Phases 3-4: cuts, each kept only at >= 5% on RENOIR]
         F32[f32 rewrites]
         F16[hf alias, f16 variant]
-        U64[isqrt u64 fast path]
     end
     R -- yes --> F32 --> F16
-    Q -- yes --> U64
-    F16 --> W[Phase 6: owner window, f16 on/off]
-    W --> G[Phase 7: defaults, tests, readings]
+    F16 --> W[Phase 5: owner window, f16 on/off]
+    W --> G[Phase 6: defaults, tests, readings]
 ```
 
 ## Implementation phases
@@ -135,8 +137,8 @@ reference".
     shader file.
   - 64 spiders on the showcase, with the wander on, as Plan 0079's Phase 4 ran them (its
     readings log names the run). The 0091 scopes inside `Walkers::tick` give the tick's split.
-    `samply` gives `isqrt`'s share, its call count per tick, and the share of its inputs under
-    2^64.
+    `samply` gives the split below the scopes. The readings go to the backlog entry ("The
+    spider's mover tick costs twice the guess"); this plan changes nothing in the tick.
 - **Files touched:** `docs/plans/logs/0110.md`, `scripts/gpu-clock-sweep.sh` (new, Linux, RADV
   only), and scope lines inside `Walkers::tick` (`apps/flythrough/src/`) if 0091 left it as one
   scope.
@@ -167,39 +169,10 @@ reference".
   - A pass is **arithmetic-limited** when `s >= 0.5` at both lower levels.
 - **Done when:** The sweep's table is in `docs/plans/logs/0110.md`, with the clock levels the
   sysfs actually took, and `auto` was restored (the script reads it back and prints it). The
-  arithmetic-limited passes are listed there. If none qualify, Phases 4 and 5 make no shader
+  arithmetic-limited passes are listed there. If none qualify, Phases 3 and 4 make no shader
   change and record why. The list is the contract for those phases.
 
-### Phase 3: The integer root's fast path (conditional)
-
-- **Owner skill:** dev
-- **What:** This phase depends on Phase 1's tick profile.
-  - **If** `isqrt` takes at least 5 % of the 64-spider tick: `isqrt(n)` takes a `u64` path
-    when `n < 2^64`. The seed is the same bit-length seed and the Newton steps use `u64`
-    division (one hardware `div`). The `u128` path stays for larger `n`. The function's
-    signature and result do not change.
-  - **Otherwise:** the phase records the share and changes nothing.
-  - Any other arithmetic site the profile gives at least 5 % of the tick gets its own line in
-    the log. If its fix is local and integer-only (no new allocation pattern, no change to a
-    result), it is made here under the same keep bar. If not, it goes to the backlog entry
-    with its reading.
-- **Files touched:** `crates/svet-sim/src/body.rs`, `crates/svet-sim/tests/isqrt.rs` (new),
-  `crates/svet-sim/benches/` (an `isqrt` bench beside the controller and surface benches), and
-  `docs/plans/logs/0110.md`.
-- **Done when:**
-  - A CPU test asserts that `r * r <= n < (r + 1) * (r + 1)` (in `u128`, overflow-checked) for:
-    - every `n` below 2^20;
-    - `k * k - 1`, `k * k` and `k * k + 1` for `k = 2^j` and `2^j - 1` with `j` from 1 to 63;
-    - `n = 2^64 - 1`, `2^64` and `2^64 + 1`;
-    - `u128::MAX`;
-    - 10^6 values from a seeded `SplitMix64` (seed `0x0110`), half of them below 2^64.
-    Expected wall time is under 1 s, so it runs in the gate on both CI arms.
-  - The existing cross-platform sweep, controller and surface vectors are bit-identical before
-    and after (they run unchanged).
-  - The tick reading after the change, on the same run, is in the log with its keep or revert
-    verdict.
-
-### Phase 4: f32 rewrites in the arithmetic-limited passes
+### Phase 3: f32 rewrites in the arithmetic-limited passes
 
 - **Owner skill:** dev
 - **What:** In the passes Phase 2 named, and only there, apply these rewrites:
@@ -223,13 +196,13 @@ reference".
   - Expected wall time: the touched passes' existing `gpu_*` binaries, which the phase names
     when Phase 2 has named the passes.
 
-### Phase 5: The `hf` alias and the f16 variant (exploration)
+### Phase 4: The `hf` alias and the f16 variant (exploration)
 
 - **Owner skill:** dev
 - **What:** Implement ADR-0088.
   - **Device request:** `svet-app`'s device request and `test_support` ask for `SHADER_F16`
     when `adapter.features()` has it.
-  - **Render setting:** `RenderSettings` gains `shader_f16: bool`, default off until Phase 6.
+  - **Render setting:** `RenderSettings` gains `shader_f16: bool`, default off until Phase 5.
     The fly-through shows it in the menu, and its mode shows in the window.
   - **Compose:** `frame/compose.rs` emits `enable f16;` and `alias hf = f16;` before the
     prelude when the device has the feature and the setting is on, and `alias hf = f32;`
@@ -254,7 +227,7 @@ reference".
   - **Still images:** stills of the cave and forest poses under both settings are in the log for
     the owner.
 
-### Phase 6: The owner's window: f16 on and off
+### Phase 5: The owner's window: f16 on and off
 
 - **Owner skill:** human
 - **What:** On Linux, with the Floor profile, the owner flies a slow pan in the forest and the
@@ -263,10 +236,10 @@ reference".
   profiles only). The window shows the mode, and stdout stays visible.
 - **Done when:** The owner's answer and the default it picks are recorded in the plan's log.
 
-### Phase 7: Defaults, image tests against the pick, the budget readings
+### Phase 6: Defaults, image tests against the pick, the budget readings
 
 - **Owner skill:** dev
-- **What:** Set `shader_f16`'s default per profile from Phase 6.
+- **What:** Set `shader_f16`'s default per profile from Phase 5.
 - **Files touched:** the render settings and profiles, `crates/svet-render/tests/gpu_precision.rs`
   (new), `docs/nfr.md` and `docs/nfr/02-frame-budget.md`, and `docs/plans/logs/0110.md`.
 - **Done when:**
@@ -278,8 +251,7 @@ reference".
     records, if 0.98 is looser.
   - **Profile test:** a CPU test reads each profile's `shader_f16` row against the pick.
   - **Budget readings:** the final per-pass readings on both adapters are in
-    `docs/nfr/02-frame-budget.md`, with machine and commit. The spider tick reading is in
-    `docs/nfr.md` section 8 if Phase 3 changed it.
+    `docs/nfr/02-frame-budget.md`, with machine and commit.
 
 ## Data shapes
 
@@ -309,33 +281,30 @@ alias hf = f16;
     is claimed for the RTX.
   - **How the close measures it:** Plan 0091's dump on the four benchmark paths, Floor and
     Portable, both adapters, a quiet box, medians of 5.
-- **`docs/nfr.md` section 8, the movers' tick:** 2.8 ms at 64 spiders on the showcase (Plan
-  0079), read again at Phase 1 and after Phase 3. A guess: zero to a few percent from `isqrt`.
-  The rest of the gap belongs to the backlog entry.
+- **`docs/nfr.md` section 8, the movers' tick:** read again at Phase 1 as a reading only (2.8 ms
+  at 64 spiders on the showcase in Plan 0079); no change expected.
 - **Startup (`docs/nfr.md` section 7):** one variant is compiled per run, so the pipeline count
   is unchanged. The close reads the cold start on the RTX against Plan 0108's figure to confirm
   that `enable f16;` adds no compile cost to speak of.
 
 ## Risks & open questions
 
-- **Nothing may qualify.** If no pass reaches `s >= 0.5`, Phases 4 and 5 change nothing. That
-  is a valid outcome, and the plan then closes as readings plus Phase 3. The readings still
+- **Nothing may qualify.** If no pass reaches `s >= 0.5`, Phases 3 and 4 change nothing. That
+  is a valid outcome, and the plan then closes as readings. The readings still
   serve 0091's users and the backlog.
 - **The clock sweep may not hold.** The RENOIR's firmware may ignore a manual level, or the
   memory clock may follow the shader clock. The script reads back the clocks that actually
   applied and the log records them. If the sweep cannot separate the two clocks, the fallback is
   Radeon GPU Profiler captures (`MESA_VK_TRACE=rgp`) of the top three passes, read by the owner.
   That would be an amendment, not a silent switch.
-- **Determinism:** Phase 3 stays in integers, and its outputs are equal by construction (the
-  same floor root). The property test and the existing cross-platform vectors defend it.
-  Nothing touches `svet-world`'s edit math. `svet-world`'s `isqrt` callers go through the same
-  function.
+- **Determinism:** nothing in the deterministic crates changes. The plan edits WGSL and the
+  render settings only.
 - **GPU features:** DX12's `SHADER_F16` depends on the driver's shader model. Windows is checked
   once in a while (owner, 2026-11-15), not in this plan. The `f32` alias is the fallback on any
   device without the feature.
 - **Image stability:** `f16` in a value that feeds history would flicker. ADR-0088's rule keeps
   history and accumulation in `f32`, the close review greps every `hf` use against that rule,
-  and Phase 6 is the eye's check.
+  and Phase 5 is the eye's check.
 - **Plan 0092 (hot reload):** if it lands first, the rebuilt pipelines must go through the same
   compose head. Its source path is `compose`, so they do by construction. The review checks it.
 
@@ -360,11 +329,10 @@ alias hf = f16;
 |---|---|---|---|
 | 1: The readings table | dev | not started | |
 | 2: The owner's clock sweep | human | not started | |
-| 3: The integer root's fast path | dev | not started | |
-| 4: f32 rewrites | dev | not started | |
-| 5: The hf alias and the f16 variant | dev | not started | |
-| 6: The owner's window, f16 on and off | human | not started | |
-| 7: Defaults, image tests, readings | dev | not started | |
+| 3: f32 rewrites | dev | not started | |
+| 4: The hf alias and the f16 variant | dev | not started | |
+| 5: The owner's window, f16 on and off | human | not started | |
+| 6: Defaults, image tests, readings | dev | not started | |
 
 ### Notes
 

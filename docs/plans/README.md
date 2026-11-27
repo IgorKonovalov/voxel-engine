@@ -54,7 +54,7 @@ are Plan 0109 Phase 6's. Plan 0093, the README rewrite with reproducible screens
 | [0107](0107-the-mirrors-slot-image-packed-on-the-stream-workers.md) | The mirror's slot image packed on the stream workers | approved 11-26 | ADR-0056. P1 re-reads the sync and can stop it. Lane after 0101 and 0105 merge. |
 | [0108](0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md) | The start-up readings: a shorter pre-roll, the cold pipelines split | approved 11-26 | A chore, no ADR. Beside 0093. P3 before the next tester archive. |
 | [0109](0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md) | A blocked chunk is checked again when its blocker clears: the streamed start | draft 11-26 | No ADR. P1 the rule, P2-3 readings, P4 the owner's answer. Awaits go. |
-| [0110](0110-the-math-hot-paths-measured-then-cut-shader-math-f16-and-the-integer-root.md) | The math hot paths, measured then cut: shader math, f16 by adapter, the integer root | draft 11-27 | ADR-0088. After 0091 (owner). P2 the owner's clock sweep; keep at >= 5 % on RENOIR. |
+| [0110](0110-the-math-hot-paths-measured-then-cut-shader-math-f16-and-the-integer-root.md) | The math hot paths, measured then cut: shader math and f16 by adapter | draft 11-27 | ADR-0088. After 0091 (owner). P2 the owner's clock sweep; keep at >= 5 % on RENOIR. |
 <!-- roster:end -->
 
 ## Sequence
