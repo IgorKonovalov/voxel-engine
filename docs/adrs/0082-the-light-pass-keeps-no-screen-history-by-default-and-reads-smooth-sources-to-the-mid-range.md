@@ -1,8 +1,8 @@
 # ADR-0082: The light pass keeps no screen history by default and reads smooth sources to the mid range
 
-> **Status:** accepted (2026-11-24, at Plan 0098's close, v0.72.0; with an Outcome)
+> **Status:** accepted (2026-11-24, at Plan 0098's close, v0.72.0; with an Outcome, added to 2026-11-27 at Plan 0105's close, v0.80.0)
 > **Date:** 2026-11-21
-> **Related plan(s):** [Plan 0098](../plans/done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md)
+> **Related plan(s):** [Plan 0098](../plans/done/0098-a-calm-light-by-default-no-screen-history-smooth-sources-to-the-mid-range-and-the-fsr-2-turn.md), [Plan 0105](../plans/done/0105-the-digs-flash-at-depth-a-held-estimate-that-follows-the-holes-own-light.md) (the dig's held estimate; Outcome, 2026-11-27)
 
 ## Context
 
@@ -171,6 +171,67 @@ switch.
   trace until the upload), a second whole mirror, freezing the screen's pixels in the dig's
   box (a screen history), blocking the frame on the dig's readback, a full bake of the dug
   faces on the CPU, and the coarse count for a dig.
+
+**Added 2026-11-27 at Plan 0105's close (v0.80.0): the dig's held estimate at depth.** The
+clause above, "at least a floor above black", read as the dig's flash at depth (owner,
+2026-11-26: "it flashes with light when digging ... when I dig deeper, more than 2-3 meters it
+is already bothers"): 0.02 of the open sky over a landed 0 is +12 display levels from the
+surface and +78 to +100 under an eye in the hole (RTX 3080 Laptop, the forest at 15:00). The
+mechanism stands (a record made on the CPU at the edit, read as any record, one fade to the
+job's record); the estimate inside it changes, as a render setting, `Lighting::dig_estimate`.
+The readings and the owner's words are in `docs/plans/logs/0105.md`.
+
+- **The default is `depth`** (owner, window of 2026-11-26: "1a flashes, 1b not", the dark
+  start "is not visible at all"; confirmed blind 2026-11-27). The held value is a lower bound
+  of the hole's own light: no floor, and a value under one byte of the record is 0; a ray
+  counts open only where it goes on to the height its base was read at; the value is the base
+  times a form of that share (the share itself up to one ray in twelve, its root from two). A
+  new face may start dark and rise through the fade, never bright then dark.
+- **A chunk with no block holds the dig too.** A box into a chunk that held no light block (a
+  whole dig) places a provisional block with held records at the edit, and its job fades from
+  it; the chunk's summary is marked stale from that put to the job's landing, so no face
+  outside the dig reads sky from a summary made of held and guess records.
+- **A held record moves only the dig's faces.** A face outside every edit box dilated by one
+  voxel reads after the edit what it read before. Where a cell's direction is shared by a
+  dig's face and by ground that holds no sky value, the direction stays out of the record's
+  mask and the dig's value is kept beside it (six bits of the cell's first key word, read
+  only with `KEY_BAKED` clear): the temporal pass reads it for a pixel whose own voxel lies
+  in a held edit box dilated by one voxel, no 2 x 2 tap reads it, and **no later pass counts
+  that pixel as cast** (the moments' w 2), though the light pass, which binds no edit boxes,
+  still casts its rays there.
+- **`surface` stays a setting**, byte for byte the estimate described above; it flashes at
+  depth and is the before arm.
+- **Rejected, with their reasons in the plan's amendments:** a smaller floor (one byte over a
+  landed 0 is still a flash under an eye in the hole); a floor scaled by the base (the base at
+  depth is the surface's); black for every new face (the 1 m dig starts at about half its
+  light); a seed for the cast pair that knows depth (it changes every face with no record);
+  a held cell that answers its neighbours' taps as its old record did, or a tap that skips a
+  held cell (not built: the ring fell under its bar without them); the shared direction held
+  for every face of the cell (the ground beside a whole dig darkens: 3.50 % of the ring against
+  0.06 %); the kept faces given a CPU guess and meaned with the dig's (it moves faces the dig
+  did not make by an amount no bar bounds); the dig's faces left to their cast rays at a whole
+  dig (white: 0.57 / 0.53 % of the hole over 8 / 16 levels against 0.32 / 0.11 %).
+- **What it costs, disclosed.** (1) A dig one metre deep starts 4.53 to 4.56 display levels
+  under its settled look at its first frame (RTX 3080 Laptop), over the 4 the plan asked for;
+  the owner took it by eye and it is held as a ratchet at 5. (2) At a whole dig the ground
+  beside the hole is darker by over 4 levels on 0.46 / 0.43 % of the ring for two frames, and
+  1.37 % of the hole is black by over 32 levels before the landing (lavapipe, the soak test's
+  sequence B, bars asserted there); the rise of the second figure from 0.25 % is not
+  explained. The look was accepted inside a launch that held one such dig and at the close
+  (2026-11-27); nobody judged it on purpose. (3) Two more switches with no fade, beside the
+  two above: a cell that takes the dig's mark and no held record lands in a step, and a kept
+  face of a shared direction steps at the landing from its ray to the fading record. (4) The
+  rays the light pass casts at a marked face are thrown away (the temporal pass +0.007 ms over
+  the dig frames, RTX 3080 Laptop).
+- **Not explained.** Blind, the owner read the binary of 2026-11-26 (before main's merge and
+  the three clauses after the first) as flashing slightly less than the closing one, and
+  accepted the closing one ("b is acceptable as well"); the two launches were different
+  flights, the held bytes of an ordinary dig are equal by the code and by two headless
+  bursts, and the dig's frame waits longer in every run read (loaded readings, the cause not
+  split between this plan and Plan 0101). The backlog carries it.
+- **Where it is checked.** On lavapipe: the queue's CPU tests of a whole dig, a synthetic
+  shaft (soak), the fresh hole from above (soak). The forest at depth (the owner's scene) is
+  asserted by two readings run by name on the RTX 3080 Laptop and by no CI run.
 
 **The limits the picks leave.** With no store bound, or before a bake lands, a face under
 cover has no sun and no sky light (`outdoor_forest_afternoon.png` is that picture). Under the

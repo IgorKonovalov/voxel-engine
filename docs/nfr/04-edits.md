@@ -332,3 +332,11 @@ radius 5, `dig_depth::reading::dig_depth` and Phase 7c2's two asserting readings
 - *The temporal pass* (`dig_line::reading::dig_timeline`, sequence B, waiting, three rounds
   back to back, load1 1.65 to 1.93, quiet): +0.007 ms mean over the dig frames from `6dfc0b1a`
   to `e1060437` (F4 and its mark), +0.002 to +0.004 ms before the first dig.
+- *`surface` at `wide`, loaded* (Phase 7d, `1e56404b`, one hold at load1 44 to 49): the held
+  estimate 0.94 to 1.15 ms at 1 to 5 m and 4.10 ms at 7 m, the D+0 step 5.8 to 11.5 ms, over
+  the quiet reads above; `surface` is a setting, not the default, and the figures are not read
+  again quiet (the backlog, "Plan 0105's leftovers").
+- *Not read: the edit's wait against its line.* The line of `../nfr.md` section 4 (the wait
+  at most lockstep's bake call on the same dig frames, Plan 0099 Phase 6d) was not read again
+  on this tree; the dig frame's wait above is one binary against another, loaded. Owed on a
+  quiet machine (the same backlog entry).
