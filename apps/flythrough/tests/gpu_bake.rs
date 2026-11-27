@@ -1757,6 +1757,112 @@ fn a_sealed_cavern_wider_than_the_cap_reads_no_sky() {
     assert!(rule.iter().all(|&v| v == 0.0), "{rule:?}");
 }
 
+/// The pit's four floor bricks (3..=4, 3..=4, 3) in brick order: each one's `+z` sky visibility
+/// (`None` where its record holds none) and whether its record is marked stale.
+fn pit_floor(rig: &Rig) -> Vec<([i32; 3], Option<f32>, bool)> {
+    let blocks = rig.blocks();
+    let block = &blocks[&[0, 0, 0]];
+    let w = svet_render::internals::BRICK_WORDS;
+    let mut out = Vec::new();
+    for y in 3..=4 {
+        for x in 3..=4 {
+            let b = [x, y, 3];
+            let dir = block[svet_world::brick_slot(b)] as usize;
+            assert_ne!(dir, 0, "floor brick {b:?} holds no record");
+            let rec = &block[(dir >> 11) - w..dir >> 11];
+            out.push((
+                b,
+                svet_render::internals::record_visibility(rec, 5),
+                svet_render::internals::record_sky_stale(rec),
+            ));
+        }
+    }
+    out
+}
+
+/// The frame's mean luminance of `Frame::filtered()` over every pixel.
+fn mean_filtered(rig: &Rig) -> f32 {
+    let f = svet_render::debug::read_float(&rig.device, &rig.queue, rig.frame.filtered());
+    f.iter()
+        .map(|p| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2])
+        .sum::<f32>()
+        / f.len() as f32
+}
+
+/// Plan 0086 Phase 9's claim, re-derived by Plan 0094 Phase 8: a sealed cave takes no sky light
+/// through its walls, and under the defaults a seal darkens a face through the dig's re-bake of
+/// its records (ADR-0046's rings, ADR-0070). One chunk: rock over x, y 0..64, z 0..48 with a pit
+/// of air x, y 24..40, z 32..48, under `Sky::uniform(1.0)` (no key light), baked whole at 256
+/// samples a brick direction; a 16 x 16 frame at the fly-through's default lighting, lamp off,
+/// manual exposure 1, the camera 10 voxels over the floor looking straight down, 8 frames.
+/// Unsealed, each floor brick's `+z` visibility reads the form factor of the pit's 16 x 16 mouth
+/// 16 voxels up, 0.200 over a brick by Simpson's rule (one brick's standard deviation at 256
+/// rays 0.025; asserted in 0.10 to 0.30), and the frame's filtered irradiance is over 0. Then
+/// `Rig::dig` fills rock over x, y 24..40, z 44..48 (the ring reaches the floor, 12 voxels
+/// under the box) and after 8 frames every floor brick reads 0 exactly with its record not
+/// stale, and the frame's mean filtered luminance is at or under one sixteenth of the unsealed.
+#[test]
+fn a_sealed_pit_takes_no_sky_light_after_its_rebake() {
+    let world = air_world([1, 1, 1], &cave_table());
+    fill(&world, [0, 0, 0], [64, 64, 48], ROCK);
+    world
+        .apply(&box_op([24, 24, 32], [40, 40, 48], Mode::Carve))
+        .expect("the pit is resident");
+    let Some(mut rig) = rig_on(world, [16, 16], None) else {
+        return;
+    };
+    rig.frame.set_lighting(Lighting {
+        lamp: false,
+        exposure: Exposure::Manual(1.0),
+        bake_pool_bytes: rig.frame.lighting().bake_pool_bytes,
+        ..flythrough::default_lighting()
+    });
+    rig.frame.set_sky(Some(svet_render::sky::Sky::uniform(1.0)));
+    let counts = test_counts(256);
+    rig.bake(&counts);
+    let camera = Camera {
+        position: [32.0, 32.0, 42.0].into(),
+        yaw: 0.0,
+        pitch: -std::f32::consts::FRAC_PI_2,
+        vfov: 70f32.to_radians(),
+    };
+    let read = |rig: &mut Rig| {
+        for _ in 0..8 {
+            rig.step(&camera);
+        }
+        (pit_floor(rig), mean_filtered(rig))
+    };
+    let (open, open_lum) = read(&mut rig);
+    println!("unsealed: floor {open:?}, filtered mean {open_lum:.4e}");
+    let (dig, _) = rig.dig(
+        &box_op([24, 24, 44], [40, 40, 48], Mode::Fill(ROCK)),
+        &counts,
+    );
+    let (sealed, sealed_lum) = read(&mut rig);
+    println!(
+        "sealed ({} faces re-baked): floor {sealed:?}, filtered mean {sealed_lum:.4e} ({:.3} %)",
+        dig.bake.faces,
+        100.0 * sealed_lum / open_lum
+    );
+    for (b, v, _) in &open {
+        assert!(
+            v.is_some_and(|v| (0.10..=0.30).contains(&v)),
+            "unsealed {b:?}: {v:?}"
+        );
+    }
+    assert!(open_lum > 0.0, "the unsealed floor takes sky light");
+    for (b, v, stale) in &sealed {
+        assert!(
+            *v == Some(0.0) && !stale,
+            "sealed {b:?}: {v:?}, stale {stale}"
+        );
+    }
+    assert!(
+        sealed_lum <= open_lum / 16.0,
+        "sealed {sealed_lum} against unsealed {open_lum}"
+    );
+}
+
 mod reading {
     use super::*;
 
