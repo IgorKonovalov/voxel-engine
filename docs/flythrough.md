@@ -104,6 +104,7 @@ row showing the new value.
 | readings | `Enter` | Sample the next frames and print frame-time readings (menu closed) |
 | debug | `F9` | Cycle the view: shaded, normals, hitmask, steps, cracks, albedo |
 | debug | `X` | Cycle the cutaway: auto, on, off |
+| debug | `U` | `mirror pack`: inline or workers (`--mirror-pack`); the mirror uses or drops the images that arrive from the next sync, the workers follow from their next chunk |
 
 Everything else is an entry of the menu (`Tab`) with no key: the dig radius (`moving`), the
 look presets and far normal,
@@ -277,6 +278,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--sync-budget MIB` | The mirror's upload bytes a frame |
 | `--sync-ms MS` | The mirror's upload time a frame [none; 0 is none] |
 | `--workers N` | The streamer's generation workers, at least 1 [half the logical cores] |
+| `--mirror-pack inline\|workers` | Where a streamed world's new mirror records are packed: on the render thread, or copied from the slot images the stream workers make (ADR-0056; the bytes are the same); the banner's and the HUD's `mirror pack inline` row; `U` flips it [inline] |
 | `--residency R_FULL,R_LOD` | The streamed full and LOD radii in chunks, hysteresis 1 [16,24] |
 | `--mirror-budget MIB` | The VRAM the mirror reserves at startup [3072 streamed; on the level what it needs plus dig headroom]. While streaming, the full radius drops a chunk after 30 frames with the mirror's pressure over 0.9 and returns after 300 frames under 0.7, down to 6 |
 

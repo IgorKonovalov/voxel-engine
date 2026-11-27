@@ -814,6 +814,10 @@ impl Run {
         write_pace_banner(self.args.pace, now, out);
         hud::start_row(out);
         write_queue_banner_row(out, &self.args, words);
+        if self.stream.is_some() {
+            hud::start_row(out);
+            let _ = write!(out, "mirror pack {}", self.modes.mirror_pack.name());
+        }
         if let Some(secs) = self.args.bake.pre_roll_drain {
             crate::run::queue::write_drain_banner(
                 out,

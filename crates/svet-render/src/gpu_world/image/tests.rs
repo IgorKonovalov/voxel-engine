@@ -210,3 +210,74 @@ fn the_key_names_the_flags() {
     assert_ne!(fa.key, fb.key);
     assert_ne!(fa.key, MaterialFlags::new().key);
 }
+
+/// The hook counts the bytes of its images alive and makes none past its cap: with a cap of
+/// one image's bytes, the first chunk's image is made, the second chunk's refused while the
+/// first is held, and made once the first is dropped; under `Inline` it makes none and
+/// counts nothing.
+#[test]
+fn the_hook_makes_no_image_past_the_cap() {
+    let table = table();
+    let mut next = {
+        let mut z = 0x0107_0003_u64;
+        move |n: u64| {
+            z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            svet_world::hash::mix64(z) % n
+        }
+    };
+    let chunks: Vec<Chunk> = (0..2)
+        .map(|_| {
+            let mut c = Chunk::uniform(AIR);
+            for slot in 0..CHUNK_BRICKS {
+                c.set_brick(slot, brick(&mut next));
+            }
+            c
+        })
+        .collect();
+    let (a, b) = (ChunkCoord([0, 0, 0]), ChunkCoord([1, 0, 0]));
+    let mut flags = MaterialFlags::new();
+    flags.read(&table);
+    let one = SlotImage::of(a, &chunks[0], &flags).held_bytes();
+    let other = SlotImage::of(b, &chunks[1], &flags).held_bytes();
+    assert!(
+        other <= one,
+        "the second image fits the cap alone ({other} > {one})"
+    );
+
+    let off = ImageHook::new(&table, Packing::Inline, one);
+    assert!(off.make(a, &chunks[0]).is_none(), "inline makes no image");
+    assert_eq!(off.stats(), ImageHookStats::default());
+
+    let hook = ImageHook::new(&table, Packing::Workers, one);
+    let first = hook.make(a, &chunks[0]).expect("the first image fits");
+    assert_eq!(first.image, SlotImage::of(a, &chunks[0], &flags));
+    let s = hook.stats();
+    assert_eq!((s.made, s.refused, s.held_bytes), (1, 0, one as u64));
+    assert!(
+        hook.make(b, &chunks[1]).is_none(),
+        "past the cap: none made"
+    );
+    let s = hook.stats();
+    assert_eq!((s.made, s.refused, s.held_bytes), (1, 1, one as u64));
+    drop(first);
+    assert_eq!(
+        hook.stats().held_bytes,
+        0,
+        "a dropped image releases its bytes"
+    );
+    let second = hook
+        .make(b, &chunks[1])
+        .expect("made once the first is dropped");
+    let s = hook.stats();
+    assert_eq!(
+        (s.made, s.refused, s.held_bytes, s.peak_bytes),
+        (2, 1, other as u64, one as u64)
+    );
+    drop(second);
+    hook.set_packing(Packing::Inline);
+    assert!(
+        hook.make(a, &chunks[0]).is_none(),
+        "switched off: none made"
+    );
+    assert_eq!(hook.stats().made, 2);
+}

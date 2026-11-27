@@ -6,6 +6,8 @@
 //! the upload's words by construction.
 
 use super::*;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 /// A brick's bin in [`SlotImage::bins`] when it takes no slot (a uniform brick).
 pub(super) const NO_BIN: u8 = u8::MAX;
@@ -282,6 +284,303 @@ impl SlotImage {
                 .iter()
                 .map(|(_, l)| l.capacity() * std::mem::size_of::<LightSample>())
                 .sum::<usize>()
+    }
+}
+
+/// Where a new full record's slot words are packed (ADR-0056): on the render thread at the
+/// upload (`Inline`), or on the stream workers into a [`SlotImage`] the upload copies
+/// (`Workers`). The mirror's bytes are the same under either.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Packing {
+    #[default]
+    Inline,
+    Workers,
+}
+
+impl Packing {
+    /// `inline` or `workers`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Inline => "inline",
+            Self::Workers => "workers",
+        }
+    }
+
+    /// The packing [`Packing::name`] names.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "inline" => Some(Self::Inline),
+            "workers" => Some(Self::Workers),
+            _ => None,
+        }
+    }
+
+    /// The other packing.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Inline => Self::Workers,
+            Self::Workers => Self::Inline,
+        }
+    }
+}
+
+/// The bytes of slot images alive at once ([`ImageHook`]'s default cap): about 1 300 images
+/// at ADR-0056's average of 50 KB, or 127 at the worst.
+pub const DEFAULT_IMAGE_CAP_BYTES: usize = 64 << 20;
+
+/// What the hook's images share: the flags they are packed under, the switch, the cap and the
+/// counters.
+struct HookShared {
+    flags: MaterialFlags,
+    workers: AtomicBool,
+    cap: usize,
+    held: AtomicUsize,
+    peak: AtomicUsize,
+    made: AtomicU64,
+    refused: AtomicU64,
+    ns: AtomicU64,
+}
+
+/// The stream workers' half of [`Packing::Workers`] (ADR-0056), a part of
+/// [`crate::ChunkWork`]: under `Workers` it makes each full chunk's [`SlotImage`] under the
+/// flags of the table it was made with, while the bytes of the images alive (made and not yet
+/// dropped by the mirror) stay within its cap; under `Inline` it makes none. Clones share the
+/// switch, the cap and the counters.
+#[derive(Clone)]
+pub struct ImageHook(Arc<HookShared>);
+
+/// What an [`ImageHook`] has done: images made and refused by the cap, the bytes held now and
+/// at most, and the nanoseconds spent making the images.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ImageHookStats {
+    pub made: u64,
+    pub refused: u64,
+    pub held_bytes: u64,
+    pub peak_bytes: u64,
+    pub ns: u64,
+}
+
+impl ImageHook {
+    /// A hook packing under `table`'s flags, its switch at `packing`, holding at most `cap`
+    /// bytes of images alive ([`DEFAULT_IMAGE_CAP_BYTES`]).
+    pub fn new(table: &MaterialTable, packing: Packing, cap: usize) -> Self {
+        let mut flags = MaterialFlags::new();
+        flags.read(table);
+        Self(Arc::new(HookShared {
+            flags,
+            workers: AtomicBool::new(packing == Packing::Workers),
+            cap,
+            held: AtomicUsize::new(0),
+            peak: AtomicUsize::new(0),
+            made: AtomicU64::new(0),
+            refused: AtomicU64::new(0),
+            ns: AtomicU64::new(0),
+        }))
+    }
+
+    /// Switches the hook from the next chunk on.
+    pub fn set_packing(&self, packing: Packing) {
+        self.0
+            .workers
+            .store(packing == Packing::Workers, Ordering::Relaxed);
+    }
+
+    pub fn packing(&self) -> Packing {
+        if self.0.workers.load(Ordering::Relaxed) {
+            Packing::Workers
+        } else {
+            Packing::Inline
+        }
+    }
+
+    pub fn stats(&self) -> ImageHookStats {
+        let s = &self.0;
+        ImageHookStats {
+            made: s.made.load(Ordering::Relaxed),
+            refused: s.refused.load(Ordering::Relaxed),
+            held_bytes: s.held.load(Ordering::Relaxed) as u64,
+            peak_bytes: s.peak.load(Ordering::Relaxed) as u64,
+            ns: s.ns.load(Ordering::Relaxed),
+        }
+    }
+
+    /// `chunk`'s image at `coord`, or `None` under `Inline` or when it would take the bytes
+    /// alive past the cap (counted refused). The time is taken here, on the worker.
+    pub(crate) fn make(&self, coord: ChunkCoord, chunk: &svet_world::Chunk) -> Option<HeldImage> {
+        let s = &self.0;
+        if !s.workers.load(Ordering::Relaxed) {
+            return None;
+        }
+        if s.held.load(Ordering::Relaxed) >= s.cap {
+            s.refused.fetch_add(1, Ordering::Relaxed);
+            return None;
+        }
+        let t = stopwatch();
+        let image = SlotImage::of(coord, chunk, &s.flags);
+        let ns = stopwatch().duration_since(t).as_nanos() as u64;
+        let bytes = image.held_bytes();
+        let before = s.held.fetch_add(bytes, Ordering::Relaxed);
+        if before + bytes > s.cap {
+            s.held.fetch_sub(bytes, Ordering::Relaxed);
+            s.refused.fetch_add(1, Ordering::Relaxed);
+            return None;
+        }
+        s.peak.fetch_max(before + bytes, Ordering::Relaxed);
+        s.made.fetch_add(1, Ordering::Relaxed);
+        s.ns.fetch_add(ns, Ordering::Relaxed);
+        Some(HeldImage {
+            image,
+            bytes,
+            hook: self.0.clone(),
+        })
+    }
+}
+
+/// A slot image alive: its bytes count against its hook's cap until it is dropped.
+pub(crate) struct HeldImage {
+    pub(super) image: SlotImage,
+    bytes: usize,
+    hook: Arc<HookShared>,
+}
+
+impl Drop for HeldImage {
+    fn drop(&mut self) {
+        self.hook.held.fetch_sub(self.bytes, Ordering::Relaxed);
+    }
+}
+
+/// The images handed to the mirror, each waiting by coordinate for its chunk's upload, its
+/// eviction or its leaving the window.
+#[derive(Default)]
+pub(super) struct Images {
+    pub(super) held: HashMap<ChunkCoord, HeldImage>,
+}
+
+impl GpuWorld {
+    /// Takes the images among the stream workers' results ([`crate::ChunkWork`]) to wait for
+    /// their chunks' uploads; under [`Packing::Inline`] they are dropped here. A chunk's newer
+    /// image replaces an older one.
+    pub fn take_images(&mut self, prepared: &[(ChunkCoord, svet_world::Prepared)]) {
+        for (c, p) in prepared {
+            let Ok(p) = p.0.clone().downcast::<crate::bake::ChunkPrepared>() else {
+                continue;
+            };
+            let image = p
+                .image
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+            if let Some(image) = image
+                && self.cfg.packing == Packing::Workers
+            {
+                self.images.held.insert(*c, image);
+            }
+        }
+    }
+
+    /// Switches the mirror's packing from the next sync on; `Inline` drops the images held.
+    /// The hook that makes them ([`ImageHook::set_packing`]) is switched by its owner.
+    pub fn set_packing(&mut self, packing: Packing) {
+        self.cfg.packing = packing;
+        if packing == Packing::Inline {
+            self.images.held.clear();
+        }
+    }
+
+    pub fn packing(&self) -> Packing {
+        self.cfg.packing
+    }
+
+    /// Images waiting for their chunks' uploads.
+    pub fn held_images(&self) -> usize {
+        self.images.held.len()
+    }
+
+    /// Drops the images of chunks outside the window, which no upload takes.
+    pub(super) fn prune_images(&mut self) {
+        if self.images.held.is_empty() {
+            return;
+        }
+        let w = self.window();
+        self.images.held.retain(|c, _| w.contains(*c));
+    }
+
+    /// `coord`'s image for a new full record of `chunk`, taken out of the held ones, when it
+    /// may stand in for the chunk (ADR-0056, Plan 0107's four conditions; the caller checked
+    /// that no full record of the chunk exists): the field surface off, packed under the mirror's flags,
+    /// and the chunk never edited. A refused image is dropped and counted by its reason.
+    pub(super) fn usable_image(
+        &mut self,
+        coord: ChunkCoord,
+        chunk: &svet_world::Chunk,
+        st: &mut SyncStats,
+    ) -> Option<HeldImage> {
+        let image = self.images.held.remove(&coord)?;
+        if self.field.band.is_some() {
+            st.images_field += 1;
+            return None;
+        }
+        if image.image.key != self.mats.key {
+            st.images_other_flags += 1;
+            return None;
+        }
+        if chunk.is_edited() {
+            st.images_edited += 1;
+            return None;
+        }
+        st.images_used += 1;
+        Some(image)
+    }
+
+    /// Writes brick `slot` of a new record from `img` into entry `i`: a uniform brick's entry,
+    /// or a `Full` brick's words, at `at` in the image's words, copied into a new slot of its
+    /// bin. With `debug_assertions` the brick is packed inline as well and must match.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the image, the brick's place and the image's read offset"
+    )]
+    pub(super) fn upload_image_brick(
+        &mut self,
+        img: &SlotImage,
+        slot: usize,
+        i: usize,
+        at: &mut usize,
+        brick: &Brick,
+        enc: &mut wgpu::CommandEncoder,
+        st: &mut SyncStats,
+    ) -> Result<(), MirrorError> {
+        debug_assert_eq!(self.recs.entries[i], 0, "a new record's entry");
+        let entry = img.entries[slot];
+        let bin = img.bins[slot];
+        let n = if bin == NO_BIN {
+            0
+        } else {
+            BINS[usize::from(bin)] as usize * UNIT_WORDS
+        };
+        let words = &img.words[*at..*at + n];
+        *at += n;
+        #[cfg(debug_assertions)]
+        {
+            let mut inline = Vec::new();
+            let packed = self.mats.pack_brick(brick, None, false, &mut inline);
+            assert_eq!(packed.entry(), entry, "brick {slot}: the image's entry");
+            if bin != NO_BIN {
+                assert_eq!(words, &inline[..], "brick {slot}: the image's words");
+            }
+        }
+        #[cfg(not(debug_assertions))]
+        let _ = brick;
+        if bin == NO_BIN {
+            self.recs.entries[i] = entry;
+            return Ok(());
+        }
+        let k = usize::from(bin);
+        let u = self.pool.alloc(k)?;
+        self.stage(k, u, words, enc, st);
+        st.bytes += (words.len() * 4) as u64;
+        self.recs.entries[i] = entry | u;
+        st.bricks += 1;
+        Ok(())
     }
 }
 

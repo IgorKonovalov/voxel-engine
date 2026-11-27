@@ -89,6 +89,7 @@ pub mod internals {
     };
 }
 
+pub use bake::ChunkWork;
 pub use bake::{
     AROUND_REACH, AroundSource, AuditDiffer, BakeError, BakeProgress, BakeQueue, BakeReport,
     BakeRoundTrip, BakeSettings, Band, Bands, Budget, CycleLine, DEFAULT_BAKE_EDIT_MS,
@@ -133,6 +134,7 @@ pub use gpu_world::{
     DEFAULT_LIGHT_CHUNK_CAP, DEFAULT_LIGHT_RADIUS, DEFAULT_LIGHT_SAMPLES, GpuWorld, MirrorConfig,
     MirrorError, ShardLayout, SyncClock, SyncPoint, SyncStats, Window,
 };
+pub use gpu_world::{DEFAULT_IMAGE_CAP_BYTES, ImageHook, ImageHookStats, Packing};
 pub use hud::{
     BACKDROP_ALPHA, GRID_COLS as HUD_GRID_COLS, HudBox, HudColour, HudOverlay, HudPaint, HudTile,
     MAX_TILES, TILE_BIT, TILE_CELLS, TILE_PX,

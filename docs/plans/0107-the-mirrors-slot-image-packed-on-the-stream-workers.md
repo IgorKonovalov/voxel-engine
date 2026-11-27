@@ -1,6 +1,6 @@
 # 0107: The mirror's slot image packed on the stream workers
 
-> **Status:** in-progress (Phases 1-2 done; Phase 3 next). Approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
+> **Status:** in-progress (Phases 1-3 done; Phase 4 next). Approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
 > [the review of 2026-11-26](../reviews/2026-11-26-work-off-the-render-thread.md) on the owner's
 > "all recommended" (its question 1: draft now, Phase 1 the re-read), with no further interview;
 > the guesses and the questions left are under "Risks & open questions", each with a recommended
@@ -492,8 +492,8 @@ The owner: "go on both, all recommended, do not start until these lanes finish".
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: the sync's stages re-read, the bake thread on | dev | done; neither the stop line nor the order line fires (loaded); readings in [logs/0107.md](logs/0107.md) | dd905d22 |
-| 2: the slot image as a pure function | dev | done; bench read loaded | committed with this row |
-| 3: the mirror takes an image, behind a setting | dev | not started | |
+| 2: the slot image as a pure function | dev | done; bench read loaded | 6afbb90c |
+| 3: the mirror takes an image, behind a setting | dev | done; gpu readings loaded | committed with this row |
 | 4: the sizes and the emitters from the image | dev | not started | |
 | 5: the readings (tail, workers, held bytes) | dev | not started | |
 | 6: the wanted set kept in order | dev | not started | |
@@ -517,6 +517,19 @@ each. Empty is fine.)_
 - Phase 2: `need`'s count became the free `need_of` (`slot.rs`), which the image test calls as
   `need`'s oracle; `emitters.rs` is unchanged.
 - Phase 2: the bench reading was taken loaded (load1 4.9 to 5.5).
+- Phase 3: `gpu_mirror_image` streams a test-local source of 40 rows (`Rich`), not the
+  fly-through's cave source, which `svet-render`'s tests cannot reach.
+- Phase 3: `apply_events` calls `take_images` itself; `run/loading.rs` and `run/frame.rs` are
+  unchanged.
+- Phase 3: outside the phase's list: `apps/flythrough/src/{app.rs, streaming.rs, run/mod.rs,
+  run/keys.rs, run/hud_feed.rs, hud/modes.rs, toggles.rs, cli/{mod,parse,flags}.rs}`,
+  `cli/tests/mirror_pack.rs` (new; `cli/tests.rs` is at 1183 lines),
+  `apps/flythrough/tests/menu.rs` (`SHORTCUTS`), `crates/svet-render/src/settings.rs`
+  (`NOT_SETTINGS`), `bake/queue/split_tests/thread/books.rs` (a test helper).
+- Phase 3: `SlotImage` has no `ns`; the hook's `ImageHookStats::ns` total is the time reading.
+- Phase 3: the banner row shows on every streamed run; `U` is a new shortcut in ADR-0061's
+  key table.
+- Phase 3: the gpu runs were taken loaded (load1 up to 19.9).
 
 ### Close triggers
 

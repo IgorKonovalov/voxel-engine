@@ -272,6 +272,7 @@ impl GpuWorld {
 
     pub(super) fn unqueue(&mut self, c: ChunkCoord) {
         self.window.sizes.remove(&c);
+        self.images.held.remove(&c);
         if let Some(d) = self.window.pending_d2.remove(&c) {
             self.window.pending.remove(&(d, c));
             self.note_change(c);
@@ -589,15 +590,23 @@ impl GpuWorld {
             if self.recs.mirrored.get(&coord).is_some_and(|m| m.lod != lod) {
                 self.drop_record(coord);
             }
+            // A new full record may be written from the chunk's slot image (ADR-0056).
+            let image = match guard.as_deref() {
+                Some(ch) if rec.is_none() => self.usable_image(coord, ch, st),
+                _ => None,
+            };
             result = match (&src, guard.as_mut()) {
                 (_, Some(ch)) => {
-                    let r = self.upload_record(coord, Bricks::Chunk(ch), enc, st);
+                    let image = image.as_ref().map(|h| &h.image);
+                    let r = self.upload_record(coord, Bricks::Chunk(ch), image, enc, st);
                     if r.is_ok() {
                         ch.clear_dirty();
                     }
                     r
                 }
-                (Src::Lod(mips), None) => self.upload_record(coord, Bricks::Mips(mips), enc, st),
+                (Src::Lod(mips), None) => {
+                    self.upload_record(coord, Bricks::Mips(mips), None, enc, st)
+                }
                 (Src::Full(_), None) => unreachable!("a full chunk is locked above"),
             };
             if result.is_err() {

@@ -21,7 +21,7 @@
 //!
 //! `flythrough [--seed N] [--level] [--pose vein|patch] [--source cave|level|showcase|outdoor] [--spawn outside|inside] [--time HH:MM] [--day-length S] [--sky on|off] [--shot NAME] [--vault] [--castle] [--castle-out PATH]
 //! [--castle-shot gate|nave|window|dungeon] [--walk] [--render WxH] [--frames N] [--bench N]
-//! [--autopilot] [--census] [--sync-budget MIB] [--sync-ms MS] [--workers N] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
+//! [--autopilot] [--census] [--sync-budget MIB] [--sync-ms MS] [--workers N] [--mirror-pack inline|workers] [--mirror-budget MIB] [--residency R_FULL,R_LOD]
 //! [--headless] [--look PRESET] [--face-mix K] [--far-normal LO,HI] [--band-census] [--view VIEW]
 //! [--translucent-layers N] [--hud] [--save PATH] [--replay PATH] [--logic native|wasm[=PATH]]
 //! [--audio] [--audio-debug] [--room METRES] [--room-line] [--thin-rig] [--seam-rig] [--absorption A] [--mic]
@@ -86,7 +86,10 @@
 //! autopilot never changes it); `--census` prints the world's brick census (`World::brick_census`) on exit,
 //! after any bench; `--sync-budget` sets the mirror's upload bytes per frame and `--sync-ms` its
 //! upload time per frame (default none; 0 is none); `--workers N` sets the streamer's
-//! generation workers (default half the logical cores, at least 1); `--mirror-budget`
+//! generation workers (default half the logical cores, at least 1); `--mirror-pack
+//! inline|workers` packs a streamed world's new mirror records on the render thread or copies
+//! them from the stream workers' slot images (ADR-0056; `U` flips it, the banner's and the
+//! HUD's `mirror pack inline` row name it; default `inline`); `--mirror-budget`
 //! sets the VRAM the mirror reserves for its pool, masks and records at startup (ADR-0013;
 //! default 3072 MiB streamed, and on the level what its bricks, the dig headroom and its chunks
 //! need, with records for the residency's ball when streaming), and while streaming the full
@@ -736,6 +739,9 @@ pub struct Args {
     pub(crate) sync_time: Option<std::time::Duration>,
     /// `--workers`: the streamer's generation workers; `None` for `setup::default_workers`.
     pub(crate) workers: Option<usize>,
+    /// `--mirror-pack`: where a streamed world's new mirror records are packed, on the render
+    /// thread or from the stream workers' slot images (ADR-0056); `inline` by default.
+    pub(crate) mirror_pack: svet_render::Packing,
     /// `--mirror-budget`: the mirror's VRAM reservation in bytes.
     pub(crate) mirror_budget: Option<u64>,
     /// `--residency`: the streamed full and LOD radii in chunks, hysteresis as
@@ -977,6 +983,7 @@ impl Args {
         m.look = self.start_look();
         m.preset = self.look.preset;
         m.field_surface = self.field_surface();
+        m.mirror_pack = self.mirror_pack;
         m.cutaway = self.look.cutaway;
         let b = &self.bake;
         m.queue = hud::QueueModes {

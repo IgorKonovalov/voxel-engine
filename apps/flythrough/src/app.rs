@@ -24,7 +24,7 @@ use std::time::Instant;
 use svet_app::{App, Flow, Gpu, Input};
 use svet_net::Logic;
 use svet_render::{Camera, LightParams, LoadingScreen, LoadingView, wgpu};
-use svet_world::{Streamer, World};
+use svet_world::World;
 
 #[allow(
     clippy::disallowed_methods,
@@ -77,10 +77,10 @@ pub(crate) enum Pending {
     /// No world: the session failed before generation (a replay log that does not read).
     Failed,
     /// The streaming world, its workers already generating around the spawn.
-    Stream(Box<(World, Streamer, usize)>),
+    Stream(Box<crate::setup::Streamed>),
     /// The streaming world whose source builds on its own thread first (the castle's
     /// prefabs); its workers start when the build ends.
-    StreamBuilding(JoinHandle<Box<(World, Streamer, usize)>>),
+    StreamBuilding(JoinHandle<Box<crate::setup::Streamed>>),
 }
 
 /// The app around [`Run`]: the world generates on its own threads while the shell opens the
@@ -232,8 +232,8 @@ impl Flythrough {
                 .unwrap_or_else(|e| std::panic::resume_unwind(e)),
             Pending::Level(_) | Pending::Failed => return,
         };
-        let (world, streamer, workers) = *boxed;
-        self.start_run(world, Some(Stream::new(streamer, workers)));
+        let (world, streamer, workers, images) = *boxed;
+        self.start_run(world, Some(Stream::new(streamer, workers, images)));
     }
 }
 

@@ -573,6 +573,11 @@ impl RenderSettings {
     pub const NOT_SETTINGS: &'static [(&'static str, &'static str)] = &[
         ("set_dt", "a per-frame input: the frame's step in seconds"),
         (
+            "set_packing",
+            "where the mirror's new records are packed (MirrorConfig::packing, ADR-0056): the \
+             mirror's bytes are the same under either, so the image does not depend on it",
+        ),
+        (
             "set_bake_queue",
             "the route a caller's write to the live queue's books takes (a rig's order or rule \
              switch); the bake knobs that are settings have setters of their own",

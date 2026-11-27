@@ -356,11 +356,14 @@ impl GpuWorld {
 
     /// Writes one chunk's record: `bricks` into its entries (512 voxel bricks, or a LOD
     /// record's 73 mip-bricks): every brick when `coord` had no record before this call, else
-    /// the dirty ones; then, for a record allocated here, its table entry.
+    /// the dirty ones; then, for a record allocated here, its table entry. `image`, the
+    /// chunk's slot image for a new full record with no band ([`GpuWorld::usable_image`]),
+    /// gives each brick's entry and words in place of packing them.
     pub(super) fn upload_record(
         &mut self,
         coord: ChunkCoord,
         bricks: Bricks<'_>,
+        image: Option<&SlotImage>,
         enc: &mut wgpu::CommandEncoder,
         st: &mut SyncStats,
     ) -> Result<(), MirrorError> {
@@ -407,6 +410,8 @@ impl GpuWorld {
         let mut result = Ok(());
         let band_on = self.field.band.is_some() && !lod;
         let set = upload_set(bricks.len(), every, band_on, |i| bricks.is_dirty(i));
+        debug_assert!(image.is_none() || (every && !band_on && !lod));
+        let mut image_at = 0;
         for (i, &up) in set.iter().enumerate() {
             if !up {
                 continue;
@@ -419,15 +424,13 @@ impl GpuWorld {
             }
             // The upload's backstop computed the bands under the same write lock.
             let band = band_on.then(|| self.field.bands.get(i).copied().flatten());
-            result = self.upload_brick(
-                coord,
-                i,
-                base + ENTRY_WORD + i,
-                bricks.get(i),
-                band,
-                enc,
-                st,
-            );
+            let at = base + ENTRY_WORD + i;
+            result = match image {
+                Some(img) => {
+                    self.upload_image_brick(img, i, at, &mut image_at, bricks.get(i), enc, st)
+                }
+                None => self.upload_brick(coord, i, at, bricks.get(i), band, enc, st),
+            };
             if result.is_err() {
                 break;
             }

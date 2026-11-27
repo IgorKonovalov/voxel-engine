@@ -122,7 +122,10 @@ impl Inbox {
     pub(crate) fn push_masks(&mut self, prepared: &[(ChunkCoord, svet_world::Prepared)]) {
         let masks: Vec<_> = prepared
             .iter()
-            .filter_map(|(c, p)| Some((*c, p.0.clone().downcast::<PreparedMasks>().ok()?)))
+            .filter_map(|(c, p)| {
+                let p = p.0.clone().downcast::<ChunkPrepared>().ok()?;
+                Some((*c, p.masks.clone()))
+            })
             .collect();
         if !masks.is_empty() {
             self.waiting.masked.extend(masks.iter().map(|(c, _)| c.0));

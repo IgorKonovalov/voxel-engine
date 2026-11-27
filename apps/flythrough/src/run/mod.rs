@@ -371,6 +371,7 @@ impl Run {
                 sync_budget_bytes: self.args.sync_budget,
                 sync_budget_time: self.args.sync_time,
                 record_chunks: Some(crate::stream_record_chunks(self.args.residency)),
+                packing: self.modes.mirror_pack,
                 ..MirrorConfig::new(Window::Follow {
                     side: crate::window_side(self.args.residency),
                 })

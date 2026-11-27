@@ -136,6 +136,8 @@ pub struct Modes {
     pub(crate) preset: crate::LookPreset,
     /// The run's mirror holds the field's band slots, so `N` steps through the field look.
     pub(crate) field_surface: bool,
+    /// Where the streamed mirror's new records are packed (`--mirror-pack`, `U`).
+    pub(crate) mirror_pack: svet_render::Packing,
     /// The upscaler `F10` cycles and `Z`'s sharpening, with their banner.
     pub(crate) upscaler: UpscalerBanner,
     /// The internal scale's name the upscaler runs at when it is not off.
@@ -256,10 +258,18 @@ pub enum HudRow {
     Lights,
     /// `clear box on, structure scale 1`.
     Structures,
+    /// `mirror pack inline` ([`mirror_pack_row`]).
+    Mirror,
+}
+
+/// The mirror's packing row of the HUD and the banner: `mirror pack inline` or
+/// `mirror pack workers`.
+pub fn mirror_pack_row(p: svet_render::Packing) -> String {
+    format!("mirror pack {}", p.name())
 }
 
 impl HudRow {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Look,
         Self::Lighting,
         Self::Upscaler,
@@ -267,6 +277,7 @@ impl HudRow {
         Self::Controls,
         Self::Lights,
         Self::Structures,
+        Self::Mirror,
     ];
 
     /// The first word of the row, which no other HUD row starts with.
@@ -279,6 +290,7 @@ impl HudRow {
             Self::Controls => "cutaway ",
             Self::Lights => "lights ",
             Self::Structures => "clear box ",
+            Self::Mirror => "mirror pack ",
         }
     }
 }
@@ -312,6 +324,7 @@ impl Modes {
             look: svet_render::LookParams::default(),
             preset: crate::LookPreset::DEFAULT,
             field_surface: false,
+            mirror_pack: svet_render::Packing::Inline,
             upscaler: UpscalerBanner::new(UpscalerMode::Off, "1"),
             scale: "1.5",
             pan: None,
@@ -411,6 +424,9 @@ impl Modes {
                 let _ = write!(out, ", view {}", self.look.view.name());
             }
             HudRow::Lighting => self.write_line(out),
+            HudRow::Mirror => {
+                let _ = write!(out, "mirror pack {}", self.mirror_pack.name());
+            }
             HudRow::Upscaler => {
                 let _ = write!(
                     out,

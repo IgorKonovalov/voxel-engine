@@ -169,6 +169,9 @@ pub(crate) struct Stream {
     pub(crate) sync_line_frame: u32,
     pub(crate) full_residency: bool,
     pub(crate) workers: usize,
+    /// The workers' slot images for the mirror (ADR-0056): `--mirror-pack`'s switch, which
+    /// its key flips with the mirror's.
+    pub(crate) images: svet_render::ImageHook,
     /// The streamer's counters as `stream_step` last read them, once a frame: what the
     /// autopilot and the HUD read after it (and the autopilot's settle, before it, a frame
     /// late). `None` before the first step.
@@ -176,9 +179,9 @@ pub(crate) struct Stream {
 }
 
 impl Stream {
-    /// A stream over `streamer` with `workers` generation workers: the radius rule at its
-    /// configured `r_full`, and every reading empty.
-    pub(crate) fn new(streamer: Streamer, workers: usize) -> Self {
+    /// A stream over `streamer` with `workers` generation workers and the workers' `images`:
+    /// the radius rule at its configured `r_full`, and every reading empty.
+    pub(crate) fn new(streamer: Streamer, workers: usize, images: svet_render::ImageHook) -> Self {
         Stream {
             rule: RadiusRule::new(streamer.config().residency.r_full),
             radius_changes: 0,
@@ -199,6 +202,7 @@ impl Stream {
             sync_line_frame: 0,
             full_residency: false,
             workers,
+            images,
             stats: None,
         }
     }

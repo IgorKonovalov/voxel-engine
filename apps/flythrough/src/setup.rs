@@ -632,6 +632,7 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
     let placed_at = source.spawn();
     let spawn = eye_voxel(args).unwrap_or(placed_at);
     let workers = args.workers.unwrap_or_else(default_workers);
+    let pack = args.mirror_pack;
     let table = world_table(args, &materials(args));
     let world = World::new(&table);
     let cfg = StreamConfig {
@@ -652,7 +653,7 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
         let out = args.castle_out.clone();
         let build = std::thread::spawn(move || {
             let streamer = Streamer::new(Arc::new(castle_source(seed, out.as_deref())), cfg);
-            Box::new(start_streaming(world, streamer, workers, spawn))
+            Box::new(start_streaming(world, streamer, workers, spawn, pack))
         });
         return (spawn, Pending::StreamBuilding(build));
     }
@@ -669,7 +670,9 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
     };
     (
         spawn,
-        Pending::Stream(Box::new(start_streaming(world, streamer, workers, spawn))),
+        Pending::Stream(Box::new(start_streaming(
+            world, streamer, workers, spawn, pack,
+        ))),
     )
 }
 
@@ -680,6 +683,7 @@ fn outdoor_world(args: &Args) -> (VoxelCoord, Pending) {
     let spawn = eye_voxel(args).unwrap_or_else(|| hills.spawn(args.outdoor.spawn).0);
     let trees = args.outdoor.trees();
     let workers = args.workers.unwrap_or_else(default_workers);
+    let pack = args.mirror_pack;
     let world = World::new(&world_table(args, &materials(args)));
     let cfg = StreamConfig {
         residency: args.residency,
@@ -704,23 +708,38 @@ fn outdoor_world(args: &Args) -> (VoxelCoord, Pending) {
     };
     (
         spawn,
-        Pending::Stream(Box::new(start_streaming(world, streamer, workers, spawn))),
+        Pending::Stream(Box::new(start_streaming(
+            world, streamer, workers, spawn, pack,
+        ))),
     )
 }
 
-/// `streamer` with the live queue's listing on its workers (ADR-0017), from the first chunk
-/// on, and the workers started on the `spawn`'s chunks.
+/// A streamed world as the app takes it: the world, its streamer, the workers and the
+/// workers' slot images ([`svet_render::ImageHook`]).
+pub(crate) type Streamed = (World, Streamer, usize, svet_render::ImageHook);
+
+/// `streamer` with the live queue's listing and the mirror's slot images (`pack`, ADR-0056,
+/// under the default cap) on its workers (ADR-0017), from the first chunk on, and the
+/// workers started on the `spawn`'s chunks. Prints the packing's row.
 fn start_streaming(
     world: World,
     mut streamer: Streamer,
     workers: usize,
     spawn: VoxelCoord,
-) -> (World, Streamer, usize) {
-    streamer.set_prep(Some(Arc::new(svet_render::internals::FacePrep::new(
-        Arc::new(svet_render::internals::face_classes(world.materials())),
+    pack: svet_render::Packing,
+) -> Streamed {
+    let images = svet_render::ImageHook::new(
+        world.materials(),
+        pack,
+        svet_render::DEFAULT_IMAGE_CAP_BYTES,
+    );
+    streamer.set_prep(Some(Arc::new(svet_render::ChunkWork::new(
+        world.materials(),
+        Some(images.clone()),
     ))));
+    println!("{}", crate::hud::mirror_pack_row(pack));
     streamer.update(&world, &[spawn]);
-    (world, streamer, workers)
+    (world, streamer, workers, images)
 }
 
 /// The app `args` ask for, from the session's `start`: the look line printed, the logic loaded,
