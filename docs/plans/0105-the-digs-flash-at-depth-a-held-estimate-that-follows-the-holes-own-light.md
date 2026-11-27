@@ -2272,6 +2272,152 @@ is asked by this plan.
 - **The Implementation log** takes the row for 7b4 here; 7c and 7d from `dev`.
 - **Budgets:** no new figure. The dig frame's longer wait is read in 7d, not bounded.
 
+## Amended 2026-11-27 (architect, after Phase 7c's stop)
+
+**The ruling: the forest's bars at depth are not a soak test. They are asserted by name on the
+RTX, inside the reading that produced them (Phase 7c2, below); lavapipe keeps test 1, which is
+committed, and the tests it already had. What is given up is a weekly machine check of the
+forest at depth: a fault there is seen only when someone runs the reading by name.** The
+`dig_held` count (reading 3) is still owed and moves into the same run. A reading of
+`apps/flythrough/tests/gpu_outdoor/dig_depth.rs`, `dig_line.rs`, `flicker.rs`,
+`crates/svet-render/tests/gpu_sun/shaft.rs`, `bake/budget.rs`, `bake/queue/tiers.rs`, the
+log's "Phase 7c" and `live/p7c/down1.log`; nothing was built or run.
+
+### Why the forest's start is 25 minutes on lavapipe
+
+- **What it waits on.** `Session::new` steps the forest at the floor profile's sizes (1920 x
+  1080, internal 1280 x 720), the device waited every frame, until `drain_waiting == 0` (no
+  chunk in view waits for its band's record; at most 30 000 frames), then 240 frames more.
+  The queue bakes by time: 1.5 ms of bake a frame (`Budget::PerFrame`, the floor's `Drain`).
+  On the RTX that slice lands the view in 640 frames (Reading 1). On lavapipe a sample costs
+  far more of the slice, so the view lands over many more frames, each of them a 1080p frame
+  on the CPU. `flicker.rs` says so of the same forest at a quarter of the pixels: "600 frames
+  in: lavapipe's rig never drains, 161 chunks in view waiting", which is why
+  `a_fresh_hole_holds_its_value_until_its_light_lands` runs on a waiting queue and never
+  asks for a drained one.
+- **What was read, and what was not.** One line: `drained and settled` at 13:31:17, 1534 s
+  after the lock, load1 2.54 rising to 14.60 with other lanes building (lavapipe shares the
+  CPU with them). The frame count of the drain was not printed (it goes to the session's
+  text, written at the end), so the split between frames and seconds a frame is unread.
+- **The reading mod does the same.** `reading::dig_depth` and test 2 share `Session::new`;
+  no run of either on lavapipe is in the log before this one. Every figure of Readings 1 to
+  18 is the RTX's: 84 to 93 s a run on an optimised test build, 217 to 698 s on a debug one.
+- **The rest of the run would not fit either.** After the start, `down` steps five read digs
+  (a settle, 24 frames, the exposure's hold of 24 or more, 25 read frames, 36 to D+60, two
+  manual frames of 16 each: 170 frames or more a read) and the unread digs between them: more
+  frames than the 240 of the settle several times over, at the same cost a frame. A subset of
+  depths does not help; the start alone is past the rule.
+
+### What test 2 defends that nothing on lavapipe does
+
+| claim | test 1 (`gpu_sun`, synthetic shaft, 4 m) | `a_fresh_hole_holds_its_value...` and `whole_dig_ring` (forest, from above, the surface) | the CPU tests (`split_tests/whole.rs`) | test 2 alone |
+|---|---|---|---|---|
+| a held value is not over its landed one at depth | yes: bytes per cell, and the box's mean at most 4 over | no (no depth) | the record's flags, not its level against a landing | under the forest's sky at 15:00 (sun, canopy, the key term), at 3 and 5 m, mean 4 / p95 8 |
+| a dig into a chunk with no block shows a record, no cast | no (`whole digs 0`) | yes: B's dig 5 is a whole dig; white over 8 and 16, the ring, black over 32 | yes: the held block in the edit's step | seen down the shaft at 5 m, a record in every frame |
+| the shallow dig's dark start does not deepen | D+0 -7.2 printed, not bounded | black over 32 bounded as a share of the frame | no | the 1 m level under `S` as a ratchet |
+| a dig into the shaft's wall from inside it | no | no | no | `side`, all depths |
+
+So test 2's own ground is three things: the forest's sky terms at depth, the 1 m ratchet, and
+`side`. **`side` was last read at Phase 5; four commits under `src/` followed (`55432ec1`,
+`6dfc0b1a`, `595d211a`, `e1060437`), and 7a5 and 7b3c re-read `down` alone.** That is the
+part of the stop that matters: the run is owed whatever its mark.
+
+### The options, and the one taken
+
+1. **Taken: the bars asserted by name on the RTX, in `mod reading`.** `whole_dig_ring` is the
+   precedent (a reading that asserts when run by name). The rig is Reading 18's, unchanged:
+   the forest, the floor's sizes, a drained queue. Cost: the patch as written, re-marked,
+   and three RTX holds. Given up: no CI run sees it.
+2. **Rejected: the same forest at `flicker.rs`' sizes (960 x 540) as a soak test.** Not an
+   edited scene, but its time is a guess (a quarter of the pixels, an unread drain count),
+   CI's lavapipe is about six times slower by the soak line's own ratio, and a hole 7 m down
+   a one-dig shaft is a few dozen pixels at that size. A soak test nobody has timed is the
+   run this stop forbids.
+3. **Rejected: a second synthetic rig on lavapipe.** What it could assert (a whole dig at
+   depth on a record) the CPU test and B's dig 5 already hold; what test 2 owns (the
+   forest's sky, the wall from inside) a rock floor under a uniform sky does not have.
+4. **Rejected: a subset of depths** (the start alone is 25 minutes) **and dropping it**
+   (`side` is unread across four source commits).
+
+### Reading 3 (the `dig_held` count): owed, in Phase 7c2's run
+
+The amendment before let it be left out where the frames hold no moments. That clause is
+withdrawn: the drained forest on the RTX is the one rig where the backlog entry's expectation
+is defined (0 pixels at a read with `digs whole 0`), because on lavapipe's waiting queue a
+face beside unrecorded ground takes F4's mark by design. It costs one read-back a window
+frame in a run that is already owed. No stop is attached to its value.
+
+### Phase 7c2: the forest's bars at depth, by name on the RTX (a reading that asserts)
+- **Owner skill:** dev
+- **What:** Apply `live/p7c/test2-dig_depth.patch` (235 lines against `b27c897f`; the tip
+  `4bb26a71` adds `gpu_sun/shaft.rs` alone, so it applies). Then:
+  1. Move its two tests from `mod soak` into the file's `mod reading`, marked
+     `#[ignore = "reading"]`, names and bars as written (`misses`: B1 at 3 and 5 m, 5 m on a
+     record in every window frame, B2's first clause at 1 m, each read landed by D+24, the
+     check frame within 0.5 level, the `down` 1 m ratchet). Their doc comments say "run by
+     name on the RTX" and drop "Soak".
+  2. Reading 3: in `dig_read`, for the frames D+0 to D+24, read the temporal pass's moments
+     (`Frame::moments`, as `whole_dig_ring` does) and count the lighting pixels whose w is 2
+     or more and under 3; print per read `dig_held pixels` by frame to the landing beside
+     `digs whole`. Printed, not asserted.
+  3. Build the optimised test binary outside the lock, as `live/p7b3c/r18.sh` does (4 jobs,
+     the 6 GiB cap); freeze it under `live/bin/p7c2/`.
+  4. Three holds of the exclusive perf lock, `SVET_TEST_ADAPTER=rtx`, each test by name:
+     `down`; `side`; then `down` again with the estimate forced to `surface` by hand (the
+     break; removed after, never committed). The break's text is saved: it is Phase 5's owed
+     `surface` after-run at `down`.
+  5. The ratchet `DOWN_1M_UNDER` from this `down` run's 1 m level, rounded up to the next
+     whole level (the RTX read -4.53 to -4.55: 5.0), its comment naming the RTX and the
+     owner's accepted look of 2026-11-26.
+  6. The log: the three holds' table (asked, lock, end, load1), every read's figures, `side`
+     against Phase 5's after-table depth by depth, the `dig_held` counts, the break's misses.
+- **Files touched:** `apps/flythrough/tests/gpu_outdoor/dig_depth.rs`,
+  `docs/plans/logs/0105.md`, the plan's Implementation log row. Nothing under `src/`,
+  nothing under `crates/`.
+- **Done when:** `a_dig_down_at_depth_holds_no_flash` and
+  `a_dig_into_the_wall_at_depth_holds_no_flash` pass by name on the RTX 3080 Laptop with
+  their figures in the log; the break is red on B1 at 3 or 5 m; the quick tier over the
+  changed crates, clippy, fmt and every `scripts/check-*.mjs` exit 0 (`check-test-tiers`
+  among them: a reading sits in `mod reading`).
+- **Lock budget (projected, from 7a5's and 7b3c's runs on the same build kind):** about 90 s
+  a `down` hold and 2 to 4 minutes for `side` (unread on an optimised build; 278 to 436 s on
+  a debug one): 6 to 8 minutes in all, no hold over 10.
+- **Stops (the architect; nothing loosened, no rig or scene changed, no test moved to
+  `surface`):** a hold with no `drained and settled` line 5 minutes after its lock, or
+  projected past 20; any bar missed at `down` or `side` under the default; the 1 m level
+  over 6 under; a `side` depth moved from Phase 5's after-table by more than 0.5 level
+  (reported as MOVED even where its bar passes); the phase past about 170k tokens (commit
+  what holds, resume notes in the log, a fresh agent). A `dig_held` count over 0 at a read
+  with `digs whole 0` is no stop: it is logged in bold.
+- Binaries: `gpu_outdoor` (by name, the RTX); no lavapipe hold.
+
+### Phase 7d, confirmed with one change
+
+- Its list stands: the edit's readings in `docs/nfr/04-edits.md` (machine and commit, the
+  1 m miss beside the owner's acceptance), the dig frame's wait of `p6` against `p7b3` from
+  the logs already written (no new run), the gate tier at the tip under the perf lock,
+  clippy, fmt, deny, the doc gates.
+- **Changed:** of Phase 5's owed `surface` after-runs it reads `wide` alone (one RTX hold,
+  about 7 minutes as last read); `down` is 7c2's break. If 7c2 did not save that text, 7d
+  reads both.
+- The gate tier does not run test 1 (a soak mark); 7c's reading of it by name stands.
+
+### For the close review, added
+
+- The forest at depth is asserted on the RTX by name and by no CI run; the backlog entry
+  "The forest dig at depth is checked by name on the RTX alone" carries the gap.
+- `side` went unread from Phase 5 to 7c2 across four source commits; 7c2's table against
+  Phase 5's is the evidence that it held.
+- Test 1's time (10.5 s loaded) is over the soak line by half a second; it stays a soak
+  test, not trimmed to fit the gate.
+
+### What this changes elsewhere in the plan
+
+- **Phase 7c** is done as far as it goes: test 1 at `4bb26a71`. Its item 2 and its "one
+  reading more" are Phase 7c2; "the ratchet read on lavapipe" becomes the RTX's.
+- **The Implementation log** takes a row for 7c2 from `dev`; row 7c stands as written.
+- **Budgets:** no new figure.
+
 ## Data shapes
 
 ```rust
