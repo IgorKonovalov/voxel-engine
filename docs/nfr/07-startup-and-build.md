@@ -184,8 +184,8 @@ light pre-roll ends at the near chunks (`--pre-roll near`) over a streamed sourc
 over a bounded one (`level`, `showcase`); `--headless` keeps `full`. `--pipeline-threads`
 defaults to 4 on 16 or more logical CPUs, else 2 (the cold figures below).
 
-**Warm, headless** (release, pipelines warm, `--bake-thread on`, the tree at Plan 0108 Phase 4
-before its commit on `e6bba08b`, one start an arm, `--pre-roll` given so the headless run takes
+**Warm, headless** (release, pipelines warm, `--bake-thread on`, the tree of Plan 0108 Phase 4's
+commit `85f36761`, read before it was committed on `e6bba08b`, one start an arm, `--pre-roll` given so the headless run takes
 the window's arm; dev host, Ryzen 9 5900HS, 16 logical CPUs; exclusive perf lock, 1-minute load
 3.0 to 9.2: **loaded**, indicative). RTX: `--adapter RTX` (Floor, 1280 x 720), 4000 frames.
 RENOIR (Radeon iGPU, RADV): `--adapter RENOIR --profile portable --render 1280x720`, 1000

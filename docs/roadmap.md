@@ -928,6 +928,18 @@ against the baked store: no probe or store term takes sun or sky light.
   needed". **Left open** (the backlog): a due catch-up waits behind every ready first bake;
   the mirror's notes cost the render thread a whole read at a window move; the step's cost on
   a streamed start is attributed only in part.
+- **The start-up readings** ([Plan 0108](plans/done/0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md),
+  closed 2026-11-27, v0.82.0; no ADR): `--pre-roll full|near|off` ends the light pre-roll at
+  the near chunks and leaves the coarse pass to the live queue behind the first frame. The
+  owner at his window picked `near` where the world is streamed and `full` in a bounded scene
+  ("better to avoid patches and wait longer"); headless runs keep `full`, so no golden moved.
+  The forest's first frame comes at 1.2 to 1.9 s where it came at 6.3 to 9.0. The start-up
+  pipelines build on scoped threads (`Frame::with_build_threads`): both drivers compile in
+  parallel, and a cold start reads 37 s against 59 on the RTX and 12 s against 17 on the
+  RENOIR at 4 threads. The 3 s to the first frame stays a proposal: the cave, the RENOIR's
+  hall and every cold start miss it. **Left open** (the backlog): a census of the pipelines a
+  default start needs, the default-off arms built behind the first frame, the window's start
+  2.5 s behind the headless one.
 - **A surface detail layer** ([Plan 0081](plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
   drafted 2026-11-16, awaits the owner's go; ADR-0063 proposed): grass, moss, strands,
   fungus caps, flowers, pebbles and snow tufts as a procedural shell marched in the hit pass

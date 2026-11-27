@@ -1,7 +1,7 @@
 # 0108: The start-up readings: a shorter pre-roll, and the cold pipelines split
 
-> **Status:** in-progress (Phases 1 to 4 done 2026-11-27: the owner picked `near` where the world is streamed, `full` in bounded scenes; awaits the close review). Approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
-> [the review of 2026-11-26](../reviews/2026-11-26-work-off-the-render-thread.md) on the owner's
+> **Status:** done (closed 2026-11-27, v0.82.0): clean in a fresh review session, no blocker and no major. `--pre-roll full|near|off` and `--pipeline-threads N` built and read; on the owner's pick a window over a streamed source starts on `near` (the forest's first frame at 1.2 to 1.9 s where it read 6.3 to 9.0), a bounded scene and every headless run keep `full`; the start-up pipelines build on 4 threads on 16 or more logical CPUs, else 2 (a cold start 37 s where it read 59 on the RTX, 12 s where 17 on the RENOIR). What it left is in `docs/backlog.md`. Approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
+> [the review of 2026-11-26](../../reviews/2026-11-26-work-off-the-render-thread.md) on the owner's
 > "all recommended" (its question 2: the pre-roll reading now as a chore beside Plan 0093, the
 > cold-pipeline split before the next tester archive), with no further interview; the guesses
 > and the questions left are under "Risks & open questions". **Order:** Phases 1 and 2 may run
@@ -10,14 +10,14 @@
 > start-up plan follows only if the readings and the owner's eye say so.
 > **Created:** 2026-11-26
 > **Milestone:** cross-cutting: start-up, `docs/nfr.md` section 7 (M7's tooling in
-> [`docs/roadmap.md`](../roadmap.md) is the nearest home)
-> **Related ADRs:** [ADR-0059](../adrs/0059-loading-runs-as-time-sliced-steps-on-the-apps-frame-loop-behind-an-engine-loading-frame.md)
+> [`docs/roadmap.md`](../../roadmap.md) is the nearest home)
+> **Related ADRs:** [ADR-0059](../../adrs/0059-loading-runs-as-time-sliced-steps-on-the-apps-frame-loop-behind-an-engine-loading-frame.md)
 > (the loading stages and the steppable pre-roll),
-> [ADR-0083](../adrs/0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md)
+> [ADR-0083](../../adrs/0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md)
 > (the bake thread; the pre-roll stays lockstep),
-> [ADR-0076](../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
+> [ADR-0076](../../adrs/0076-light-stability-rules-world-history-per-source-a-fade-per-transition-and-a-ratcheted-pop-counter.md)
 > (what a surface shows before its record lands, and that a landing fades),
-> [ADR-0087](../adrs/0087-the-renderers-pipeline-cache-is-the-drivers-through-wgpu-as-bytes-the-consumer-keeps.md)
+> [ADR-0087](../../adrs/0087-the-renderers-pipeline-cache-is-the-drivers-through-wgpu-as-bytes-the-consumer-keeps.md)
 > (proposed, Plan 0103's: the cache beside the split). No new ADR: nothing is decided here,
 > two things are read.
 
@@ -36,7 +36,7 @@ owner's pick and only where the readings pay.
 
 ## Context & problem
 
-- **The pre-roll** ([Plan 0103's log](logs/0103.md), loaded, indicative): with warm pipelines
+- **The pre-roll** ([Plan 0103's log](../logs/0103.md), loaded, indicative): with warm pipelines
   the first world frame comes at 6.5 to 9.5 s on the RTX 3080 Laptop and 6.8 to 7.1 s on the
   RENOIR, 5.7 to 7 s of it the pre-roll's two stages, against the 3 s proposal of
   `docs/nfr.md` section 7. The pre-roll runs in lockstep on the render thread behind the
@@ -45,7 +45,7 @@ owner's pick and only where the readings pay.
   chunks mirrored at that moment. So the coarse box is at most 5 s of the 5.7 to 7.
 - **What changed:** with the bake thread on, every in-view chunk of the forest has some
   light about 8 s after the first frame, at an 8.3 ms frame
-  ([Plan 0099's log](logs/0099.md), RTX host). The coarse pass no longer has to hold the
+  ([Plan 0099's log](../logs/0099.md), RTX host). The coarse pass no longer has to hold the
   first frame to be affordable. Whether the first picture holds without it is the owner's
   first rule (a stable image; no waiting for light, but no unlit first picture either), and
   only his eye decides it. The pop counter that would count it (Plan 0090) is not built.
@@ -318,7 +318,7 @@ The owner: "go on both, all recommended, do not start until these lanes finish".
 
 ## Amended 2026-11-26 (architect)
 
-From [Plan 0106](done/0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md)'s Ruling 1, a note on Phase 1's readings and one instruction; no phase changes.
+From [Plan 0106](0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md)'s Ruling 1, a note on Phase 1's readings and one instruction; no phase changes.
 
 - **A pre-roll's counts are a reading of the machine.** The box and the cap read the summed wall time of the steps, and a lockstep step reads a bake read-back at whichever step it has mapped by, so two runs of `--pre-roll full` on one tree can differ in steps, chunks baked and samples, and so can the in-view chunks waiting at the first frame. Phase 1's readings state medians of their runs with the spread, and no line of this plan compares two runs' pre-roll counts for equality.
 - **`--pre-roll-stepped`** (Plan 0106 Phase 7, headless only: a device wait before each pre-roll step, no box, no cap) lands before this lane starts. Phase 1 keeps it working beside `--pre-roll`: `near` and `off` still end the pre-roll where they say, and the stepped flag then adds only its device wait. The CLI test names the pairs.
@@ -327,12 +327,12 @@ From [Plan 0106](done/0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepp
 
 A note on Phase 1's readings; no phase changes.
 
-- **A streamed start's pre-roll waits on a 30-step recheck today** ([Plan 0106](done/0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md), Ruling 5): a near chunk found blocked at its first opening is opened 30 steps on however soon it is ready, and 60 or 90 on when that check lands in an upload backlog. [Plan 0109](done/0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md) Phase 1 removes the wait. Phase 1's readings on a streamed source therefore state, per start, the `pre-roll:` line's steps and the `bake queue:` line's `waiting reach`, and whether their tree holds Plan 0109 Phase 1. Read on a tree without it, a start's seconds are the old rule's and are read again once it lands; the recommendation is to start this lane's streamed readings after it.
+- **A streamed start's pre-roll waits on a 30-step recheck today** ([Plan 0106](0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md), Ruling 5): a near chunk found blocked at its first opening is opened 30 steps on however soon it is ready, and 60 or 90 on when that check lands in an upload backlog. [Plan 0109](0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md) Phase 1 removes the wait. Phase 1's readings on a streamed source therefore state, per start, the `pre-roll:` line's steps and the `bake queue:` line's `waiting reach`, and whether their tree holds Plan 0109 Phase 1. Read on a tree without it, a start's seconds are the old rule's and are read again once it lands; the recommendation is to start this lane's streamed readings after it.
 - **What a window start pays for that wait is unmeasured** (Plan 0106 derives about 5 s on the RTX host from headless loaded runs). Phase 1's window-default starts are where it is measured: steps, ms a step, and the step at which the last near chunk was opened.
 
 ## Amended 2026-11-27 (architect, Phase 1's rows; the joint sitting)
 
-Phase 1 came back (`e6721462`). Read for this: its section of `docs/plans/logs/0108.md`, the four sheets (`live/p1-sheet-{rtx,renoir}-{forest,hall}.png` in the lane's worktree, untracked), `PreRoll::decide` (`crates/svet-render/src/bake/pre_roll.rs`), the banner's queue row (`run/hud_feed.rs`), and [Plan 0109](done/0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md)'s Phases 4a and 3b in `docs/plans/logs/0109.md`. Nothing was run. Every figure is the logs': release, pipelines warm, the bake thread on, the host loaded; Phase 1's are medians of three, Phase 4a's one run each.
+Phase 1 came back (`e6721462`). Read for this: its section of `docs/plans/logs/0108.md`, the four sheets (`live/p1-sheet-{rtx,renoir}-{forest,hall}.png` in the lane's worktree, untracked), `PreRoll::decide` (`crates/svet-render/src/bake/pre_roll.rs`), the banner's queue row (`run/hud_feed.rs`), and [Plan 0109](0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md)'s Phases 4a and 3b in `docs/plans/logs/0109.md`. Nothing was run. Every figure is the logs': release, pipelines warm, the bake thread on, the host loaded; Phase 1's are medians of three, Phase 4a's one run each.
 
 ### Ruling 1: the six deviations
 
@@ -430,14 +430,14 @@ Phase 3 runs on (it does not wait for the sitting and the sitting does not wait 
 > resume notes go to the plan's readings log, `docs/plans/logs/0108.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
-Readings: [`logs/0108.md`](logs/0108.md).
+Readings: [`logs/0108.md`](../logs/0108.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: `--pre-roll`, and what the first frames show | dev | done; stop not met (forest: `near` about 5 s sooner on both adapters) | e6721462 |
-| 2: the owner looks at the start (skipped if 1 stops) | human | done 2026-11-27 (session 8, joint with Plan 0109 Phase 4): outdoors "near", the hall "b"; Ruling 4's row (b) `near`, hall (b) ([log](logs/0108.md)) | no commit (his words land with Phase 4) |
+| 2: the owner looks at the start (skipped if 1 stops) | human | done 2026-11-27 (session 8, joint with Plan 0109 Phase 4): outdoors "near", the hall "b"; Ruling 4's row (b) `near`, hall (b) ([log](../logs/0108.md)) | no commit (his words land with Phase 4) |
 | 3: the cold pipelines on 1, 2 and 4 threads | dev | done, before Phase 2; line not met (N = 4 cuts the cold span 43 % RTX, 38 % RENOIR); stand-in N = 2 sooner | 984477bf |
-| 4: the picks written down | dev | done: `--pre-roll` unset is `near` in a window over `cave` and `outdoor`, `full` over a bounded source, under `--headless` and with `--pre-roll-drain`; `--pipeline-threads` unset 4 on 16+ logical CPUs, else 2; the fix brief's CPU twin; nfr section 7 lines | committed with this row |
+| 4: the picks written down | dev | done: `--pre-roll` unset is `near` in a window over `cave` and `outdoor`, `full` over a bounded source, under `--headless` and with `--pre-roll-drain`; `--pipeline-threads` unset 4 on 16+ logical CPUs, else 2; the fix brief's CPU twin; nfr section 7 lines | 85f36761 |
 
 ### Notes
 
@@ -462,12 +462,22 @@ each. Empty is fine.)_
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** the fly-through's `--pre-roll full|near|off` with its default by run (`near` in a window over `cave` and `outdoor`; `full` over a bounded source, under `--headless` and with `--pre-roll-drain`), the mode in the banner's and the HUD's queue rows, the `first frame light:` line; `--pipeline-threads N` (1 to 8; unset 4 on 16 or more logical CPUs, else 2) and the `start-up:` lines; the engine's start-up build over scoped threads.
+- **Public API changed (`svet-render`, added, none removed):** `Frame::with_build_threads`, `Frame::build_threads`, `Frame::pipeline_build_times`; `Frame::with_sizes` is the first at 1.
+- **Budget readings** (`docs/nfr.md` section 7 and `docs/nfr/07-startup-and-build.md`; dev host, RTX 3080 Laptop and RENOIR, release, every one loaded): the first frame warm by arm, headless (`85f36761`'s tree) and in the owner's window (`e6721462`); the in-view wait after it; the cold start on 1, 2 and 4 threads (`984477bf`'s tree). The 3 s stays a proposal. VRAM and RAM not read (nothing is allocated).
+- **Gate at the tip:** not run by `dev`; the stack's one gate run is the close review's, below.
+- **Outstanding `human` phases:** none.
+
+## Close review (architect, 2026-11-27, a fresh session)
+
+Clean: no blocker, no major. Read: the plan's diff (`apps/flythrough/src/cli/{mod,outdoor,loading,parse}.rs`, `run/loading.rs`, `run/loading/pre_roll.rs` as the split `c5647bb9` left it, `run/hud_feed.rs`, `crates/svet-render/src/frame/{pipelines,marcher,mod}.rs`, `bake/pre_roll.rs`), every test the plan names, `docs/flythrough.md`'s two rows and the help text, the nfr lines.
+
+- **The tests defend their done-whens.** The two CLI tests assert the three values, a refused fourth, the refusal with `--pre-roll-drain`, the banner row's text per mode, the box and cap per mode with and without `--pre-roll-stepped`, and the default for the four sources in a window and headless with each given value winning. `a_pre_roll_boxed_at_zero_ends_at_the_near_chunks` asserts `steps` the near step plus 1, `boxed`, every near chunk `bake_held_for_start`, and the cover of 72, as Ruling 1 restated; its CPU twin pins the whole summary and the empty list's step 2. `the_passes_built_on_four_threads_are_the_passes_built_on_one` asserts 13 pipelines a creation by the process's count, the same 12 labels once each, and a first frame equal byte for byte and not blank. The thread default is asserted at 1, 2, 8, 12, 15, 16 and 32 logical CPUs.
+- **Phase 1's stop was read the right way round.** The stop ends the pre-roll half only if `near` is under 2.0 s sooner on both adapters and both scenes; the forest reads about 5 s sooner on both, so the stop did not apply and Phase 2 ran. Phase 3's line likewise (43 % and 38 %, over 25 %).
+- **Phase 4's gate at the tip** is the stack's one run, by Plan 0109's reviewer, on the tree `c879115c`, which holds every code commit of this plan (nothing under `crates`, `apps` or `scripts` changed after it): 1491 passed of 1491, 1310.7 s, loaded. Run here on the closing tree: clippy, fmt, `cargo deny`, the script tests (45) and hook tests (88), every `scripts/check-*.mjs` and the self-tests, exit 0; the plan's seven tests by name under the exclusive perf lock (load1 7.4): the five CPU tests 0.006 to 0.007 s, the `gpu_frame` test 10.0 s, the `gpu_loading` test 10.6 s; and one debug start, `--headless --adapter RTX --source outdoor --spawn forest --pre-roll near --frames 8`, which printed `pre-roll near` in the queue row, `ended by its 0 s box` and ran out clean (the path the split moved).
+- **Accepted as built, each a line of the backlog's "Plan 0108's leftovers":** the two GPU tests at the 10 s line (Ruling 1's sixth point pre-wrote the soak mark for the one with a CPU twin); no gate test starts the fly-through itself under `near`; the window's `full` start 2.5 s behind the headless figure, not attributed; the default over `--source cave`, which the owner's sitting did not show (the outdoor tunnel stood for an enclosed streamed view); the thread default reads the logical CPU count until Plan 0107's thread plan exists; the in-view wait read once an arm.
+- **Docs.** `docs/flythrough.md` and `--help` name both defaults; the window names the pre-roll mode in force (banner and HUD queue rows); the thread count in force is the `start-up:` lines' (stdout), which is what Phase 3 asked. `dist/README-TESTER.txt` names neither, and nothing in it is made untrue.
 
 ## Followups
 
-_(Empty at the draft.)_
+- `docs/backlog.md`: "Plan 0108's leftovers"; "The cold first start" and "The light pre-roll holds the first frame" keep what a start-up plan would take.
