@@ -650,6 +650,15 @@ impl GpuWorld {
         self.columns.lowest_top([cx, cy], min..min + size)
     }
 
+    /// The column map's sheets held for chunks outside the window: 0 once a sync has moved
+    /// the window, because the move drops every leaving chunk with its sheet. The bake's
+    /// shadow reads a column's lowest top as a delta of the noted chunks on that invariant.
+    #[doc(hidden)]
+    pub fn column_sheets_outside_window(&self) -> usize {
+        self.columns
+            .sheets_outside(self.window.min, self.window.size)
+    }
+
     /// Whether chunk column `(cx, cy)` is final: no chunk of it within the window waits to
     /// upload, and each one `wanted` names (the streamer holds or will hold it) is mirrored.
     pub fn column_final(

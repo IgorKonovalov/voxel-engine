@@ -7,7 +7,7 @@ use support::*;
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use svet_render::{GpuWorld, MirrorConfig, SyncPoint, Window, wgpu};
+use svet_render::{COLUMN_NONE, GpuWorld, MirrorConfig, SyncPoint, Window, wgpu};
 use svet_render::{
     internals::ABSENT, internals::BINS, internals::FULL_BIT, internals::PAGE_BYTES,
     internals::PAGE_UNITS, internals::PLACEHOLDER_BYTES, internals::RECORD_BYTES,
@@ -518,4 +518,119 @@ fn a_chunk_edited_while_deferred_uploads_its_edited_words() {
         );
     }
     assert!(read(split.records()) == read(whole.records()));
+}
+
+/// A window move in x, in z and by a jump leaves the column map holding the window's sheets
+/// only, and a column's lowest top changes only with a chunk the change list names: after
+/// every sync of a streamed `Mixed` world (full and LOD-only chunks over five chunk layers in
+/// z), no sheet lies outside the window, and a copy of the lowest tops kept as the bake's
+/// shadow keeps it (refreshed for the named chunks' columns inside the window, pruned to the
+/// window) equals `column_lowest` for every column of the window. A move of the window alone
+/// in z, with nothing arriving or dropping, names no chunk and changes no column's lowest top.
+#[test]
+fn a_column_lowest_top_changes_only_with_a_named_chunk() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let world = World::new(&mixed_table());
+    let mut s = Streamer::new(
+        Arc::new(Mixed),
+        StreamConfig {
+            residency: Residency {
+                r_full: 1,
+                r_lod: 2,
+                hysteresis: 0,
+            },
+            workers: 4,
+            persist: PersistConfig::default(),
+        },
+    );
+    let mut gpu = GpuWorld::with_config(&device, small(Window::Follow { side: 7 }));
+    let columns = |w: ChunkExtent| {
+        (w.min.0[1]..w.max.0[1]).flat_map(move |y| (w.min.0[0]..w.max.0[0]).map(move |x| [x, y]))
+    };
+    let inside =
+        |w: ChunkExtent, k: [i32; 2]| (0..2).all(|a| k[a] >= w.min.0[a] && k[a] < w.max.0[a]);
+    let mut kept: std::collections::HashMap<[i32; 2], i32> = Default::default();
+    // The shadow's reading of one sync: the named chunks' columns (every column when the list
+    // went untracked), then every column of the window read against the mirror.
+    let read = |gpu: &GpuWorld, kept: &mut std::collections::HashMap<[i32; 2], i32>, at: &str| {
+        let w = gpu.window();
+        assert_eq!(
+            gpu.column_sheets_outside_window(),
+            0,
+            "{at}: sheets outside"
+        );
+        let named = gpu.take_changes();
+        kept.retain(|k, _| inside(w, *k));
+        match &named {
+            None => {
+                kept.clear();
+                for k in columns(w) {
+                    kept.insert(k, gpu.column_lowest(k[0], k[1]));
+                }
+            }
+            Some(list) => {
+                for c in list {
+                    let k = [c.0[0], c.0[1]];
+                    if inside(w, k) {
+                        kept.insert(k, gpu.column_lowest(k[0], k[1]));
+                    }
+                }
+            }
+        }
+        let mut some = 0;
+        for k in columns(w) {
+            let lowest = gpu.column_lowest(k[0], k[1]);
+            some += usize::from(lowest != COLUMN_NONE);
+            assert_eq!(
+                kept.get(&k).copied().unwrap_or(COLUMN_NONE),
+                lowest,
+                "{at}: column {k:?}"
+            );
+        }
+        (named, some)
+    };
+    let mut layers = HashSet::new();
+    let mut lod = 0;
+    for (focus, at) in [
+        ([0, 0, 0], "first"),
+        ([64, 0, 0], "x"),
+        ([64, 0, 64], "z"),
+        ([64 * 21, -64 * 9, 64 * 6], "jump"),
+    ] {
+        let focus = VoxelCoord(focus);
+        s.update(&world, &[focus]);
+        let ev = s.wait_idle(&world);
+        gpu.apply_events(&ev);
+        gpu.set_focus(focus);
+        let st = gpu.sync_now(&world, &device, &queue).unwrap();
+        assert_eq!(st.pending_chunks, 0, "{at}");
+        let (named, some) = read(&gpu, &mut kept, at);
+        assert_eq!(
+            named.is_none(),
+            at == "first",
+            "{at}: a tracked list after the first"
+        );
+        assert!(some > 0, "{at}: a column holds a top");
+        layers.extend(gpu.full_chunks().map(|c| c.0[2]));
+        lod += world.lod_coords().len();
+        // The window alone moves a chunk up and back: every resident chunk stays inside it.
+        let before: Vec<i32> = columns(gpu.window())
+            .map(|k| gpu.column_lowest(k[0], k[1]))
+            .collect();
+        for dz in [64, 0] {
+            gpu.set_focus(VoxelCoord([focus.0[0], focus.0[1], focus.0[2] + dz]));
+            let st = gpu.sync_now(&world, &device, &queue).unwrap();
+            assert_eq!(st.pending_chunks, 0, "{at} dz {dz}");
+            let (named, _) = read(&gpu, &mut kept, &format!("{at} dz {dz}"));
+            assert_eq!(named, Some(Vec::new()), "{at} dz {dz}: no chunk named");
+            let after: Vec<i32> = columns(gpu.window())
+                .map(|k| gpu.column_lowest(k[0], k[1]))
+                .collect();
+            assert_eq!(after, before, "{at} dz {dz}: the lowest tops");
+        }
+    }
+    assert!(layers.len() >= 3, "full chunks over chunk z {layers:?}");
+    assert!(lod > 0, "LOD-only chunks were held");
 }

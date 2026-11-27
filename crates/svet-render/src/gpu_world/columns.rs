@@ -128,6 +128,14 @@ impl ColumnMap {
         }
     }
 
+    /// The sheets held for chunks outside the window `min`, `size` (in chunks).
+    pub(super) fn sheets_outside(&self, min: [i32; 3], size: [i32; 3]) -> usize {
+        self.sheets
+            .keys()
+            .filter(|c| (0..3).any(|a| c.0[a] < min[a] || c.0[a] >= min[a] + size[a]))
+            .count()
+    }
+
     /// The column top of map cell `cell` (in map cells, absolute) over the window's chunks
     /// `z_range`, from the sheets.
     fn top(&self, cell: [i32; 2], z_range: std::ops::Range<i32>) -> i32 {

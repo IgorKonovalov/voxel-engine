@@ -3,7 +3,9 @@
 //!
 //! The render half reads the mirror once a frame ([`notes`]): each chunk the mirror's change
 //! list names, with its state now (held full, LOD-only, waiting to upload); the column of each
-//! such chunk with its lowest top; and, when a light range, a chunk's light membership or a
+//! such chunk inside the window with its lowest top (a window move, in z too, is no different:
+//! the column map holds the window's sheets only, dropped in the sync that moves the window,
+//! which notes each dropped chunk); and, when a light range, a chunk's light membership or a
 //! dirty mark changed ([`MirrorRead::light_key`]), every chunk with lights with whether it holds
 //! an exposed emitter and whether its range is current. The shadow answers the same questions
 //! the mirror does ([`Shadow::is_mirrored`] and its neighbours) from those notes.
@@ -36,8 +38,11 @@ pub(crate) struct ShadowNotes {
     /// the list went untracked (the first frame, an overflow): `whole` holds every chunk then.
     pub(crate) changed: Option<Vec<ChunkCoord>>,
     pub(crate) chunks: Vec<([i32; 3], ChunkNote)>,
-    /// The chunk columns a change touched (or every one in the window when `whole` or when the
-    /// window's z range moved), with the lowest top the column map holds over each.
+    /// The chunk columns inside the window a change touched (every one in the window when
+    /// `whole`), with the lowest top the column map holds over each. A move of the window's z
+    /// range adds none: the column map holds the sheets of the window's chunks only, each
+    /// dropped (and its chunk noted) in the sync that moves the window, so a column's lowest top
+    /// changes only with a sheet set or removed, and each of those notes its chunk.
     pub(crate) columns: Vec<([i32; 2], i32)>,
     /// Every chunk with lights and its state, when any light state changed; `None` unchanged.
     pub(crate) lights: Option<Vec<([i32; 3], LightNote)>>,
@@ -118,10 +123,6 @@ pub(crate) fn notes(
     // and queues, so the change list names what the move touched. Only an untracked list (the
     // first frame, an overflow) or no notes sent yet reads the whole mirror.
     let whole = changed.is_none() || last_window.is_none();
-    // A column's lowest top reads the window's z range, which no chunk change names: when the
-    // range moves, every column of the window is read again.
-    let z_moved = last_window
-        .is_some_and(|w| (w.min.0[2], w.size()[2]) != (window.min.0[2], window.size()[2]));
     let key = m.light_key();
     let lights = (whole || *last_key != Some(key)).then(|| m.light_notes());
     *last_key = Some(key);
@@ -150,18 +151,16 @@ pub(crate) fn notes(
         for c in ch {
             if seen.insert(c.0) {
                 chunks.push((c.0, m.chunk_note(*c)));
-                if !z_moved {
-                    cols.entry([c.0[0], c.0[1]])
-                        .or_insert_with(|| m.column_lowest(c.0[0], c.0[1]));
+                // A column outside the window holds no sheet, and the shadow answers it
+                // `COLUMN_NONE` as the mirror does once `take` has pruned it.
+                let col = [c.0[0], c.0[1]];
+                if (0..2).all(|a| col[a] >= window.min.0[a] && col[a] < window.max.0[a]) {
+                    cols.entry(col)
+                        .or_insert_with(|| m.column_lowest(col[0], col[1]));
                 }
             }
         }
-        let cols = if z_moved {
-            all_columns()
-        } else {
-            cols.into_iter().collect()
-        };
-        (chunks, cols)
+        (chunks, cols.into_iter().collect())
     };
     ShadowNotes {
         window: Some(window),
@@ -213,7 +212,12 @@ impl Shadow {
             self.mirrored = self.mirrored + usize::from(s.mirrored) - usize::from(was.mirrored);
             self.pending = self.pending + usize::from(s.pending) - usize::from(was.pending);
         }
-        for (k, v) in &n.columns {
+        // Only the window's columns: notes merged by `then` may carry an older window's.
+        let inside = |k: &[i32; 2]| {
+            n.window
+                .is_none_or(|w| (0..2).all(|a| k[a] >= w.min.0[a] && k[a] < w.max.0[a]))
+        };
+        for (k, v) in n.columns.iter().filter(|(k, _)| inside(k)) {
             self.columns.insert(*k, *v);
         }
         if let Some(l) = &n.lights {
@@ -366,12 +370,12 @@ mod tests {
         fn chunks(&self) -> Vec<ChunkCoord> {
             self.chunks.keys().map(|c| ChunkCoord(*c)).collect()
         }
+        /// Over every held chunk of the column, as the column map's sheets are: the model, like
+        /// the mirror, drops a chunk the window leaves in the move itself, so no z range applies.
         fn column_lowest(&self, cx: i32, cy: i32) -> i32 {
-            let w = self.window();
-            let z = w.min.0[2]..w.min.0[2] + w.size()[2];
             self.chunks
                 .iter()
-                .filter(|(c, s)| c[0] == cx && c[1] == cy && z.contains(&c[2]) && s.0.mirrored)
+                .filter(|(c, s)| c[0] == cx && c[1] == cy && s.0.mirrored)
                 .map(|(_, s)| s.1)
                 .min()
                 .unwrap_or(crate::gpu_world::COLUMN_NONE)
@@ -501,14 +505,17 @@ mod tests {
         assert!(kinds.iter().all(|&k| k > 100), "every kind ran: {kinds:?}");
     }
 
-    /// Done when of Plan 0111 Phase 6a: over a model mirror of 2 048 chunks, a window move by
-    /// one chunk in x, then in x and z, then a jump clear of the window, each sends notes that
-    /// read `whole` false and name only chunks the change list named; the shadow that took them
-    /// answers held, LOD-only and pending for every chunk of the old and new windows, the
-    /// counts and the lowest top of every column exactly as a shadow fed whole notes of the same
-    /// mirror does. The z move's notes carry every column of the window, and the first frame's
-    /// notes read `whole` true. Each move is followed by a frame that uploads part of the
-    /// entering slab, read the same way.
+    /// Done when of Plan 0111 Phases 6a and 6a': over a model mirror of a 16 x 16 x 8 window
+    /// whose world holds chunks at chunk z 1 to 7 only (nothing below the window's first layer
+    /// or above its last, as a cave's window has empty layers), a window move by one chunk in
+    /// x, then in x and z, then a jump clear of the window, each sends notes that read `whole`
+    /// false and name only chunks the change list named; the columns noted are the named
+    /// chunks' columns inside the window and no other, on the z move too (fewer than the
+    /// window's every column); the shadow that took them answers held, LOD-only and pending for
+    /// every chunk of the old and new windows, the counts and the lowest top of every column
+    /// exactly as a shadow fed whole notes of the same mirror does, and the first frame's notes
+    /// read `whole` true. Each move is followed by a frame that uploads part of the entering
+    /// slab, read the same way.
     #[test]
     fn a_window_move_sends_a_delta_that_reads_as_the_whole() {
         const SIZE: [i32; 3] = [16, 16, 8];
@@ -541,7 +548,7 @@ mod tests {
         let w0 = m.window();
         for x in 0..SIZE[0] {
             for y in 0..SIZE[1] {
-                for z in 0..SIZE[2] {
+                for z in 1..SIZE[2] {
                     let c = [x, y, z];
                     if let Some(s) = state(&mut rng, c) {
                         m.chunks.insert(c, s);
@@ -549,7 +556,7 @@ mod tests {
                 }
             }
         }
-        assert!(m.chunks.len() > 1_700, "{} chunks", m.chunks.len());
+        assert!(m.chunks.len() > 1_500, "{} chunks", m.chunks.len());
         let (mut last_window, mut last_key) = (None, None);
         let mut shadow = Shadow::default();
         let first = notes(&m, None, last_window, &mut last_key);
@@ -581,7 +588,8 @@ mod tests {
                 })
             });
             for c in entered.filter(|c| !old.contains(*c)) {
-                if rng.next(10) != 0 {
+                // The world holds nothing outside chunk z 1 to 7.
+                if (1..SIZE[2]).contains(&c.0[2]) && rng.next(10) != 0 {
                     m.chunks.insert(
                         c.0,
                         (
@@ -625,16 +633,25 @@ mod tests {
                     n.chunks.iter().all(|(c, _)| named.contains(c)),
                     "{at_name}: every chunk noted was named"
                 );
-                if name == "z" && frame == "move" {
-                    let mut cols: Vec<[i32; 2]> = n.columns.iter().map(|(k, _)| *k).collect();
-                    cols.sort_unstable();
-                    let mut want = Vec::new();
-                    for x in new.min.0[0]..new.max.0[0] {
-                        for y in new.min.0[1]..new.max.0[1] {
-                            want.push([x, y]);
-                        }
-                    }
-                    assert_eq!(cols, want, "{at_name}: every column of the window");
+                // Every move alike, z too: the columns noted are the named chunks' columns
+                // inside the window, each once, and no other.
+                let mut cols: Vec<[i32; 2]> = n.columns.iter().map(|(k, _)| *k).collect();
+                cols.sort_unstable();
+                let mut want: Vec<[i32; 2]> = named
+                    .iter()
+                    .map(|c| [c[0], c[1]])
+                    .filter(|k| (0..2).all(|a| k[a] >= new.min.0[a] && k[a] < new.max.0[a]))
+                    .collect();
+                want.sort_unstable();
+                want.dedup();
+                assert_eq!(cols, want, "{at_name}: the named chunks' columns");
+                if name == "z" {
+                    let window_columns = (SIZE[0] * SIZE[1]) as usize;
+                    assert!(
+                        cols.len() < window_columns,
+                        "{at_name}: {} columns, not the window's {window_columns}",
+                        cols.len()
+                    );
                 }
                 last_window = n.window;
                 shadow.take(&n);
