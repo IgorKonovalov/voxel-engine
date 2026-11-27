@@ -55,7 +55,7 @@ are Plan 0109 Phase 6's. Plan 0093, the README rewrite with reproducible screens
 | [0108](0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md) | The start-up readings: a shorter pre-roll, the cold pipelines split | approved 11-26 | A chore, no ADR. Beside 0093. P3 before the next tester archive. |
 | [0109](0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md) | A blocked chunk is checked again when its blocker clears: the streamed start | draft 11-26 | No ADR. P1 the rule, P2-3 readings, P4 the owner's answer. Awaits go. |
 | [0110](0110-the-math-hot-paths-measured-then-cut-shader-math-f16-and-the-integer-root.md) | The math hot paths, measured then cut: shader math and f16 by adapter | draft 11-27 | ADR-0088. After 0091 (owner). P2 the owner's clock sweep; keep at >= 5 % on RENOIR. |
-| [0111](0111-the-stagger-in-flight-on-streamed-scenes-read-quiet-after-plan-0107-then-cut.md) | The stagger in flight on streamed scenes: read quiet, then cut | draft 11-27 | No ADR. After 0107 merges. P1-4 readings, can stop; remedies by amendment. |
+| [0111](0111-the-stagger-in-flight-on-streamed-scenes-read-quiet-after-plan-0107-then-cut.md) | The stagger in flight on streamed scenes: read quiet, then cut | approved 11-27 | No ADR. After 0107 merges. P1-4 readings, can stop; remedies by amendment. |
 <!-- roster:end -->
 
 ## Sequence
