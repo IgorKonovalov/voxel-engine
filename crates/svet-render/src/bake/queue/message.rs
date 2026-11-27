@@ -47,6 +47,7 @@ pub(crate) struct StepSettings {
     pub key_step: f32,
     pub landing_fade: bool,
     pub dig_store_hold: bool,
+    pub dig_estimate: crate::DigEstimate,
     pub landed_word: Option<u32>,
     pub far_normal: [f32; 2],
 }
@@ -241,6 +242,7 @@ impl BakeQueue {
         self.key_step = s.key_step;
         self.landing_fade = s.landing_fade;
         self.dig_store_hold = s.dig_store_hold;
+        self.dig_estimate = s.dig_estimate;
         self.landed_word = s.landed_word;
         self.far_normal = s.far_normal;
         for a in arrivals {

@@ -117,6 +117,26 @@ impl DigHold {
     }
 }
 
+/// The estimate a dig's held record takes under [`DigHold::On`] (`bake::held`, ADR-0082): a
+/// dug face's sky visibility is its base (the nearest record at or above the cell, else the
+/// chunk summary's, capped by the cell's own) times the square root of its near openness.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DigEstimate {
+    /// The value at least a floor above black (`HELD_FLOOR`), a cell with no face its base at
+    /// least the floor. A setting: a dug face at depth starts brighter than its landed light
+    /// (the flash the owner's window of Plan 0105 Phase 6 saw).
+    Surface,
+    /// No floor on any path: a face holds its base times the root of its openness, 0
+    /// included, and a cell with no face its base. The default.
+    #[default]
+    Depth,
+}
+
+named_enum!(DigEstimate {
+    Surface => "surface",
+    Depth => "depth",
+});
+
 /// The source that adds the key light back on a cube face where the column horizon reads under
 /// 1 (Plan 0100 Phase 6, ADR-0084): the shown visibility is the larger of the horizon and the
 /// source, so a source only adds. Entities, field surfaces, `light history on` and `key far ray`

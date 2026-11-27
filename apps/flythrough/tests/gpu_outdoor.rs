@@ -1859,6 +1859,7 @@ fn the_sunlit_forest_floor_does_not_clip() {
 include!("gpu_outdoor/defects.rs");
 include!("gpu_outdoor/flicker.rs");
 include!("gpu_outdoor/dig_line.rs");
+include!("gpu_outdoor/dig_depth.rs");
 include!("gpu_outdoor/canopy.rs");
 include!("gpu_outdoor/still.rs");
 include!("gpu_outdoor/bars.rs");

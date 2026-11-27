@@ -63,6 +63,16 @@ pub(crate) fn edit_record(
     }
 }
 
+/// The `dig settled: rings 1 and 2` line's `digs whole N`: the chunks the dig's box reached
+/// that held no light block (ADR-0070's whole digs), counted by the queue from the watch's start
+/// (`from`) to `st`; a dig that joined the watch before its rings settled is counted in the same
+/// line. The count is the queue's at the step that read the box, so with the bake thread on it
+/// is known only once that step's books are taken, a frame or more after the edit's line
+/// (`carved: ...`), which therefore cannot carry it; the frame never waits for it.
+pub fn digs_whole_text(from: &svet_render::QueueStats, st: &svet_render::QueueStats) -> String {
+    format!("digs whole {}", st.digs_whole - from.digs_whole)
+}
+
 pub(crate) fn material_name(table: &MaterialTable, m: MaterialId) -> String {
     table
         .get(m)

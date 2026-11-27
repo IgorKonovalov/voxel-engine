@@ -148,7 +148,8 @@
 //! `--dig-reach off` turns off ring 3 (the chunks within the light radius of a dig that touched
 //! lit bricks); `--bake-thread on|off` runs the live queue's sliced steps on the bake thread or in
 //! lockstep (default `on` in a window, `off` under `--headless`; the banner's queue row and the
-//! HUD's queue row name it); a `dig settled:` line when a dig's rings are baked; `--light`, `--cut`, `--show`,
+//! HUD's queue row name it); a `dig settled:` line when a dig's rings are baked (rings 1 and 2's
+//! names `digs whole N`, the chunks it reached that held no light block); `--light`, `--cut`, `--show`,
 //! `--reference`, `--bake-file`, `--queue-file`, `--bake-radius`, `--blend`, `--preload` and
 //! `--preload-claim` are refused, naming Plan 0059; `--glide V` moves the
 //! camera along its heading at `V` voxels a second (`--pose vein-flight` starts the settle rig's
@@ -1062,6 +1063,10 @@ impl Args {
                 .outdoor
                 .dig_hold
                 .unwrap_or(crate::default_lighting().dig_hold),
+            dig_estimate: self
+                .outdoor
+                .dig_estimate
+                .unwrap_or(crate::default_lighting().dig_estimate),
             penumbra: self.outdoor.penumbra.unwrap_or(crate::DEFAULT_PENUMBRA),
             key_far: self.outdoor.key_far,
             key_far_mix: self.outdoor.key_far_mix,

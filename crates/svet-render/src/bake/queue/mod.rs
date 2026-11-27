@@ -280,6 +280,12 @@ pub struct BakeQueue {
     /// reading's dig timeline ([`QueueRead::dig_trace`]); off by default. Lockstep reads the
     /// queue itself.
     pub trace_digs: bool,
+    /// Whether a dig's held records push their parts to [`BakeQueue::held_trace`] (a
+    /// reading); off by default. The queue's own: with the bake thread on it is not read back.
+    pub trace_held: bool,
+    /// The held values' parts of the digs taken since it was last cleared, under
+    /// [`BakeQueue::trace_held`].
+    pub held_trace: Vec<HeldPart>,
     /// The order candidates open in.
     pub order: QueueOrder,
     /// Whether the queue withdraws the jobs of chunks the camera has passed (ADR-0048): at a
@@ -453,6 +459,9 @@ pub struct BakeQueue {
     /// `crate::DigHold::On`, set by the frame each step: a dig's touched bricks take held
     /// records at the edit (`bake::held`), whose visibilities fade to the job's at its landing.
     pub dig_store_hold: bool,
+    /// [`crate::Lighting::dig_estimate`], set by the frame each step: the held records'
+    /// estimate (`bake::held`).
+    pub dig_estimate: crate::DigEstimate,
     /// [`crate::Lighting::source_fade`] and the frame, set by the frame each step: `None` off
     /// (every block's [`LANDED_AT`] word 0); else the word a chunk's first block writes there,
     /// the frame plus one, or 0 for a block placed before the first frame (the pre-roll). A
@@ -681,6 +690,9 @@ impl BakeQueue {
             key_step: crate::frame::DEFAULT_KEY_STEP,
             landing_fade: false,
             dig_store_hold: true,
+            dig_estimate: crate::DigEstimate::default(),
+            trace_held: false,
+            held_trace: Vec::new(),
             landed_word: None,
             keys: Default::default(),
             far_normal: [0.0; 2],

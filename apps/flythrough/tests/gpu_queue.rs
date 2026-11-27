@@ -1286,6 +1286,46 @@ fn the_edits_frame_holds_the_dig_and_ring_1_lands_in_either_mode() {
     }
 }
 
+/// Plan 0105 Phase 7b's `digs whole N` on the fly-through's `dig settled: rings 1 and 2` line
+/// ([`flythrough::digs_whole_text`]), from the live queue's stats in lockstep. A column two
+/// chunks high: rock fills the lower chunk whole (no face, so no light block) and the upper
+/// one's bottom 16 voxels, the camera above. Settled, a carve within the upper chunk's slab
+/// (8 voxels clear of the lower chunk) reads `digs whole 0`; a carve down 8 voxels into the
+/// lower chunk reads `digs whole 1` (the lower chunk, which held no block).
+#[test]
+fn the_dig_line_counts_the_chunks_with_no_block_a_dig_reached() {
+    let world = world_of([1, 1, 2], AIR);
+    fill(&world, [0, 0, 0], [64, 64, 64], ROCK);
+    fill(&world, [0, 0, 64], [64, 64, 80], ROCK);
+    let Some(mut q) = rig(world, &Setup::at([32.5, 32.5, 100.5])) else {
+        return;
+    };
+    q.settle();
+    let (low, high) = (ChunkCoord([0, 0, 0]), ChunkCoord([0, 0, 1]));
+    assert!(
+        q.frame.store().block(low).is_none(),
+        "the lower chunk holds no block"
+    );
+    assert!(
+        q.frame.store().block(high).is_some(),
+        "the upper chunk holds its block"
+    );
+    let mut texts = Vec::new();
+    for (lo, hi) in [([24, 24, 72], [40, 40, 80]), ([24, 24, 56], [40, 40, 80])] {
+        let from = q.q().stats();
+        q.edit(&box_op(lo, hi, Mode::Carve));
+        let st = q.step();
+        assert!(
+            !q.q().boxes_waiting(),
+            "lockstep: the edit's step reads its box"
+        );
+        texts.push(flythrough::digs_whole_text(&from, &st));
+        q.settle();
+    }
+    println!("{texts:?}");
+    assert_eq!(texts, ["digs whole 0", "digs whole 1"]);
+}
+
 /// Readings, `#[ignore]`d and run by hand: `cargo nextest run -p flythrough --test gpu_queue
 /// --run-ignored only -E 'test(=reading::<name>)' --no-capture`.
 mod reading {

@@ -764,7 +764,7 @@ a cheap query.
   positional voice as an audio source through M4's occlusion.
 - **ADRs expected:** transport; voice codec.
 
-### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0; Plan 0094 closed 2026-11-20, v0.68.0; Plan 0095 closed 2026-11-21, v0.69.0; Plan 0097 closed 2026-11-23, v0.70.0; Plan 0096 closed 2026-11-23, v0.71.0; Plan 0098 closed 2026-11-24, v0.72.0; Plan 0100 closed 2026-11-25, v0.75.0; Plan 0099 closed 2026-11-26, v0.76.0; Plan 0104 closed 2026-11-26, v0.77.0; Plan 0101 closed 2026-11-26, v0.78.0)
+### M10: Outdoors (Plans 0032 to 0037 approved 2026-10-22; its first plan, Plan 0069 the render profiles, closed 2026-11-17, v0.60.0; Plan 0032 closed 2026-11-17, v0.61.0; Plan 0086 closed 2026-11-19, v0.67.0; Plan 0094 closed 2026-11-20, v0.68.0; Plan 0095 closed 2026-11-21, v0.69.0; Plan 0097 closed 2026-11-23, v0.70.0; Plan 0096 closed 2026-11-23, v0.71.0; Plan 0098 closed 2026-11-24, v0.72.0; Plan 0100 closed 2026-11-25, v0.75.0; Plan 0099 closed 2026-11-26, v0.76.0; Plan 0104 closed 2026-11-26, v0.77.0; Plan 0101 closed 2026-11-26, v0.78.0; Plan 0105 closed 2026-11-27, v0.80.0)
 
 The open-sky half of the "Floor, profiles and scene scale" decision, as general engine
 mechanisms: the first consumer is underground, so nothing here is on its P0 list, and terrain
@@ -905,7 +905,19 @@ against the baked store: no probe or store term takes sun or sky light.
   RTX's drain slice against 0.85, and the RTX forest's view is final at 17.9 and 19.0 s
   against 10 (every chunk in view has some light at about 8 s; the hills meet at 6.5 s).
   Left open: the feed's levers and the readings not taken (the backlog), and a flash when
-  digging deeper than 2 to 3 m, the same with the thread off (Plan 0105, drafted).
+  digging deeper than 2 to 3 m, the same with the thread off (Plan 0105).
+- **The dig's flash at depth** ([Plan 0105](plans/done/0105-the-digs-flash-at-depth-a-held-estimate-that-follows-the-holes-own-light.md),
+  closed 2026-11-27, v0.80.0; ADR-0082's Outcome added to): the record a dig holds until its
+  re-bake lands had a floor above black, which under an eye in the hole read +78 to +100
+  display levels over a landed 0. The held estimate is a render setting,
+  `Lighting::dig_estimate`; the default `depth` holds no floor, counts a ray open only where
+  it reaches its base's height, holds a dig into a chunk with no light block on a record, and
+  moves the dig's faces alone. The owner at his window: `surface` flashes, `depth` does not,
+  the dark start "is not visible at all". **Disclosed:** a 1 m dig starts 4.5 levels under its
+  settled look (accepted by eye); a dig into unbaked ground darkens 0.46 % of the ground beside
+  it for two frames (seen by no one on purpose); blind, the owner read the binary of the day
+  before as flashing slightly less and accepted the closing one, cause not found; the forest
+  at depth is asserted by name on the RTX 3080 Laptop alone. All four are in the backlog.
 - **A surface detail layer** ([Plan 0081](plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
   drafted 2026-11-16, awaits the owner's go; ADR-0063 proposed): grass, moss, strands,
   fungus caps, flowers, pebbles and snow tufts as a procedural shell marched in the hit pass

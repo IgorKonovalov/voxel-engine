@@ -662,6 +662,8 @@ impl Run {
         let stepped =
             gfx.frame
                 .bake_queue_step(&gpu.device, &gpu.queue, &mut gfx.mirror, &self.world, &view);
+        // A box waits until the books of the step that read it are taken (the stats predate it).
+        let box_answered = !gfx.frame.bake_queue().is_some_and(|q| q.boxes_waiting());
         self.queue.last_step_cpu = ms_since(t_cpu);
         self.queue.step_cpu.push(self.queue.last_step_cpu);
         // After the step: the queue holds the frame's far-normal band by then.
@@ -699,15 +701,16 @@ impl Run {
                         let share = f64::from(missing) / f64::from(gfx.frame.light_pixels().max(1));
                         w.missing_max = w.missing_max.max(share);
                     }
-                    if w.rings_ms.is_none() && st.digs == 0 {
+                    if w.rings_ms.is_none() && st.digs == 0 && box_answered {
                         w.rings_ms = Some((t_step - w.start_ms, w.frames));
                         println!(
-                            "dig settled: rings 1 and 2 in {} frames, {:.0} ms ({} dig jobs, {} bricks, {:.3e} samples); frames from the dig: longest {:.1} ms, {} over 33 ms; no value at most {}; ring 3 {} chunks waiting",
+                            "dig settled: rings 1 and 2 in {} frames, {:.0} ms ({} dig jobs, {} bricks, {:.3e} samples, {}); frames from the dig: longest {:.1} ms, {} over 33 ms; no value at most {}; ring 3 {} chunks waiting",
                             w.frames,
                             t_step - w.start_ms,
                             st.digs_baked - w.from.digs_baked,
                             st.dig_bricks - w.from.dig_bricks,
                             (st.total_samples - w.from.total_samples) as f64,
+                            crate::edits::digs_whole_text(&w.from, &st),
                             w.longest_ms,
                             w.over_33,
                             if self.args.bake.read_missing {

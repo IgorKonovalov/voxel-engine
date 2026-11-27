@@ -143,6 +143,7 @@ pub(super) fn hold(a: &mut crate::cli::Args, s: &RenderSettings) {
     o.landing_fade = Some(l.landing_fade);
     o.source_fade = Some(l.source_fade);
     o.dig_hold = Some(l.dig_hold);
+    o.dig_estimate = Some(l.dig_estimate);
     o.penumbra = Some(l.penumbra);
     o.key_far = l.key_far;
     o.key_far_mix = l.key_far_mix;
