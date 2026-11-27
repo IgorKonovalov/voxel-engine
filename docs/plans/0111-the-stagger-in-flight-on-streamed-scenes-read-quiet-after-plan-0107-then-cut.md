@@ -374,7 +374,8 @@ Readings: [`logs/0111.md`](logs/0111.md).
 | 5: the architect's amendment | human | not started | |
 | 6: the remedies (not written) | dev | not written | |
 | 6a: the shadow's notes across a window move are a delta | dev | code and test landed; bars missed: quiet `build` max (10.540, 10.871 against under 8) and `build`-led slow frames (11, 9 against 0); `build` p99 bars met; at the architect; deviations in the log | 1795738b (code), fffd2847 (reading) |
-| 6a': the z move's every-column read goes | dev | done; bar missed: quiet F lines' `build` mean (7.118, 6.597 against under 6.0); the other bars met, stop rule not fired; deviations in the log | 0c7d353b (code), committed with this row (reading) |
+| 6a': the z move's every-column read goes | dev | done; bar missed: quiet F lines' `build` mean (7.118, 6.597 against under 6.0); the other bars met, stop rule not fired; deviations in the log | 0c7d353b (code), 6b2cd2d8 (reading) |
+| 6b: the slab's frame, read in four arms | dev | done (a reading on `0c7d353b`, no code); Hold D (Plan 0107's conditions) run; deviations: D before C, D's `--report` dropped (`over_33ms` from the summary), D's full residency not reached in any run, the copy-led split over the printed lines only | committed with this row |
 | 7: the owner flies the same paths | human | not started | |
 
 ### Notes
