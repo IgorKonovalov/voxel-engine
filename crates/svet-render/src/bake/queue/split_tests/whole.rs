@@ -321,7 +321,8 @@ fn a_whole_digs_block_answers_no_sky_outside_its_bricks() {
     );
 }
 
-/// Plan 0105 Phase 7a2, step 1: under `Depth` a held record moves only the dig's faces.
+/// Plan 0105 Phase 7a2, step 1, and Phase 7a4b: under `Depth` a held record moves only the
+/// dig's faces.
 /// (1) A box cut at one place into ground the queue never baked (faces, no block, a whole
 /// dig): in each brick the box dilated by one voxel touches, a direction with a face outside
 /// that dilated box (a face the dig did not make) reads no visibility in the held record
@@ -331,12 +332,7 @@ fn a_whole_digs_block_answers_no_sky_outside_its_bricks() {
 /// kerb cell's up cleared by hand, so the kerb's cell has no base: no record's up at or within
 /// [`super::super::super::held::HELD_CELLS`] cells above it, no summary's), a box beside the
 /// kerb: the kerb cell's `+x` direction, every face of it kept, keeps its old byte.
-///
-/// Red first: the `should_panic` mark pins the clauses the tree misses before the fix, so the
-/// quick tier stays green on that tree and turns red once the fix meets any of them; the fix
-/// removes the mark.
 #[test]
-#[should_panic(expected = "failed clauses [1, 3]")]
 fn a_whole_dig_moves_no_face_it_did_not_make() {
     // (1) and (2): a whole dig into ground that was never baked.
     let mut rig = ground_rig(true);
