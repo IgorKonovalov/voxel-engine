@@ -3,8 +3,11 @@
 #
 #   scripts/package-tester.sh linux|windows OUT_DIR [NOTICES]
 #
-# Takes target/release/svet-tester and flythrough (.exe on Windows), dist/README-TESTER.txt with
-# its placeholders filled (@VERSION@ from the workspace's Cargo.toml, @COMMIT@ from SVET_COMMIT,
+# Takes target/release/svet-tester and flythrough (.exe on Windows; SVET_BIN_DIR names another
+# folder), the fly-through's assets as assets/ beside them (materials.txt, each entity's .rig
+# and .vox, each structure's .vox: what the binary reads at run time; the .voxtext sources and
+# the READMEs stay out), dist/README-TESTER.txt with its placeholders filled (@VERSION@ from
+# the workspace's Cargo.toml, @COMMIT@ from SVET_COMMIT,
 # @GLIBC_FLOOR@ from the Linux binaries' highest GLIBC_ symbol, `objdump -T`), LICENSE-MIT,
 # LICENSE-APACHE and NOTICES as THIRD-PARTY-NOTICES.txt (a placeholder line when not given;
 # the release workflow generates it with cargo-about, and appends dist/DXC-LICENSE.txt for
@@ -17,6 +20,7 @@ os=${1:?linux or windows}
 out=${2:?the output folder}
 notices=${3:-}
 root=$(cd "$(dirname "$0")/.." && pwd)
+bins=${SVET_BIN_DIR:-$root/target/release}
 version=$(grep -m1 '^version = ' "$root/Cargo.toml" | sed 's/^version = "\(.*\)"/\1/')
 commit=${SVET_COMMIT:-unknown}
 
@@ -35,8 +39,15 @@ dir="$stage/$name"
 mkdir -p "$dir"
 
 for bin in svet-tester flythrough; do
-  cp "$root/target/release/$bin$exe" "$dir/"
+  cp "$bins/$bin$exe" "$dir/"
 done
+
+# The fly-through resolves its assets folder beside its executable when one is there
+# (apps/flythrough/src/assets.rs), so the archive's assets/ is what a tester's run reads.
+mkdir -p "$dir/assets"
+(cd "$root/apps/flythrough/assets" \
+  && find . -type f \( -name materials.txt -o -name '*.rig' -o -name '*.vox' \) | sort \
+  | tar -cf - -T -) | tar -xf - -C "$dir/assets"
 
 if [ "$os" = linux ]; then
   floor=$(objdump -T "$dir/svet-tester" "$dir/flythrough" \

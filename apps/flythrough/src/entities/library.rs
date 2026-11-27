@@ -1,6 +1,6 @@
 //! The entities library: every subdirectory `<name>/` of a directory that holds `<name>.rig`
-//! is one entry named `<name>`, listed in name order. The default directory is the
-//! fly-through's `assets/entities/`; `--library-dir DIR` points elsewhere and `--model x.rig`
+//! is one entry named `<name>`, listed in name order. The default directory is
+//! `entities/` in the assets folder (`crate::assets`); `--library-dir DIR` points elsewhere and `--model x.rig`
 //! adds that rig as an entry ahead of the library's, selected. An entry whose files do not
 //! read or parse, or whose rig does not build against the world's table, stays in the list
 //! with its error and cannot be placed. A missing or empty library gives the built-in walker
@@ -15,8 +15,8 @@ use svet_world::MaterialTable;
 
 use crate::viewer::Viewer;
 
-/// The library the run scans unless `--library-dir` names another: the fly-through's
-/// `assets/entities/` where it was built.
+/// The library in the source tree. A run scans `entities/` in [`crate::assets::root`] unless
+/// `--library-dir` names another: this folder in a dev build.
 pub const DEFAULT_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/entities");
 
 /// The built-in walker's entry name.
@@ -348,11 +348,12 @@ pub fn cut(mut s: String, width: usize) -> String {
     s
 }
 
-/// The library's directory `args` name: `--library-dir`'s or [`DEFAULT_DIR`].
+/// The library's directory `args` name: `--library-dir`'s or `entities/` in
+/// [`crate::assets::root`].
 pub fn dir_of(args: &crate::cli::Args) -> PathBuf {
     args.library_dir
         .clone()
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_DIR))
+        .unwrap_or_else(|| crate::assets::path("entities"))
 }
 
 /// The material names the rigs of the library `args` name carry in their `material` lines,

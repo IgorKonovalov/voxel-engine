@@ -20,7 +20,8 @@ use svet_world::{
     AIR, Brick, Chunk, ChunkCoord, MaterialTable, StampedSource, VoxelCoord, WorldSource,
 };
 
-/// The structures library.
+/// The structures library in the source tree; a run reads `structures/` in
+/// [`crate::assets::root`] ([`dir_of`]), this folder in a dev build.
 pub const LIBRARY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/structures");
 
 /// Voxels of clear air around a structure's box on its sides and above it: 1 m.

@@ -437,3 +437,62 @@ fn the_stretch_is_named_on_the_row_when_not_one() {
         );
     }
 }
+
+/// Under `--tester` the banner the window draws (`write_banner`, with the stats HUD out of
+/// reach) carries one frame row under the path's rows, read live from the frame window: none
+/// before a frame is recorded, `fps 59.9  frame 16.7 ms p99 16.7` after sixty 16.7 ms frames,
+/// and `fps 30.0  frame 33.3 ms p99 33.3` once a full window of 33.3 ms frames replaces them.
+/// The same run without `--tester` draws no frame row in its banner.
+#[test]
+fn the_tester_banner_carries_the_live_frame_row() {
+    use crate::path::{PathMode, PathPlayer, Scene};
+    let args_of = |tester: bool| {
+        let scene = Scene::Cave;
+        let mode = PathMode::Bench;
+        let mut a: Vec<&str> = scene.flags().iter().chain(mode.flags()).copied().collect();
+        a.extend(["--path", scene.name(), "--path-mode", mode.name()]);
+        if tester {
+            a.push("--tester");
+        }
+        crate::cli::parse_args_from(argv(&a)).expect("parses")
+    };
+    let banner = |run: &mut Run| {
+        run.write_banner();
+        run.hud.banner.clone()
+    };
+    let frame_row = |text: &str| {
+        text.lines()
+            .find(|l| l.starts_with("fps "))
+            .map(str::to_owned)
+    };
+    for tester in [true, false] {
+        let mut run = run_of(args_of(tester));
+        run.start = now();
+        run.player = Some(PathPlayer::new(&crate::path::CAVE, PathMode::Bench));
+        let text = banner(&mut run);
+        assert!(text.contains("benchmark "), "{text}");
+        assert_eq!(frame_row(&text), None, "no frame yet: {text}");
+        for _ in 0..60 {
+            run.hud.frames.record(0.0167);
+        }
+        let text = banner(&mut run);
+        if !tester {
+            assert_eq!(frame_row(&text), None, "outside --tester: {text}");
+            continue;
+        }
+        assert_eq!(
+            frame_row(&text).as_deref(),
+            Some("fps 59.9  frame 16.7 ms p99 16.7"),
+            "{text}"
+        );
+        for _ in 0..crate::hud::RING {
+            run.hud.frames.record(0.0333);
+        }
+        let text = banner(&mut run);
+        assert_eq!(
+            frame_row(&text).as_deref(),
+            Some("fps 30.0  frame 33.3 ms p99 33.3"),
+            "{text}"
+        );
+    }
+}

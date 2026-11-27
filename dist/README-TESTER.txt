@@ -5,8 +5,9 @@ Thank you for testing the voxel engine. This archive holds two programs:
 
   svet-tester   the launcher: a small window with a menu
   flythrough    the engine's test scene viewer, which the launcher starts for each run
+  assets        the viewer's material table, its voxel models and its structures
 
-Keep both in the same folder. Nothing is installed, and nothing is sent anywhere: you send
+Keep the three in the same folder. Nothing is installed, and nothing is sent anywhere: you send
 the report yourself (see "Sending the report").
 
 
@@ -60,6 +61,11 @@ Keys in a run
   Esc                end the run (a benchmark ended early is marked "aborted")
 
 A benchmark flies by itself; only Esc does anything there.
+
+The run's top-left corner shows the frame rate under the run's own row, for example
+"fps 59.9  frame 16.7 ms p99 18.2": frames per second, the median frame time and the 99th
+percentile (the slowest 1 in 100 frames), over the last 240 frames. The report holds the
+whole run's figures.
 
 
 What the report holds

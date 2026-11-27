@@ -251,6 +251,18 @@ the fly-through has no notion of a room, so judge a large structure on the outdo
 Only movement, look, the left click's dig, `F1` (a help panel), `T` and `Esc` act. Every other
 key is off, the stats overlay among them.
 
+The banner carries one frame row under the path's rows, once a frame is drawn: `fps 59.9  frame
+16.7 ms p99 18.2`, the wall frame window's fps, median and p99 over the last 240 frames (the
+open menu's readout, from the same window). The banner is drawn on every frame in any mode, so
+the row adds a few glyphs to the overlay pass already there; that pass is inside the wall frame
+times `run.json` reports and outside its GPU figure (the sum of the frame's passes, which
+leaves the overlay out).
+
+A packaged build reads its assets (`materials.txt`, `entities/`, `structures/`) from `assets/`
+beside the executable when that folder exists, as in the tester's archive; a dev build, with no
+such folder beside it under `target/`, reads `apps/flythrough/assets`. `--materials`,
+`--library-dir` and `--structures-dir` override either.
+
 ## Flags
 
 Grouped as `--help` groups them. A default in brackets is the code's.
@@ -397,12 +409,12 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--entities-walk on\|off` | The wander starts, as the menu's `wander` sets it: every placed body wanders, the built-in walkers walk their circle [off] |
 | `--model PATH` | View a `.rig` and the `.vox` it names (the library is `apps/flythrough/assets/entities/<name>/<name>.rig`, [entities.md](entities.md)): it is the library's first entry, selected, so `` ` `` and `--entities N` place it (a rig of the library itself is that entry, not a second one); a saved change to either file reloads its instances only |
 | `--clip NAME` | The `--model` clip to play first [the rig's first] |
-| `--materials PATH` | The material table file [`apps/flythrough/assets/materials.txt`; the built-in copy when that is missing]. Each scene takes its rows by name; while the window is open a saved change of colour, roughness, opacity or emission shows within a second (`materials reloaded`, the emissive chunks re-baked), a row added, removed or renamed or a class changed (`flags`, emitting or not) waits for a restart (`materials: shape changed, restart`), and an error names its line. A `--model` whose `.rig` has no `material` line for a palette entry takes the entry's colour and MagicaVoxel material as a row (`vox #rrggbb ...`, the HUD's `rows +N`) |
+| `--materials PATH` | The material table file [`materials.txt` in the assets folder (`apps/flythrough/assets`, or `assets/` beside a packaged executable); the built-in copy when that is missing]. Each scene takes its rows by name; while the window is open a saved change of colour, roughness, opacity or emission shows within a second (`materials reloaded`, the emissive chunks re-baked), a row added, removed or renamed or a class changed (`flags`, emitting or not) waits for a restart (`materials: shape changed, restart`), and an error names its line. A `--model` whose `.rig` has no `material` line for a palette entry takes the entry's colour and MagicaVoxel material as a row (`vox #rrggbb ...`, the HUD's `rows +N`) |
 | `--vox PATH[@x,y,z][*k]` | Place a MagicaVoxel scene in the streamed cave at the start ([structures](../apps/flythrough/assets/structures/README.md)): its palette as material rows (glass, glow, metal), hidden layers left out, mirrored groups mirrored, `k` world voxels per `.vox` voxel per axis (1 to 4) [1]; its box's minimum corner at `x,y,z`, or 3 m ahead of the spawn, its base 1.6 m below it |
 | `--vox-clear on\|off` | Carve `--vox`'s box, and 1 m on its sides and above, to air first [on] |
 | `--vox-op` | Place `--vox` as logged ops instead of through the cave's source: a stamp of written air over the box (with `--vox-clear on`) and a stamp per placement, submitted on the first tick (a chunk not resident is written when it arrives), so the two paths can be compared |
-| `--structures-dir DIR` | The structures library: every `DIR/<name>/<name>.vox` is a belt item after the entities, then the castle; each file's palette rows join the world's table at the start (`structures: N entries, +R rows`) [`apps/flythrough/assets/structures`] |
-| `--library-dir DIR` | The entities library: every `DIR/<name>/<name>.rig` is an entry, in name order; `--model`'s rig comes first. A missing or empty library gives the built-in walker [`apps/flythrough/assets/entities`] |
+| `--structures-dir DIR` | The structures library: every `DIR/<name>/<name>.vox` is a belt item after the entities, then the castle; each file's palette rows join the world's table at the start (`structures: N entries, +R rows`) [`structures` in the assets folder: `apps/flythrough/assets`, or `assets/` beside a packaged executable] |
+| `--library-dir DIR` | The entities library: every `DIR/<name>/<name>.rig` is an entry, in name order; `--model`'s rig comes first. A missing or empty library gives the built-in walker [`entities` in the assets folder: `apps/flythrough/assets`, or `assets/` beside a packaged executable] |
 | `--fade-reading` | Headless: dig, settle, switch the lamp off and print how the light fades |
 | `--exposure auto\|E` | Adapt like an eye, or a fixed exposure [auto] |
 | `--adaptation eye\|symmetric\|instant` | The auto exposure's preset [eye] |
