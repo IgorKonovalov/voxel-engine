@@ -1,6 +1,6 @@
 # 0107: The mirror's slot image packed on the stream workers
 
-> **Status:** in-progress (Phases 1-3 done; Phase 4 next). Approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
+> **Status:** in-progress (Phases 1-4 done; Phase 5 next). Approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
 > [the review of 2026-11-26](../reviews/2026-11-26-work-off-the-render-thread.md) on the owner's
 > "all recommended" (its question 1: draft now, Phase 1 the re-read), with no further interview;
 > the guesses and the questions left are under "Risks & open questions", each with a recommended
@@ -493,8 +493,9 @@ The owner: "go on both, all recommended, do not start until these lanes finish".
 |---|---|---|---|
 | 1: the sync's stages re-read, the bake thread on | dev | done; neither the stop line nor the order line fires (loaded); readings in [logs/0107.md](logs/0107.md) | dd905d22 |
 | 2: the slot image as a pure function | dev | done; bench read loaded | 6afbb90c |
-| 3: the mirror takes an image, behind a setting | dev | done; gpu readings loaded | committed with this row |
-| 4: the sizes and the emitters from the image | dev | not started | |
+| 3: the mirror takes an image, behind a setting | dev | done; gpu readings loaded | 68513d6e |
+| (merge of main v0.82.0, no conflicts) | dev | done | 344ec173 |
+| 4: the sizes and the emitters from the image | dev | done; gpu readings loaded | committed with this row |
 | 5: the readings (tail, workers, held bytes) | dev | not started | |
 | 6: the wanted set kept in order | dev | not started | |
 | 7: the thread counts in one place | dev | not started | |
@@ -530,6 +531,13 @@ each. Empty is fine.)_
 - Phase 3: the banner row shows on every streamed run; `U` is a new shortcut in ADR-0061's
   key table.
 - Phase 3: the gpu runs were taken loaded (load1 up to 19.9).
+- Phase 4: `select` reads the material flags at its start when no row is written yet
+  (`window.rs`): a mirror's first selection now sizes under the table's flags, not the
+  unread (all clear) ones; the read in `sync` after it stays.
+- Phase 4: `GpuWorld::emitter_lists` (doc-hidden, public, `lights.rs`) is new, for the test.
+- Phase 4: a record from an image counts no `light_bricks`, `light_emitter_bricks` or
+  `rescan_inserts`; with `debug_assertions` its light lists are checked against a scan.
+- Phase 4: the gpu runs were taken loaded (load1 5.3 to 19.2).
 
 ### Close triggers
 

@@ -519,6 +519,39 @@ impl GpuWorld {
         }
     }
 
+    /// Sets the light lists of a new full record of `coord` from its slot image: `lists`, the
+    /// exposed emitters of each brick that has any by ascending slot, are what
+    /// [`GpuWorld::note_lights`] makes over every slot of the record, with no brick scanned
+    /// here. The record's held lists were cleared by its upload.
+    pub(super) fn take_lights(&mut self, coord: ChunkCoord, lists: Vec<(u16, Vec<LightSample>)>) {
+        if let Some(l) = self.lights.chunks.get_mut(&coord) {
+            l.bricks.extend(lists);
+        } else if !lists.is_empty() {
+            self.lights.chunks.insert(
+                coord,
+                ChunkLights {
+                    bricks: lists.into_iter().collect(),
+                    placed: false,
+                },
+            );
+            self.lights.touch();
+        }
+    }
+
+    /// Each chunk's light lists, by chunk and then brick slot: a test's view of what the
+    /// mirror scanned or took from slot images.
+    #[doc(hidden)]
+    pub fn emitter_lists(&self) -> Vec<(ChunkCoord, u16, Vec<LightSample>)> {
+        let mut out: Vec<_> = self
+            .lights
+            .chunks
+            .iter()
+            .flat_map(|(c, l)| l.bricks.iter().map(|(s, v)| (*c, *s, v.clone())))
+            .collect();
+        out.sort_by_key(|(c, s, _)| (c.0, *s));
+        out
+    }
+
     /// The ranges of the light-sample buffer by the light radius (ADR-0025): a range more
     /// than `light_radius + 1` chunks from the focus chunk is released; a chunk within
     /// `light_radius` whose lists changed or that holds no range is written, nearest first,

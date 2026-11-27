@@ -358,12 +358,13 @@ impl GpuWorld {
     /// record's 73 mip-bricks): every brick when `coord` had no record before this call, else
     /// the dirty ones; then, for a record allocated here, its table entry. `image`, the
     /// chunk's slot image for a new full record with no band ([`GpuWorld::usable_image`]),
-    /// gives each brick's entry and words in place of packing them.
+    /// gives each brick's entry and words in place of packing them, and the record's emissive
+    /// flag and light lists (taken out of it) in place of scanning the bricks.
     pub(super) fn upload_record(
         &mut self,
         coord: ChunkCoord,
         bricks: Bricks<'_>,
-        image: Option<&SlotImage>,
+        image: Option<&mut SlotImage>,
         enc: &mut wgpu::CommandEncoder,
         st: &mut SyncStats,
     ) -> Result<(), MirrorError> {
@@ -385,11 +386,16 @@ impl GpuWorld {
         // has an emitter.
         let left = self.lap(Stage::LightPlace);
         let emits = !lod
-            && (kept_emits
-                || (0..bricks.len()).any(|i| {
-                    (every || bricks.is_dirty(i))
-                        && matches!(bricks.get(i), Brick::Full(p) if self.mats.emits(p))
-                }));
+            && match &image {
+                Some(img) => img.emits,
+                None => {
+                    kept_emits
+                        || (0..bricks.len()).any(|i| {
+                            (every || bricks.is_dirty(i))
+                                && matches!(bricks.get(i), Brick::Full(p) if self.mats.emits(p))
+                        })
+                }
+            };
         self.lap(left);
         st.light_fresh_records += u64::from(every && emits);
         let mut rescan = RescanSet::default();
@@ -425,7 +431,7 @@ impl GpuWorld {
             // The upload's backstop computed the bands under the same write lock.
             let band = band_on.then(|| self.field.bands.get(i).copied().flatten());
             let at = base + ENTRY_WORD + i;
-            result = match image {
+            result = match image.as_deref() {
                 Some(img) => {
                     self.upload_image_brick(img, i, at, &mut image_at, bricks.get(i), enc, st)
                 }
@@ -444,7 +450,7 @@ impl GpuWorld {
                     .entry(coord);
                 fresh.or_default()[i / 64] |= 1 << (i % 64);
             }
-            if emits {
+            if emits && image.is_none() {
                 rescan.insert(i);
                 st.rescan_inserts += 1;
                 let b = brick_of_slot(i);
@@ -464,7 +470,23 @@ impl GpuWorld {
             // A written brick changes its own exposed voxels and those of its neighbours'
             // faces toward it.
             let left = self.lap(Stage::LightNote);
-            self.note_lights(coord, rescan, &bricks, st);
+            match image {
+                Some(img) => {
+                    let lists = std::mem::take(&mut img.lights);
+                    #[cfg(debug_assertions)]
+                    {
+                        let scanned: Vec<_> = (0..bricks.len())
+                            .filter_map(|i| {
+                                let found = self.mats.scan(coord, i, |s| bricks.get(s))?;
+                                (!found.is_empty()).then_some((i as u16, found))
+                            })
+                            .collect();
+                        assert_eq!(lists, scanned, "{coord:?}: the image's light lists");
+                    }
+                    self.take_lights(coord, lists);
+                }
+                None => self.note_lights(coord, rescan, &bricks, st),
+            }
             self.lap(left);
             if self.lights.chunks.contains_key(&coord) {
                 self.lights.dirty.insert(coord);

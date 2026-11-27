@@ -505,31 +505,53 @@ impl GpuWorld {
         self.images.held.retain(|c, _| w.contains(*c));
     }
 
-    /// `coord`'s image for a new full record of `chunk`, taken out of the held ones, when it
-    /// may stand in for the chunk (ADR-0056, Plan 0107's four conditions; the caller checked
-    /// that no full record of the chunk exists): the field surface off, packed under the mirror's flags,
-    /// and the chunk never edited. A refused image is dropped and counted by its reason.
+    /// Selection's size of a new full record of `coord` from its held image, read with no
+    /// lock: its new slots per bin and slot bytes, when the field surface is off and the image
+    /// was packed under the mirror's flags. Whether the chunk was edited since is the
+    /// backstop's check ([`GpuWorld::usable_image`]), which then sizes it inline.
+    pub(super) fn image_need(&self, coord: ChunkCoord) -> Option<([u64; BIN_COUNT], u64)> {
+        let h = self.images.held.get(&coord)?;
+        (self.field.band.is_none() && h.image.key == self.mats.key)
+            .then_some((h.image.new, h.image.bytes))
+    }
+
+    /// Whether `coord`'s held image may stand in for a new full record of `chunk` (ADR-0056,
+    /// Plan 0107's four conditions; the caller checked that no full record of the chunk exists,
+    /// and holds its write lock): the field surface off, packed under the mirror's flags, and
+    /// the chunk never edited. A refused image is dropped and counted by its reason; a usable
+    /// one stays held until [`GpuWorld::take_image`], so a deferred chunk keeps it.
     pub(super) fn usable_image(
         &mut self,
         coord: ChunkCoord,
         chunk: &svet_world::Chunk,
         st: &mut SyncStats,
+    ) -> bool {
+        let Some(h) = self.images.held.get(&coord) else {
+            return false;
+        };
+        let refused = if self.field.band.is_some() {
+            &mut st.images_field
+        } else if h.image.key != self.mats.key {
+            &mut st.images_other_flags
+        } else if chunk.is_edited() {
+            &mut st.images_edited
+        } else {
+            return true;
+        };
+        *refused += 1;
+        self.images.held.remove(&coord);
+        false
+    }
+
+    /// Takes `coord`'s image, which [`GpuWorld::usable_image`] passed, for its upload.
+    pub(super) fn take_image(
+        &mut self,
+        coord: ChunkCoord,
+        st: &mut SyncStats,
     ) -> Option<HeldImage> {
-        let image = self.images.held.remove(&coord)?;
-        if self.field.band.is_some() {
-            st.images_field += 1;
-            return None;
-        }
-        if image.image.key != self.mats.key {
-            st.images_other_flags += 1;
-            return None;
-        }
-        if chunk.is_edited() {
-            st.images_edited += 1;
-            return None;
-        }
+        let h = self.images.held.remove(&coord)?;
         st.images_used += 1;
-        Some(image)
+        Some(h)
     }
 
     /// Writes brick `slot` of a new record from `img` into entry `i`: a uniform brick's entry,

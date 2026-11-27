@@ -88,6 +88,17 @@ impl Arm {
         hook_table: &MaterialTable,
         field: bool,
     ) -> Self {
+        Self::with_budget(device, packing, hook_table, field, SMALL_BUDGET)
+    }
+
+    /// [`Arm::new`] with the mirror's reservation at `budget` bytes.
+    fn with_budget(
+        device: &wgpu::Device,
+        packing: Packing,
+        hook_table: &MaterialTable,
+        field: bool,
+        budget: u64,
+    ) -> Self {
         let table = rich_table();
         let world = World::new(&table);
         let hook = ImageHook::new(hook_table, packing, DEFAULT_IMAGE_CAP_BYTES);
@@ -106,6 +117,7 @@ impl Arm {
         streamer.set_prep(Some(Arc::new(ChunkWork::new(&table, Some(hook.clone())))));
         let cfg = MirrorConfig {
             packing,
+            budget_bytes: budget,
             ..small(Window::Follow { side: 7 })
         };
         let gpu = if field {
@@ -166,12 +178,35 @@ fn assert_same_bytes(device: &wgpu::Device, queue: &wgpu::Queue, a: &GpuWorld, b
     assert_eq!(a.mirrored_chunks(), b.mirrored_chunks());
 }
 
+/// Asserts the two mirrors hold the same light lists per chunk and brick, place the same
+/// chunks' ranges (by range start), and read back the same light-sample buffer up to its high-water mark.
+fn assert_same_lights(device: &wgpu::Device, queue: &wgpu::Queue, a: &GpuWorld, b: &GpuWorld) {
+    assert!(
+        a.emitter_lists() == b.emitter_lists(),
+        "emitter lists differ"
+    );
+    let placed = |g: &GpuWorld| {
+        let mut v: Vec<_> = g.light_chunks().collect();
+        v.sort_by_key(|&(_, start, _, _)| start);
+        v
+    };
+    assert_eq!(placed(a), placed(b));
+    assert_eq!(a.light_samples(), b.light_samples());
+    assert_eq!(a.light_span(), b.light_span());
+    let len = u64::from(a.light_span()) * svet_render::internals::LIGHT_SAMPLE_BYTES;
+    let read =
+        |g: &GpuWorld| svet_render::debug::read_buffer(device, queue, g.light_buffer(), 0, len);
+    assert!(read(a) == read(b), "light-sample buffers differ");
+}
+
 /// Plan 0107 Phase 3. One streamed world mirrored twice, inline and from the workers' images,
 /// at a first focus and after a move that evicts and loads chunks (so the second batch reuses
 /// freed slots): after each, the two mirrors' pool shards, records and table read back equal
-/// byte for byte, with the same live and allocated bytes (VRAM unchanged). Every new record of
-/// the `Workers` arm came from an image and none of the `Inline` arm's did; no image is held
-/// once the syncs are done.
+/// byte for byte, with the same live and allocated bytes (VRAM unchanged), and the same light
+/// lists per chunk and brick and light-sample buffer ([`Rich`] holds emissive bricks). Every
+/// new record of the `Workers` arm came from an image and none of the `Inline` arm's did; the
+/// `Workers` arm sized no chunk and scanned no brick for emitters (Plan 0107 Phase 4), which
+/// the `Inline` arm did; no image is held once the syncs are done.
 #[test]
 fn the_mirror_is_byte_identical_whichever_thread_packed() {
     let Some((device, queue)) = device() else {
@@ -186,7 +221,13 @@ fn the_mirror_is_byte_identical_whichever_thread_packed() {
             arm.sync(&device, &queue);
         }
         assert_same_bytes(&device, &queue, &inline.gpu, &workers.gpu);
+        assert!(workers.gpu.light_samples() > 0, "the world holds emitters");
+        assert_same_lights(&device, &queue, &inline.gpu, &workers.gpu);
     }
+    assert_eq!(workers.total(|s| s.sized_chunks), 0, "no chunk sized");
+    assert_eq!(workers.total(|s| s.light_bricks), 0, "no brick scanned");
+    assert!(inline.total(|s| s.sized_chunks) > 0);
+    assert!(inline.total(|s| s.light_bricks) > 0);
     let chunks = workers.total(|s| s.chunks);
     assert!(chunks > 40, "{chunks} records written");
     assert_eq!(workers.total(|s| s.images_used), chunks);
@@ -201,6 +242,69 @@ fn the_mirror_is_byte_identical_whichever_thread_packed() {
     assert_eq!(h.made, chunks, "{h:?}");
     assert_eq!((h.refused, h.held_bytes), (0, 0), "{h:?}");
     assert_eq!(workers.gpu.held_images(), 0);
+}
+
+/// What one sync of an arm did, for comparing two arms' syncs: whether it returned an error,
+/// records written, chunks deferred and chunks pending after it.
+fn sync_line(arm: &mut Arm, device: &wgpu::Device, queue: &wgpu::Queue) -> (bool, u64, u64, u64) {
+    let r = arm.gpu.sync_now(&arm.world, device, queue);
+    let st = r.as_ref().copied().unwrap_or_default();
+    arm.stats.push(st);
+    (
+        r.is_err(),
+        st.chunks,
+        st.deferred_chunks,
+        arm.gpu.pending_chunks() as u64,
+    )
+}
+
+/// Plan 0107 Phase 4. On a pool too small for the nearest chunk (one page), and on one that
+/// holds a few chunks and defers the rest (eight pages), the `Workers` arm, sizing from the
+/// images, defers the same chunks in the same order as the `Inline` arm, sizing inline: each of
+/// three syncs returns the same error or none, writes and defers as many records, and leaves the
+/// same pool, records and table. A deferred chunk is written nothing (on one page no byte at
+/// all) and keeps its image for the sync that takes it: the images held are the chunks pending.
+#[test]
+fn a_deferred_chunk_with_an_image_is_deferred_whole() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let table = rich_table();
+    for pages in [1, 8] {
+        let budget = pages_budget(pages, 7 * 7 * 7);
+        let mut inline = Arm::with_budget(&device, Packing::Inline, &table, false, budget);
+        let mut workers = Arm::with_budget(&device, Packing::Workers, &table, false, budget);
+        for arm in [&mut inline, &mut workers] {
+            arm.stream(VoxelCoord([0, 0, 0]));
+        }
+        let loaded = workers.gpu.held_images();
+        assert!(loaded > 10, "{loaded} images");
+        let mut lines = Vec::new();
+        for _ in 0..3 {
+            let a = sync_line(&mut inline, &device, &queue);
+            let b = sync_line(&mut workers, &device, &queue);
+            assert_eq!(a, b, "{pages} pages: (error, written, deferred, pending)");
+            lines.push(b);
+            assert_same_bytes(&device, &queue, &inline.gpu, &workers.gpu);
+            assert_eq!(workers.gpu.held_images() as u64, b.3, "{pages} pages");
+        }
+        let written: u64 = lines.iter().map(|l| l.1).sum();
+        assert_eq!(workers.total(|s| s.images_used), written);
+        assert_eq!(workers.total(|s| s.sized_chunks), 0);
+        if pages == 1 {
+            // An empty sync returns the deferral as its error, its stats unread.
+            assert!(lines.iter().all(|l| l.0), "{lines:?}");
+            assert_eq!(
+                workers.gpu.bytes_written(),
+                0,
+                "nothing written on one page"
+            );
+            assert_eq!(workers.gpu.held_images(), loaded);
+        } else {
+            let first = lines[0];
+            assert!(!first.0 && first.1 > 0 && first.2 > 0, "{lines:?}");
+        }
+    }
 }
 
 /// A chunk carved between its load and its first sync is uploaded from the chunk, not its

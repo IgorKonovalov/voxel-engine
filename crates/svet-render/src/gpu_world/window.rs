@@ -405,9 +405,15 @@ impl GpuWorld {
     /// checked against what is left. The first chunk that does not fit is deferred, with every
     /// later chunk but a demotion that fits; deferred chunks stay pending and do not count
     /// against the budget. A chunk with a kept size ([`Sizing`]) is not sized again; once the
-    /// time budget is spent no further chunk is sized, and the walk stops there. Returns the
-    /// error of the first deferral, if any.
+    /// time budget is spent no further chunk is sized, and the walk stops there. A chunk taking
+    /// a new full record with a slot image held for it ([`GpuWorld::image_need`]) is not sized:
+    /// the image's counts are its size. Returns the error of the first deferral, if any.
     pub(super) fn select(&mut self, world: &World, st: &mut SyncStats) -> Option<MirrorError> {
+        if !self.mats.written {
+            // The flags the upload packs under, read before the first sync's sizes: a size and
+            // an image's key are both taken under them.
+            self.mats.read(world.materials());
+        }
         let budget = self.cfg.sync_budget_bytes;
         // Writes that happen whatever is chosen count against the budget first.
         let mut bytes = self.window.table_changed.len() as u64 * 4;
@@ -461,12 +467,22 @@ impl GpuWorld {
                 self.window.stale.push(coord);
                 continue;
             }
-            let sizing = match kept {
-                Some(z) => {
+            let image = match &src {
+                Src::Full(_) if rec.is_none() => self.image_need(coord),
+                _ => None,
+            };
+            let sizing = match (kept, image) {
+                (Some(z), _) => {
                     st.kept_sizes += 1;
                     z
                 }
-                None => {
+                (None, Some((new, need_bytes))) => Sizing {
+                    lod,
+                    rec,
+                    new,
+                    bytes: RECORD_BYTES + 4 + need_bytes,
+                },
+                (None, None) => {
                     if out_of_time {
                         break;
                     }
@@ -561,8 +577,25 @@ impl GpuWorld {
                 Src::Full(chunk) => Some(self.stages.locked(|| chunk.write())),
                 Src::Lod(_) => None,
             };
+            // A new full record may be written from the chunk's slot image (ADR-0056): then
+            // its counts are the backstop's need, exact since they count the slots it writes.
+            let image = match guard.as_deref() {
+                Some(ch) if rec.is_none() => self.usable_image(coord, ch, st),
+                _ => false,
+            };
             let mut bands = std::mem::take(&mut self.field.bands);
             let need = match &guard {
+                Some(ch) if image => {
+                    bands.clear();
+                    let n = self.images.held[&coord].image.new;
+                    #[cfg(debug_assertions)]
+                    {
+                        let mut b = Vec::new();
+                        let inline = self.need(world, coord, &Bricks::Chunk(ch), rec, &mut b);
+                        assert_eq!(n, inline.0, "{coord:?}: the image's counts");
+                    }
+                    n
+                }
                 Some(ch) => {
                     self.lap(Stage::Size);
                     let n = self
@@ -587,17 +620,14 @@ impl GpuWorld {
                 defer_rest = true;
                 continue;
             }
+            // Taken out of the held images only now the chunk fits: a deferred chunk keeps it.
+            let mut image = image.then(|| self.take_image(coord, st)).flatten();
             if self.recs.mirrored.get(&coord).is_some_and(|m| m.lod != lod) {
                 self.drop_record(coord);
             }
-            // A new full record may be written from the chunk's slot image (ADR-0056).
-            let image = match guard.as_deref() {
-                Some(ch) if rec.is_none() => self.usable_image(coord, ch, st),
-                _ => None,
-            };
             result = match (&src, guard.as_mut()) {
                 (_, Some(ch)) => {
-                    let image = image.as_ref().map(|h| &h.image);
+                    let image = image.as_mut().map(|h| &mut h.image);
                     let r = self.upload_record(coord, Bricks::Chunk(ch), image, enc, st);
                     if r.is_ok() {
                         ch.clear_dirty();
