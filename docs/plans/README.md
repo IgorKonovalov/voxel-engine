@@ -50,8 +50,8 @@ are Plan 0109 Phase 6's.
 | [0103](0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md) | A pipeline cache for the renderer: the driver's cache through wgpu in an engine envelope, bytes the consumer keeps | draft, parked 11-24 | ADR-0087 (proposed). Parked: the driver's cache already warms a second start (logs/0103.md). |
 | [0105](0105-the-digs-flash-at-depth-a-held-estimate-that-follows-the-holes-own-light.md) | The dig's flash at depth: a held estimate that follows the hole's own light | approved 11-26 | After 0099. P1 reads the blink at depth; the fix is a setting until the window. |
 | [0107](0107-the-mirrors-slot-image-packed-on-the-stream-workers.md) | The mirror's slot image packed on the stream workers | approved 11-26 | ADR-0056. P1 re-reads the sync and can stop it. Lane after 0101 and 0105 merge. |
-| [0108](0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md) | The start-up readings: a shorter pre-roll, the cold pipelines split | approved 11-26 | A chore, no ADR. Beside 0093. P3 before the next tester archive. |
-| [0109](0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md) | A blocked chunk is checked again when its blocker clears: the streamed start | in progress | P1-2d done. Ruled 11-27 twice: no catch-up lands in view, 2e struck. Next 3a, 3b, 4a; P4 the owner. |
+| [0108](0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md) | The start-up readings: a shorter pre-roll, the cold pipelines split | in progress | A chore, no ADR. P1 read, ruled 11-27. P2 the owner, one sitting with 0109 P4. P3 running. |
+| [0109](0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md) | A blocked chunk is checked again when its blocker clears: the streamed start | in progress | P1-4a read, ruled 11-27 three times. P4 the owner, in 0108's sitting; then 5 or 6a. |
 <!-- roster:end -->
 
 ## Sequence

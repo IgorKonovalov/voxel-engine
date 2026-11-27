@@ -337,6 +337,27 @@ So W2 costs about 30 to 40 s more than W1 and, where read, shows the same light 
 
 **Recorded, the recommended option taken** (none a stability question): Phase 2e struck and the bound parked (Ruling 9); Phase 2d accepted, `bake_settled` kept (Ruling 10); Phase 4a added; Plan 0108's lane may start. **Left to the owner:** which start.
 
+## Amended 2026-11-27, third (architect, Phases 4a and 3b; Phase 4 is held in Plan 0108's sitting)
+
+Phases 4a and 3b came back (`7384c862`, `327ece91`; both `docs/` only). Nothing was run.
+
+- **Phase 4a is accepted and replaces the table's seconds.** Release, RTX, the thread on, warm, one run each, loaded: W1 6803 ms to the first frame (6534 at `--spawn inside`), W2 22078, W3 915. The dev-profile bands of "Phase 4, restated again" (20.5 to 29.7 s, 54.3 to 66.6 s) are not the window's; no run stopped.
+- **Phase 4 is held as one sitting with Plan 0108's Phase 2**, scripted in [Plan 0108](0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md), "Amended 2026-11-27 (architect, Phase 1's rows; the joint sitting)", Ruling 3, on the plan-0108 lane's binary (`e6721462`, which holds this plan's code). It supersedes this plan's window paragraph where they differ: the outdoor scene is the forest spawn and `--spawn inside`; W1 is its launch 1 (the before), W3 its launch 3, and the tunnel is seen under the arm the owner leans to; **W2 is described with its figure and launched only if he asks**, since it shows the same words at frame 0 for about 15 s more. The question stays his: which start. Phase 4's Done when stands, the words recorded in this plan's log too.
+- **How his answer maps** (Plan 0108's Ruling 4 holds the full table): today's start, `--pre-roll near`, or a shorter coarse box are all **W1** here: no Phase 5, on to 6a and 6b. The camera's chunk only is **W3**, and a yes to final light is **W2**: Phase 5 in the form below, then 6a and 6b on the tree it leaves.
+- **Phase 3b's routing:** the mirror's notes (139 to 141 ms on the first pre-roll step, about 6 to 7.5 ms a step after) and the unattributed rest of the sync and `checks` go to `docs/backlog.md`, "The mirror's notes for the bake's shadow: a whole read on the render thread". Phase 3 is closed as read; nothing here fixes the step's cost. The premise of "about 65 ms a step" is withdrawn: neither base run read it (87.1 and 114.3 ms).
+
+### Phase 5, W3 form: the camera's chunk only is the window's start (written only if the owner picks it)
+- **Owner skill:** dev
+- **What:** In a window `--near` defaults to 0 and `--coarse` to 0; `--headless` keeps 2 and 256, as `--bake-thread` differs by mode, so no golden or reading on record moves. The banner's queue row already reads both.
+- **Files touched:** `apps/flythrough/src/cli/` (the two defaults and their tests), `docs/flythrough.md`, `docs/nfr/07-startup-and-build.md`, `docs/plans/logs/0109.md`.
+- **Done when:** the CLI test asserts both defaults in both modes and the row's text; the default golden (`gpu_golden`, by name) is byte-identical. **Read before the commit, and a stop if it fails:** three starts on the RENOIR (`--adapter RENOIR --profile portable`), which no run has taken under these settings, and on both adapters the in-view wait after the first frame (the `bake queue view:` line, the thread on, the forest and the hall) beside the before's. A wait after the first frame longer than the before's time to it plus its wait is reported to the architect and the default does not move.
+
+### Phase 5, W2 form: final light before the first frame (written only if the owner picks it)
+- **Owner skill:** dev
+- **What:** `--column-wait` defaults to `on` in a window. It reverses the owner's `column_wait` pick of 2026-11-18; the dated outcome on ADR-0070's amendment is the architect's, at the close.
+- **Files touched:** as the W3 form's.
+- **Done when:** the CLI test asserts the default in both modes and the row; the default golden is byte-identical; three starts on each adapter on the forest give the time to the first frame, and one start of `--column-wait on --pre-roll near` where Plan 0108's answer was `near`, before both defaults ship.
+
 ## Data shapes
 
 ```rust
