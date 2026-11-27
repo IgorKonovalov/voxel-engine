@@ -918,6 +918,16 @@ against the baked store: no probe or store term takes sun or sky light.
   it for two frames (seen by no one on purpose); blind, the owner read the binary of the day
   before as flashing slightly less and accepted the closing one, cause not found; the forest
   at depth is asserted by name on the RTX 3080 Laptop alone. All four are in the backlog.
+- **The start on a streamed world** ([Plan 0109](plans/done/0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md),
+  closed 2026-11-27, v0.81.0; no ADR): the live queue skipped a chunk it found not ready for 30
+  steps whatever happened to what blocked it, so every streamed start waited 25 steps or more
+  for nothing. A blocked mark now names its blocker and drops when the mirror's notes name it
+  changed; the switched start's pre-roll reads 5 to 10 steps against 32 to 97 (lavapipe), and
+  the pre-roll waits for a near chunk's block, not for the catch-up it is owed. The owner at
+  his window kept today's start: no bound, and final light before the first frame "not
+  needed". **Left open** (the backlog): a due catch-up waits behind every ready first bake;
+  the mirror's notes cost the render thread a whole read at a window move; the step's cost on
+  a streamed start is attributed only in part.
 - **A surface detail layer** ([Plan 0081](plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
   drafted 2026-11-16, awaits the owner's go; ADR-0063 proposed): grass, moss, strands,
   fungus caps, flowers, pebbles and snow tufts as a procedural shell marched in the hit pass

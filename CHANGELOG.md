@@ -6,7 +6,17 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+## [0.81.0] - 2026-11-27
+
+Plan 0109 (a minor bump: new public items on `svet-render`, none removed; no ADR). **A streamed start no longer waits out a 30-step recheck.** The live bake queue skipped a chunk it found not ready for 30 steps whatever happened to what blocked it; at a start on a streamed world the camera's chunk is blocked at step 1 and ready about four steps later, so every start waited 25 steps for nothing, and 30 or 60 more when the check landed in an upload backlog.
+
+- **Changed (`svet-render`):** a blocked candidate carries what refused it (a chunk of its reach, the lowest chunk that holds a column over its reach footprint from final, or the lights) and is checked at the first opening after the mirror's notes name that blocker changed; 30 steps stays as the longest it goes unchecked, and the checks an opening makes are unchanged. The same rule runs in flight at a streamed edge. The switched outdoor start's pre-roll reads 5 to 10 steps where it read 32 to 97 (lavapipe, eight runs).
+- **Changed (`svet-render`):** the start's pre-roll counts a near chunk done when it holds its block at the full count, whether or not the one more bake a provisional block is owed is due or in a job; a start no longer waits on the first-bake backlog by a race with the stream.
+- **Added (`svet-render`):** `QueueRead::held_for_start` and `Frame::bake_held_for_start` (the pre-roll's read); `QueueRead::settled` and `Frame::bake_settled` read as before.
 - **Fixed (`svet-render`): a ruled record's border under the bake thread.** The listing pool read a chunk's neighbours from the world's store a step before its push read them from the mirror's shadow, so a neighbour that arrived (or left the store) in between left the zero record without its border faces and with nothing to list it again. A pooled listing now carries the neighbours it read absent, and a ruled one the pushing step's shadow holds full is dropped (the chunk stays a candidate). Lockstep is unchanged.
+- **Changed (tests):** `an_opening_without_a_mirror_event_rebuilds_nothing` pins the order nearest first (`[2, 3, 1, 4, 0, 5, 6, 7]`: the old pin held the defect); the kill guards of the headless children are resized to ten times their slowest loaded run (`RUN_BOUND` 440 s, the outdoor child 400 s); the switch test's listed time is 12.8 s.
+- **The owner at his window (2026-11-27):** today's start stands; final light before the first frame (`--column-wait on`, about 15 s more) is "not needed". No default moved in this plan (the window's `--pre-roll near` is Plan 0108's).
+- **Disclosed:** a provisional block's catch-up opens behind every ready first bake with no bound (none opened in 45 s after the first frame; at both spawns read the provisional blocks equal their final ones bit for bit, and no pose that differs was found); the step's cost on a streamed start since the bake thread's merge is attributed only in part (the mirror's notes: 139 to 141 ms on the first step); every reading of 2026-11-27 is loaded. Each is in `docs/backlog.md`.
 
 ## [0.80.0] - 2026-11-27
 

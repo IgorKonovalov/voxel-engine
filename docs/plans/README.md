@@ -7,7 +7,7 @@ The engine was `voxel-engine`, with crates `vxe-*`, variables `VXE_*` and the WI
 `vxe:logic`, until Plan 0087 renamed it `svet` (v0.73.0); records from before keep those names,
 and `vxe-<x>` reads as `svet-<x>`.
 
-**Next free number: 0110** (0109 a blocked chunk is checked again when its blocker clears, drafted 2026-11-26 from Plan 0106's Phases 10 and 11; 0107 the mirror's slot image packed on the stream workers and 0108 the start-up readings, drafted 2026-11-26 from the review of work off the render thread; 0106 no gate test passes by a clock, closed 2026-11-26; 0093 the README rewrite, closed 2026-11-27; 0105 the dig's flash at depth, closed 2026-11-27; 0104 the wobble anchored to the owner's eye, closed 2026-11-26; 0101 the record by rule at every opening, closed 2026-11-26; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
+**Next free number: 0110** (0109 a blocked chunk is checked again when its blocker clears, closed 2026-11-27; 0107 the mirror's slot image packed on the stream workers and 0108 the start-up readings, drafted 2026-11-26 from the review of work off the render thread; 0106 no gate test passes by a clock, closed 2026-11-26; 0093 the README rewrite, closed 2026-11-27; 0105 the dig's flash at depth, closed 2026-11-27; 0104 the wobble anchored to the owner's eye, closed 2026-11-26; 0101 the record by rule at every opening, closed 2026-11-26; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
 the sky around the camera; 0098 the calm light by default, closed 2026-11-24; 0099 the bake
 step off the main thread, closed 2026-11-26; 0100 a sun fixed in the world, closed 2026-11-25; ADRs are a separate sequence, see `../adrs/README.md` for its next
 free number). Plan 0095, the motion wobble (a calm key light in motion), closed 2026-11-21,
@@ -23,11 +23,12 @@ wobble anchored to the owner's eye, closed 2026-11-26, v0.77.0, with no remedy (
 what is left under the defaults is in the backlog. Plan 0101, the record by rule at every
 opening, closed 2026-11-26, v0.78.0 (ADR-0085 accepted with an Outcome); what it left is in the backlog. Plan 0106, no gate
 test passes by a clock, closed 2026-11-26, v0.79.0 (`scripts/check-test-clocks.mjs` in CI); `RUN_BOUND` and the switch test's tier
-are Plan 0109 Phase 6's. Plan 0093, the README rewrite with reproducible screenshots, closed 2026-11-27, v0.79.1
+were sized by Plan 0109 Phase 6. Plan 0093, the README rewrite with reproducible screenshots, closed 2026-11-27, v0.79.1
 (`scripts/shoot-images.mjs` and `scripts/check-images.mjs`; closed on the owner's word without his second look: the backlog's
 "The README's images after the unattended close"). Plan 0105, the dig's flash at depth, closed 2026-11-27, v0.80.0
 (`Lighting::dig_estimate`, `depth` by default, the owner's pick; ADR-0082's Outcome added to; what it left is the backlog's
-"Plan 0105's leftovers" and the two entries beside it).
+"Plan 0105's leftovers" and the two entries beside it). Plan 0109, a blocked chunk is checked again when its blocker clears, closed 2026-11-27, v0.81.0
+(no ADR; the owner kept today's start; what it left is the backlog's "Plan 0109's leftovers" and the three entries beside it).
 
 ## Active roster
 
@@ -53,7 +54,6 @@ are Plan 0109 Phase 6's. Plan 0093, the README rewrite with reproducible screens
 | [0103](0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md) | A pipeline cache for the renderer: the driver's cache through wgpu in an engine envelope, bytes the consumer keeps | draft, parked 11-24 | ADR-0087 (proposed). Parked: the driver's cache already warms a second start (logs/0103.md). |
 | [0107](0107-the-mirrors-slot-image-packed-on-the-stream-workers.md) | The mirror's slot image packed on the stream workers | approved 11-26 | ADR-0056. P1 re-reads the sync and can stop it. Lane after 0101 and 0105 merge. |
 | [0108](0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md) | The start-up readings: a shorter pre-roll, the cold pipelines split | in progress | A chore, no ADR. P1 read, ruled 11-27. P2 the owner, one sitting with 0109 P4. P3 running. |
-| [0109](0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md) | A blocked chunk is checked again when its blocker clears: the streamed start | in progress | P1-4a read, ruled 11-27 three times. P4 the owner, in 0108's sitting; then 5 or 6a. |
 <!-- roster:end -->
 
 ## Sequence
@@ -341,6 +341,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0109](done/0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md) | A blocked chunk is checked again when its blocker clears: the streamed start waits 5 to 10 steps, not 32 to 97 | 2026-11-27, v0.81.0 |
 | [0105](done/0105-the-digs-flash-at-depth-a-held-estimate-that-follows-the-holes-own-light.md) | The dig's flash at depth: a held estimate that follows the hole's own light, `depth` by default | 2026-11-27, v0.80.0 |
 | [0093](done/0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) | The README rewrite: a shot manifest, a shoot script, an image gate, two checked examples | 2026-11-27, v0.79.1 |
 | [0106](done/0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md) | No gate test passes by a clock: the sweep of both tiers, the tests stepped by count, a gate script in CI | 2026-11-26, v0.79.0 |
