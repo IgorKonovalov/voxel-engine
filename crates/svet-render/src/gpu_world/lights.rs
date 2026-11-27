@@ -486,8 +486,6 @@ impl GpuWorld {
         bricks: &Bricks<'_>,
         st: &mut SyncStats,
     ) {
-        let opaque: &[bool] = &self.mats.opaque;
-        let emissive: &[bool] = &self.mats.emissive;
         let mut held = self.lights.chunks.get_mut(&coord);
         // The lists of a chunk that held none, inserted after the walk.
         let mut fresh: Option<ChunkLights> = None;
@@ -495,15 +493,7 @@ impl GpuWorld {
             let brick = bricks.get(slot);
             let found = if brick.is_full() {
                 st.light_bricks += 1;
-                let b = brick_of_slot(slot);
-                let neighbour = |k: usize, dir: i32| {
-                    let mut n = b;
-                    n[k] += dir;
-                    (0..CHUNK_EDGE_BRICKS)
-                        .contains(&n[k])
-                        .then(|| bricks.get(brick_slot(n)))
-                };
-                let found = scan_emitters(coord, slot, brick, emissive, opaque, neighbour);
+                let found = self.mats.scan(coord, slot, |i| bricks.get(i));
                 st.light_emitter_bricks += u64::from(found.is_some());
                 found.unwrap_or_default()
             } else {

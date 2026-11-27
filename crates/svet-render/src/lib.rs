@@ -81,8 +81,8 @@ pub mod internals {
         LOD_BIT, LOD_LEVEL_ENTRY, LightSample, MATERIAL_FLOATS, MATERIAL_MASK, PAGE_BYTES,
         PAGE_UNITS, PALETTE_ENTRIES, PLACEHOLDER_BYTES, RECORD_BYTES, RECORD_MASK, RECORD_WORDS,
         SLOT_BINS, TRANSLUCENT_BIT, UNIT_BYTES, UNIT_MASK, UNIT_WORDS, band_bin_of, bin_of,
-        budget_for, class_code, exposed_emitters, layer_prefix, payload_units, slot_units,
-        slots_per_page,
+        budget_for, class_code, exposed_emitters, layer_prefix, payload_units, slot_image_maker,
+        slot_units, slots_per_page,
     };
     pub use crate::probes::{
         MAX_AGE, ProbeUniform, RAYS_PER_PROBE, SLICES, TestProbe, WINDOW_FRAMES,

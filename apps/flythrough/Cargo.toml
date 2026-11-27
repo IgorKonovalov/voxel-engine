@@ -50,6 +50,10 @@ required-features = ["wasm"]
 name = "acoustics"
 harness = false
 
+[[bench]]
+name = "slot_image"
+harness = false
+
 # The hero still's argument tests run with the rest of the testbed's.
 [[example]]
 name = "hero"
