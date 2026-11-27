@@ -44,6 +44,10 @@ fn run(extra: &[&str], bound: Duration) -> Option<String> {
         std::thread::sleep(Duration::from_millis(50));
     }
     let out = child.wait_with_output().expect("the run's output");
+    println!(
+        "the headless fly-through ran {:.1} s of its {bound:?} guard",
+        t.elapsed().as_secs_f64()
+    );
     let (stdout, stderr) = (
         String::from_utf8_lossy(&out.stdout).into_owned(),
         String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -75,7 +79,10 @@ fn last_line<'a>(out: &'a str, prefix: &str) -> &'a str {
 /// the cave's spawn chunk equal to a fresh `--source cave` run's, none of their voxels of the
 /// outdoor rows' ids, and the new server's op log empty at the switch.
 fn switch_leaves_nothing_behind(at: u32, frames: u32) {
-    let bound = Duration::from_secs(300);
+    // A kill guard, not a claim: ten times the slowest child read loaded (39.5 s, a switched
+    // run of the 600-frame test, six test runs on lavapipe beside a looping quick tier),
+    // 400 / 39.5 = 10.1.
+    let bound = Duration::from_secs(400);
     let (frames, at) = (frames.to_string(), at.to_string());
     let common = ["--frames", frames.as_str(), "--spawn-hash"];
     let Some(switched) = run(

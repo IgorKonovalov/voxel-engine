@@ -12,7 +12,7 @@ crates/svet-render/src/bake/queue/split_tests/thread/fade.rs | gated | seconds_s
 crates/svet-script-wasm/tests/determinism.rs | timers_are_always_ready_and_never_wait | elapsed | the guest sleeps 30 s twice; under 5 s is the claim's scale (the loads before the clock), slowest loaded 53.2 ms, ratio 94
 apps/flythrough/tests/gpu_shutdown.rs | headless_run | sleep | RUN_BOUND's 20 ms poll of the child: a kill guard's poll, the child is waited on by try_wait
 apps/flythrough/tests/gpu_shutdown.rs | headless_run | elapsed | RUN_BOUND, a 440 s kill guard on the child; 10.0x the slowest of 30 loaded child runs (43.9 s, ten of each gate child beside a looping quick tier)
-apps/flythrough/tests/gpu_outdoor.rs | run | sleep | the 50 ms poll of a 300 s kill guard on the child (soak tests only), waited on by try_wait; 300 s over the slowest of Phase 6a's six loaded test walls (62.8 s, an upper bound on any one child), ratio 4.8, under 10: sized with RUN_BOUND on Plan 0109's tree (Plan 0106 Ruling 9)
+apps/flythrough/tests/gpu_outdoor.rs | run | sleep | the 50 ms poll of a 400 s kill guard on the child (soak tests only), waited on by try_wait; 10.1x the slowest of 12 loaded child runs (39.5 s, three of each soak test, two children each, beside a looping quick tier)
 apps/flythrough/tests/gpu_shutdown.rs | timed_drop | recv_timeout | DROP_BOUND 5 s on the streamer drops: the claim that a drop returns (ADR-level), slowest loaded 17.9 ms, ratio 279
 apps/flythrough/tests/gpu_shutdown.rs | assert_teardown_within_bound | as_secs_f64 | DROP_BOUND 5 s on the teardown's summed stages: the claim that the teardown returns, slowest loaded 195.5 ms, ratio 25.6
 
