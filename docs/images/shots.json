@@ -3,7 +3,6 @@
     "hero": {
       "kind": "still",
       "file": "hero.webp",
-      "draft": true,
       "width": 1600,
       "quality": 82,
       "source": "flythrough",
@@ -29,7 +28,6 @@
     "dig": {
       "kind": "still",
       "file": "dig.webp",
-      "draft": true,
       "width": 1600,
       "quality": 82,
       "source": "flythrough",
@@ -51,7 +49,6 @@
     "hall": {
       "kind": "still",
       "file": "hall.webp",
-      "draft": true,
       "width": 1600,
       "quality": 82,
       "source": "flythrough",
@@ -71,7 +68,6 @@
     "lamp-cave": {
       "kind": "still",
       "file": "lamp-cave.webp",
-      "draft": true,
       "width": 1600,
       "quality": 82,
       "source": "flythrough",
@@ -95,7 +91,6 @@
     "canopy": {
       "kind": "still",
       "file": "canopy.webp",
-      "draft": true,
       "width": 1600,
       "quality": 82,
       "source": "flythrough",
@@ -118,7 +113,6 @@
     "skylight": {
       "kind": "still",
       "file": "skylight.webp",
-      "draft": true,
       "width": 1600,
       "quality": 82,
       "source": "flythrough",
@@ -142,7 +136,6 @@
     "walkers": {
       "kind": "loop",
       "file": "walkers.webp",
-      "draft": true,
       "width": 800,
       "fps": 20,
       "quality": 70,
@@ -168,7 +161,6 @@
     "spider-walk": {
       "kind": "loop",
       "file": "spider-walk.webp",
-      "draft": true,
       "width": 800,
       "fps": 25,
       "quality": 70,
@@ -183,7 +175,6 @@
     "walker-walk": {
       "kind": "loop",
       "file": "walker-walk.webp",
-      "draft": true,
       "width": 480,
       "fps": 25,
       "quality": 70,
@@ -198,7 +189,6 @@
     "chapel": {
       "kind": "still",
       "file": "chapel.webp",
-      "draft": true,
       "width": 1600,
       "quality": 82,
       "source": "flythrough",
@@ -220,7 +210,6 @@
     "castle": {
       "kind": "still",
       "file": "castle.webp",
-      "draft": true,
       "width": 1600,
       "quality": 82,
       "source": "flythrough",
@@ -243,7 +232,6 @@
     "hud": {
       "kind": "still",
       "file": "hud.webp",
-      "draft": true,
       "width": 1600,
       "quality": 82,
       "source": "flythrough",
