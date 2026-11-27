@@ -6,6 +6,8 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+- **Fixed (`svet-render`): a ruled record's border under the bake thread.** The listing pool read a chunk's neighbours from the world's store a step before its push read them from the mirror's shadow, so a neighbour that arrived (or left the store) in between left the zero record without its border faces and with nothing to list it again. A pooled listing now carries the neighbours it read absent, and a ruled one the pushing step's shadow holds full is dropped (the chunk stays a candidate). Lockstep is unchanged.
+
 ## [0.79.0] - 2026-11-26
 
 Plan 0106 (a minor bump: new public items on `svet-render`, none removed; no ADR). **No gate test passes by a clock.** CI's push run of the Plan 0099 merge failed a test that counted frames paced by a sleep beside the bake thread. A sweep of the gate tier and then of the soak tier classed every test that sleeps, polls, counts beside a second thread or bounds a duration; each now waits for its worker, counts what the code counts, or compares a clock only with itself, with its assertions as written. A script in CI keeps the class out.
