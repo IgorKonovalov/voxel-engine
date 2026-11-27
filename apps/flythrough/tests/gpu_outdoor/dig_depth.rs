@@ -66,6 +66,9 @@ mod dig_depth {
             /// with the bake thread, whose store is its own), and the places the pool refused in
             /// the D+0 step (`QueueStats::pool_full`).
             pool: (Option<[u64; 2]>, u64),
+            /// The lighting pixels that left the temporal pass by its `dig_held` path (the
+            /// moments' w at least 2 and under 3) in each frame D+0 to D+[`AFTER`].
+            held_px: Vec<usize>,
         }
 
         /// A chunk the dig's box touches and the queue's sets that held it at D-1.
@@ -336,6 +339,7 @@ mod dig_depth {
                 let mut pool = (None, 0);
                 let mut whole = 0;
                 let mut parts = Vec::new();
+                let mut held_px = Vec::new();
                 for k in 0..=SETTLED {
                     let q = queue_step(&mut self.rig, &mut self.s.frame, cam);
                     if k == 0 {
@@ -362,6 +366,10 @@ mod dig_depth {
                             (false, None) => "pre-held".into(),
                         });
                         frames.push(hole_frame(&self.rig, &mut self.s, cam, q, format!("D+{k}"), self.out, true, None));
+                        if k <= AFTER {
+                            let mom = svet_render::debug::read_rgba16f(&self.rig.device, &self.rig.queue, self.s.frame.moments());
+                            held_px.push(mom.iter().filter(|m| (2.0..3.0).contains(&m[3])).count());
+                        }
                     } else {
                         self.s.run(&self.rig, cam);
                     }
@@ -384,7 +392,8 @@ mod dig_depth {
                 self.s.run(&self.rig, cam);
                 let back = self.state();
                 let manual = Manual { check, settled, adapted: [a60, a_s], back };
-                self.reads.push(DigRead { label: label.into(), depth, lo, hi, whole, hold, frames, writes, parts, manual, fades, pool });
+                self.reads.push(DigRead { label: label.into(), depth, lo, hi, whole, hold, frames, writes, parts, manual, fades, pool, held_px });
+                println!("dig depth: {label} read");
                 Some(end)
             }
         }
@@ -531,12 +540,22 @@ mod dig_depth {
             row
         }
 
+        /// A read's `dig_held` pixels by frame from D+0 to its landing (the first frame on the
+        /// job's record; D+[`AFTER`] where none), the moments' w at least 2 and under 3.
+        fn held_line(r: &DigRead) -> String {
+            let land = (1..r.writes.len().min(AFTER + 2)).find(|&i| r.writes[i] == "job");
+            let end = land.unwrap_or(AFTER + 1);
+            let by: Vec<String> = (1..=end).filter_map(|i| r.held_px.get(i - 1).map(|n| format!("D+{} {n}", i - 1))).collect();
+            format!("dig_held pixels to the landing{}: {}", if land.is_some() { "" } else { " (NO LANDING by D+24)" }, by.join(", "))
+        }
+
         fn read_text(r: &DigRead, out: [u32; 2], site: &str, mode: &str) -> (String, String) {
             let mut t = String::new();
             let settled = r.frames.last().expect("the settled frame");
             let f: Vec<Figs> = r.frames.iter().map(|fr| figs(fr, settled, r.lo, r.hi, out)).collect();
             let pool = r.pool.0.map_or("n/a (thread)".to_string(), |[a, b]| format!("{a} at D-1, {b} after D+0 ({:+})", b as i64 - a as i64));
             let _ = writeln!(t, "{site} {mode} {} depth {} voxels box {:?}..{:?} digs whole at the edit {}; pool free words {pool}; pool refused at D+0 {}", r.label, r.depth, r.lo, r.hi, r.whole, r.pool.1);
+            let _ = writeln!(t, "{site} {mode} {}: digs whole {}; {}", r.label, r.whole, held_line(r));
             // The frames against `S` (the bars' reference), then the check frame and `S`.
             let m = &r.manual;
             let fs: Vec<Figs> = r.frames.iter().map(|fr| figs(fr, &m.settled, r.lo, r.hi, out)).collect();
@@ -690,7 +709,24 @@ mod dig_depth {
         /// exposure at D-1, each window frame and D+60; the adapted level about the switch; the
         /// fades at D-1; the held estimate's CPU time from D-1 to D+60 (`QueueStats::held_ns`).
         /// `f60` is the frames against D+60.
-        fn bars_line(r: &DigRead, fs: &[Figs], check: &Figs, sf: &Figs, f60: &[Figs], site: &str, mode: &str) -> String {
+        /// A read dig's window against `S` ([`bars_line`]'s figures): the frames from D+0 to the
+        /// first on the job's record (`landed`; D+[`AFTER`] where none), the mean's and the p95's
+        /// largest excess over `S` and the mean's frame, the frames whose lighting pixels all read
+        /// a record (no cast) and their largest mean and p95, the lowest mean and its frame.
+        pub(crate) struct Window {
+            pub(crate) landed: bool,
+            pub(crate) end: usize,
+            pub(crate) win: usize,
+            pub(crate) mean_max: (f64, usize),
+            pub(crate) p95_max: f64,
+            pub(crate) record_only: Vec<usize>,
+            pub(crate) record_mean_max: f64,
+            pub(crate) record_p95_max: f64,
+            pub(crate) lowest: (f64, usize),
+        }
+
+        /// [`Window`] of read `r` over its frames against `S` (`fs`, the last D+60).
+        fn window(r: &DigRead, fs: &[Figs]) -> Window {
             let after = fs.len() - 1; // the last is D+60
             let land = (1..after).find(|&i| r.writes[i] == "job");
             let end = land.unwrap_or(after - 1);
@@ -699,12 +735,25 @@ mod dig_depth {
             let max_of = |it: &mut dyn Iterator<Item = usize>, g: &dyn Fn(&Figs) -> f64| {
                 it.map(|i| (g(&fs[i]), i)).fold((f64::MIN, 0), |a, b| if b.0 > a.0 { b } else { a })
             };
-            let (mx, mi) = max_of(&mut win.iter().copied(), &|x| x.excess);
-            let (px, _) = max_of(&mut win.iter().copied(), &|x| x.excess95);
-            let rec: Vec<usize> = win.iter().copied().filter(|&i| rec_only(&fs[i])).collect();
-            let (rmx, _) = max_of(&mut rec.iter().copied(), &|x| x.excess);
-            let (rpx, _) = max_of(&mut rec.iter().copied(), &|x| x.excess95);
-            let (lo, li) = win.iter().map(|&i| (fs[i].excess, i)).fold((f64::MAX, 0), |a, b| if b.0 < a.0 { b } else { a });
+            let mean_max = max_of(&mut win.iter().copied(), &|x| x.excess);
+            let (p95_max, _) = max_of(&mut win.iter().copied(), &|x| x.excess95);
+            let record_only: Vec<usize> = win.iter().copied().filter(|&i| rec_only(&fs[i])).collect();
+            let (record_mean_max, _) = max_of(&mut record_only.iter().copied(), &|x| x.excess);
+            let (record_p95_max, _) = max_of(&mut record_only.iter().copied(), &|x| x.excess95);
+            let lowest = win.iter().map(|&i| (fs[i].excess, i)).fold((f64::MAX, 0), |a, b| if b.0 < a.0 { b } else { a });
+            Window { landed: land.is_some(), end, win: win.len(), mean_max, p95_max, record_only, record_mean_max, record_p95_max, lowest }
+        }
+
+        fn bars_line(r: &DigRead, fs: &[Figs], check: &Figs, sf: &Figs, f60: &[Figs], site: &str, mode: &str) -> String {
+            let after = fs.len() - 1; // the last is D+60
+            let w = window(r, fs);
+            let (land, end) = (w.landed, w.end);
+            let win: Vec<usize> = (1..=end).collect();
+            let rec_only = |x: &Figs| x.cast == 0 && x.sources[1] + x.sources[2] == x.ln;
+            let ((mx, mi), px) = (w.mean_max, w.p95_max);
+            let rec = &w.record_only;
+            let (rmx, rpx) = (w.record_mean_max, w.record_p95_max);
+            let (lo, li) = w.lowest;
             let verdict = |m: f64, p: f64| {
                 if r.depth >= 20 {
                     format!("B1 {}", if m <= 4.0 && p <= 8.0 { "pass" } else { "MISS" })
@@ -734,7 +783,7 @@ mod dig_depth {
                 r.label,
                 r.depth as f64 / 10.0,
                 r.frames[end].label,
-                if land.is_some() { "the first frame on the job's record" } else { "NO LANDING by D+24" },
+                if land { "the first frame on the job's record" } else { "NO LANDING by D+24" },
                 r.frames[mi].label,
                 verdict(mx, px),
                 rec.len(),
@@ -922,6 +971,43 @@ mod dig_depth {
             let _ = s.dig_read(&dn, &dn, "tunnel floor", (eye[2] - floor) as i64);
         }
 
+        /// A read dig's figures for the bars run by name: its label, depth (voxels), the digs counted
+        /// whole at its edit, its [`Window`] against `S`, and the check frame's mean against
+        /// D+60 (display levels).
+        pub(crate) struct SiteRead {
+            pub(crate) label: String,
+            pub(crate) depth: i64,
+            pub(crate) whole: u64,
+            pub(crate) window: Window,
+            pub(crate) check: f64,
+        }
+
+        /// [`dig_depth`]'s run of site `down` or `side` on the default adapter, lockstep, radius
+        /// 5, under `estimate`: the reads' text (as the reading prints it) and their figures.
+        pub(crate) fn forest_site(site: &str, estimate: svet_render::DigEstimate) -> Option<(String, Vec<SiteRead>)> {
+            let (eye, h) = spawn_eye();
+            let mut s = Session::new(None, &down(eye), false, 5, estimate)?;
+            println!("dig depth: {site} drained and settled");
+            match site {
+                "down" => site_down(&mut s, eye),
+                "side" => site_side(&mut s, eye, h),
+                o => panic!("site {o}: down or side"),
+            }
+            let mut text = s.log.clone();
+            let mut reads = Vec::new();
+            for r in &s.reads {
+                text += &read_text(r, s.out, site, "lock").1;
+                text.push('\n');
+                let _ = writeln!(text, "{site} {}: {}", r.label, held_line(r));
+                let settled = r.frames.last().expect("the settled frame");
+                let m = &r.manual;
+                let fs: Vec<Figs> = r.frames.iter().map(|fr| figs(fr, &m.settled, r.lo, r.hi, s.out)).collect();
+                let check = figs(&m.check, settled, r.lo, r.hi, s.out).excess;
+                reads.push(SiteRead { label: r.label.clone(), depth: r.depth, whole: r.whole, window: window(r, &fs), check });
+            }
+            Some((text, reads))
+        }
+
         /// Plan 0105 Phase 1: the dig's blink at depth on the forest of seed 1 at 15:00 at
         /// the floor profile's sizes and queue. `SVET_DIG` is `SITE/MODE/RADIUS/ARM`: `down` (a
         /// shaft one dig wide, dug looking down), `side` (the shaft's wall dug from its axis),
@@ -984,6 +1070,113 @@ mod dig_depth {
             let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../live/p0105");
             std::fs::create_dir_all(&dir).expect("the reading's directory");
             std::fs::write(dir.join(format!("{}-{site}-{mode}-r{radius}-{arm}.txt", s.rig.adapter.replace(' ', "_"))), text).expect("the table");
+        }
+
+        // The forest dig at depth's bars under the default estimate (Plan 0105 Phase 7c2), on
+        // the reading's rig and figures ([`forest_site`]): readings that assert, run by name.
+
+        /// The most `down` 1 m's mean may lie under `S` (display levels): a ratchet, not B2's
+        /// floor of 4. The RTX 3080 Laptop read -4.558 to -4.563 at D+0 (Plan 0105 Phase 7c2),
+        /// rounded up to the next whole level. This is the owner's accepted look of 2026-11-26
+        /// (the shallow dig's dark start), a miss of B2's under clause; a lower reading lowers it.
+        const DOWN_1M_UNDER: f64 = 5.0;
+
+        /// The bars over one site's reads ([`forest_site`]); `ratchet`, where given, the most the
+        /// 1 m read's lowest mean may lie under `S`. The misses, one line each.
+        fn misses(reads: &[SiteRead], ratchet: Option<f64>) -> Vec<String> {
+            let mut out = Vec::new();
+            for d in [10, 30, 50] {
+                let Some(r) = reads.iter().find(|r| r.depth == d) else {
+                    out.push(format!("no read at {d} voxels"));
+                    continue;
+                };
+                let w = &r.window;
+                if !w.landed {
+                    out.push(format!("{}: no landing by D+24", r.label));
+                }
+                if r.check.abs() > 0.5 {
+                    out.push(format!("{}: rig fault, the check frame {:+.2} against D+60", r.label, r.check));
+                }
+                if d == 10 {
+                    // B2's first clause.
+                    if w.mean_max.0 > 4.0 {
+                        out.push(format!("{}: B2, the mean {:+.3} over S at D+{}", r.label, w.mean_max.0, w.mean_max.1 - 1));
+                    }
+                    if let Some(under) = ratchet
+                        && w.lowest.0 < -under
+                    {
+                        out.push(format!("{}: the ratchet, the mean {:+.3} under S at D+{} past -{under}", r.label, w.lowest.0, w.lowest.1 - 1));
+                    }
+                    continue;
+                }
+                // B1.
+                if w.mean_max.0 > 4.0 || w.p95_max > 8.0 {
+                    out.push(format!("{}: B1, the mean {:+.3} at D+{}, the p95 {:+.0} over S", r.label, w.mean_max.0, w.mean_max.1 - 1, w.p95_max));
+                }
+                if d == 50 && w.record_only.len() != w.win {
+                    out.push(format!("{}: {} of {} frames on a record", r.label, w.record_only.len(), w.win));
+                }
+            }
+            out
+        }
+
+        /// Runs `site` under the default estimate, prints the reads and the figures, asserts
+        /// [`misses`].
+        fn site_holds(site: &str, ratchet: Option<f64>) {
+            assert_eq!(svet_render::DigEstimate::default(), svet_render::DigEstimate::Depth, "the default estimate");
+            let Some((text, reads)) = forest_site(site, svet_render::DigEstimate::default()) else {
+                return;
+            };
+            println!("{text}");
+            for r in &reads {
+                let w = &r.window;
+                println!(
+                    "{site} {}: digs whole {}; window D+0..D+{} ({}); mean max {:+.3} at D+{}, p95 max {:+.0}; record-only {} of {}; lowest {:+.3} at D+{}; check {:+.2}",
+                    r.label,
+                    r.whole,
+                    w.end - 1,
+                    if w.landed { "landed" } else { "NO LANDING" },
+                    w.mean_max.0,
+                    w.mean_max.1 - 1,
+                    w.p95_max,
+                    w.record_only.len(),
+                    w.win,
+                    w.lowest.0,
+                    w.lowest.1 - 1,
+                    r.check
+                );
+            }
+            let m = misses(&reads, ratchet);
+            assert!(m.is_empty(), "{site}: {}", m.join("; "));
+        }
+
+        /// Plan 0105 Phase 7c2, `down`: the forest of seed 1 at 15:00, a shaft one dig wide
+        /// (radius 5) dug from the spawn's eye looking down, read at 1, 2, 3, 5 and 7 m
+        /// (Reading 18's rig, lockstep, the default `depth`), each read's frames from D+0 to the
+        /// first on the job's record against `S` (the settled frame at D-1's exposure) over the
+        /// dig's box: B1 at 3 and 5 m (the mean at most 4 levels over, the p95 at most 8), 5 m
+        /// on a record in every one of those frames; at 1 m B2's first clause (the mean at most
+        /// 4 over) and the ratchet [`DOWN_1M_UNDER`] under; each read landed by D+24 and its
+        /// check frame within 0.5 levels of D+60.
+        /// Run by name on the RTX (`SVET_TEST_ADAPTER=rtx`, an optimised test build): the
+        /// forest's drain is minutes a run on lavapipe (Plan 0105 Phase 7c2).
+        #[test]
+        #[ignore = "reading"]
+        fn a_dig_down_at_depth_holds_no_flash() {
+            site_holds("down", Some(DOWN_1M_UNDER));
+        }
+
+        /// Plan 0105 Phase 7c2, `side`: [`a_dig_down_at_depth_holds_no_flash`]'s shaft dug
+        /// unread to 12 voxels under each depth, then a dig into its wall from an eye on the
+        /// axis at that depth (Reading 18's rig): B1 at 3 and 5 m, 5 m on a record in every
+        /// frame, at 1 m B2's first clause (its under clause is the side dig's accepted dark
+        /// start, printed).
+        /// Run by name on the RTX (`SVET_TEST_ADAPTER=rtx`, an optimised test build): the
+        /// forest's drain is minutes a run on lavapipe (Plan 0105 Phase 7c2).
+        #[test]
+        #[ignore = "reading"]
+        fn a_dig_into_the_wall_at_depth_holds_no_flash() {
+            site_holds("side", None);
         }
     }
 }
