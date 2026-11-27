@@ -67,7 +67,7 @@ window's top-right corner reads `fps <n>  frame <median> ms p99 <ms>` while it i
 | `W` `A` `S` `D` | Fly (or walk, in walk mode) |
 | `Space` / `C` | Rise / sink; walking, `Space` jumps, or climbs a ledge with a standable top within 1.2 m |
 | `Shift` | Faster |
-| Left click | Dig at the crosshair; the edit result prints to the terminal. In placement mode: place the ghost |
+| Left click | Dig at the crosshair; the edit result prints to the terminal, and once the dig's rings 1 and 2 are baked a `dig settled: rings 1 and 2 ...` line whose `digs whole N` counts the chunks the dig reached that held no light block (with the bake thread on, known a frame or more after the edit, so not on the edit's line). In placement mode: place the ghost |
 | `E` | In placement mode: place the ghost, as the left click does; out of it nothing (in the menu it types) |
 | Right click | Fill at the crosshair. In placement mode: leave it |
 | Wheel | Enter placement mode at the belt's selected slot; in the mode, step the slot (down the next, wrapping at nine) |
