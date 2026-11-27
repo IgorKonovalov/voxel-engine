@@ -32,11 +32,11 @@
       "quality": 82,
       "source": "flythrough",
       "seed": 1,
-      "flags": ["--headless", "--settled-start", "--source", "cave", "--dig-at", "40", "--render", "1280x720", "--frames", "97", "--eye", "32,32,32,180,-10", "--lamp", "off"],
+      "flags": ["--headless", "--settled-start", "--source", "cave", "--dig-at", "40", "--render", "1280x720", "--frames", "97", "--eye", "32,32,32,180,-10", "--lamp", "on"],
       "still_at": 96,
-      "tolerance": 0,
+      "tolerance": 0.003,
       "cap_bytes": 300000,
-      "shows": "A dug cave with its light settled, the lamp off (World and edits)",
+      "shows": "A dug cave lit by the headlamp, its light settled (World and edits)",
       "candidates": [
         [],
         ["--eye", "32,32,32,90,0"],
@@ -44,7 +44,7 @@
         ["--eye", "32,32,32,180,-10", "--lamp", "off"],
         ["--eye", "32,32,32,180,-10", "--lamp", "off", "--exposure-comp", "1"]
       ],
-      "note": "the flags are candidate 4, a default picked by the bar (Plan 0093 Phase 5d) for the owner to correct; a still of the loop's last frame by G3's flash read (the mean over the changed pixels is over the last frame's at frames 40..92, two renders identical); the loop for the re-shoot was kind loop, still_at 36..96, fps 20, width 800, quality 70, cap_bytes 700000, fallback gif; tolerance: cell share at C 8, L 4; eight renders of this entry (Phase 6c's set and the second and third checks' renders, G13), 28 pairs, largest pair 0, every pair 0, so 0 (G13: 0 until a render differs); smallest wrong share 0.182080 (the yaw turned 2 degrees); 2026-11-27, the release binaries of 3c3e82e2 and their rebuild of 01:06 (no source the binaries compile changed), RTX 3080 Laptop, loaded"
+      "note": "the flags are candidate 3 with the lamp on, the owner's pick of 2026-11-27 ((a): the same pose, where the dig reads); candidate 4 (the lamp off) was the page's image from v0.79.1 until 2026-11-27; a still of the loop's last frame by G3's flash read on these flags (the mean over the changed pixels is over the last frame's by up to 1.236 (frame 50) at 54 of frames 40..95, the two renders apart by at most 0.003); the loop for the re-shoot was kind loop, still_at 36..96, fps 20, width 800, quality 70, cap_bytes 700000, fallback gif; --pre-roll-stepped left off (a render with it ran past the script's 300 s timeout); tolerance: cell share at C 8, L 4; thirteen renders of this entry (the shoot's, eleven more in one hold and the check's, G13; eleven PNGs identical, one other), 78 pairs, largest pair 0.001062, twice the largest pair (G13), rounded up to one significant figure; smallest wrong share 0.573407 (the yaw turned 2 degrees); 2026-11-27, the release binaries of b16a944e, RTX 3080 Laptop, loaded"
     },
     "hall": {
       "kind": "still",

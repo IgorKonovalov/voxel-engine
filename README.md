@@ -144,14 +144,14 @@ For a full loop with streaming, creatures, lights and sound, read [the fly-throu
 - Integer math: the same edits give identical voxels on Linux and Windows.
 - Unsupported rock falls as one piece or crumbles to rubble.
 
-![A cave dug open by a sphere, almost black, the stepped rock at the lower left lit amber by an ore](docs/images/dig.webp)
+![A cave dug open by a sphere, its stepped rock walls lit pale by the headlamp](docs/images/dig.webp)
 
-<sub>A dug cave with its light settled, the headlamp off.</sub>
+<sub>A dug cave lit by the headlamp, its light settled.</sub>
 
 Try it:
 
 ```sh
-cargo run --release -p flythrough -- --source cave --dig-at 40 --eye 32,32,32,180,-10 --lamp off
+cargo run --release -p flythrough -- --source cave --dig-at 40 --eye 32,32,32,180,-10
 ```
 
 ### Rendering

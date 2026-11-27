@@ -7,6 +7,7 @@ SemVer 0.x (any minor may break the API until 1.0).
 ## [Unreleased]
 
 - **Fixed (harness): `scripts/shoot-images.test.mjs` passes on Windows; the relative paths `scripts/shoot-images.mjs` makes (its test's walk of `docs/images/`, the contact sheet, the index's hrefs, a render's log) are joined with `/` on every platform (`relPosix`), so a walked `light\x.png` matches the manifest's `light/x.png` (the images-windows chore).**
+- **Changed (docs): the README's `dig` image is the owner's pick, the same pose with the headlamp on** (the near-black lamp-off frame of 0.79.1 stays in the manifest as candidate 4); still a still, its noise set and tolerance read again (the readme-dig chore).
 
 ## [0.79.1] - 2026-11-27
 
