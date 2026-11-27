@@ -17,6 +17,17 @@ Rules:
 
 ## Next up
 
+### The exposure is too bright at the beginning of a dug tunnel (owner, 2026-11-27)
+
+The owner, during the dig session of 2026-11-27 (forest at 15:00, floor profile, bake thread on,
+`depth`), looking down a pit he had just dug: "exposure is too bright on beginning of tunnel". In
+his screenshot the pit's upper walls read a light blue-grey (the sky term) around a black bottom,
+brighter than shaded rock a metre under the grass should look. Not attributed. Candidates to
+read: the exposure metering on a frame that is mostly the pit's dark interior (it opens up, so
+the mouth over-exposes); the sky visibility the walls near the mouth hold; the far-normal band.
+A stability-of-look matter: his to judge again after a reading names the cause. The screenshot is
+kept outside the repo in the main checkout's `live/owner-notes/2026-11-27-pit-mouth-exposure.png`.
+
 ### The pre-roll's end on a streamed world rides a 30-step recheck (2026-11-26)
 
 From [Plan 0106](plans/done/0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md), Rulings 4 and 5 (readings in `docs/plans/logs/0106.md`, Phases 10 and 11). **Drafted 2026-11-26 as [Plan 0109](plans/0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md); awaits the owner's go.** This entry leaves when the owner answers.
