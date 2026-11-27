@@ -391,3 +391,316 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 ## Followups
 
 - A hitch line for `docs/nfr.md` section 2, proposed at Phase 5.
+
+## Amended 2026-11-27 (architect, Phase 5)
+
+Read from Phases 1 to 4 ([logs/0111.md](logs/0111.md)), the raw window folders
+(`live/owner-notes/2026-11-27-0111-p3/`, outside the repo) and the tree at `48b68ed6`
+(`crates/svet-render/src/bake/queue/shadow.rs`, `frame/baked.rs`, `frame/bake_thread.rs`,
+`bake/link.rs`, `bake/writes.rs`, `gpu_world/window.rs`, `gpu_world/slot.rs`,
+`gpu_world/mod.rs`, `gpu_world/columns.rs`, `crates/svet-world/src/stream/mod.rs`,
+`stream/residency.rs`, `stream/workers.rs`). No run was made for this reading. **Phase 6 is
+replaced by Phases 6a to 6g below**, one remedy a phase, one phase a dev brief, in the order
+of slow frames they are expected to remove. The owner approves before any of them starts.
+
+### What the tables say, read against the code
+
+The quiet window's slow frames are of **two kinds, one frame apart**, and the code names both.
+
+**Kind F, the focus-move frame** (cave 32 of 34, outdoor 9 of 18, castle 3 of 11 in the
+quiet window; the pairs 736/737, 1199/1200 and 3398/3399 of Phase 1's cave are an F frame and
+its A frame). Its signature: `poll` 3.5 to 7 ms with **0 chunks**, `events` 3 to 4, `copy` 3.5
+to 9 with 0 bricks, `build` 13 to 15, `update` 1 to 1.5. What runs: the camera crosses a chunk
+boundary; `Streamer::update` re-keys the job queue under the workers' lock (`update`); the
+poll's sweep classifies the shells that crossed out of the keep balls and evicts the slab
+under the store's write lock (`poll`); the mirror drops every evicted record, 512 entries and
+their slots each (`events`); `reconcile_window` drops the leaving slab and enqueues the
+entering one, and the sync's `copy` writes the wrapped table's cleared runs and the column
+map's dirty tiles, one `write_texture` a tile (`copy`); and then **`notes` in
+`bake/queue/shadow.rs` reads the whole mirror**: `whole` is true whenever the window differs
+from the last notes', so `chunk_note` runs over every mirrored and pending chunk (about 58 000
+at full residency, 17 077 full and 40 700 LOD-only: three hash lookups each) and
+`column_lowest` over the window's 51 x 51 columns. That is the `build` lap of 13 to 15 ms, on
+the render thread, once a chunk crossed. The backlog's "The mirror's notes for the bake's
+shadow: a whole read on the render thread" predicted it from the code; this is the reading it
+asked for.
+
+**Kind A, the arrival frame**, the one after: `poll` 200 to 500 chunks, `sync` 13 to 33 ms
+(`alloc` 6 to 7.5 over about 13 000 bricks, `size` 2 to 3, `note` 1.7, `place` 1, `copy` 1.3,
+`select` 0.7), `build` 4 to 5, `issue` 2.5 to 3.3. What runs: the focus move queued a slab of
+jobs nearest first; eight workers finish it inside one frame (the cave's chunks are cheap to
+generate or restore), so one poll absorbs the whole slab and one sync uploads it, with
+`sync_budget_bytes` at `u64::MAX` and `sync_budget_time` `None` (the fly-through's `--sync-ms`
+default). The per-brick walk (`upload_brick`: pack, `pool.alloc`, stage, entry) is about 0.5 us
+a brick; the sync costs about 65 us a chunk on every path (cave 13 ms / 200, castle 19.6 / 305,
+outdoor 32.8 / 504). **Hold C's `--workers 4` reads 15 against 178 because the slab takes two
+frames to produce and lands in two polls**, not because the workers take the render thread's
+core: `alloc`'s mean over the slow frames fell 6.3 to 1.2 ms and `poll` and `build` grew. The
+bricks are the same; the frame they land in is the lever.
+
+**The rest, smaller:**
+
+- **The castle's two 125 ms frames** (722 and 2321; its `over_100ms` 2) are a **focus jump**
+  (`Refocus::Jump`, `update` 10 to 12 ms rebuilding the queue, the full sweep evicting
+  thousands under the store lock, `poll` 42 to 47, `events` 32 to 34, `build` 13 to 14): the
+  path cuts between viewpoints, and every cost above lands at once.
+- **The outdoor's `apply` frames** (6 of 18 in the window, 12 of 110 headless; 12 to 65 ms):
+  `Lists::apply` writes the bake thread's lists under `THREAD_LIST_CAP` (1 MiB), **one
+  `queue.write_buffer` a store write** (`Store::emit` pushes a `Write` per block, table word
+  and summary; `apply_list` writes each). The count of writes a list is not printed; the
+  outdoor's lists are the largest (sky and sun records). A wgpu write costs tens of
+  microseconds whatever its size, so the count, not the bytes, is the likely cost (a guess
+  until 6e counts it).
+- **Loaded, the same frames inflated**, plus two waits that only load shows: `update` 13 to 32
+  ms in 13 of `l-outdoor`'s 41 (the render thread takes the workers' queue `Mutex` in
+  `shift_queue`; a worker preempted inside its pop holds it for a scheduler quantum) and
+  `send` 2.6 to 3.7 ms (the bake thread's inbox lock, the same shape). The per-brick walk
+  doubles under preemption (`alloc` 13 to 22 ms in the loaded cave's A frames) because it is
+  the longest unbroken CPU stretch of the frame.
+- **Headless `present` (6 to 9 ms a slow frame) is the `device.poll` wait**, the GPU's time,
+  and reads 0.2 ms in the window: not a render-thread stage, and no remedy's target. It is
+  why the headless count swings run to run (47, 170, 178 on one binary): a frame near 33 ms
+  crosses on the GPU's clocks. The bars below read stages and attributed counts, not the raw
+  count alone.
+
+**The hypotheses, settled:** 1 (the sync's `copy`, `select`, `alloc`) stands for kind A, as
+the slab's size, not a per-brick cost alone; 2 (the bake laps) stands as `build`, the whole
+notes; 3 falsified (`wait` 0.000, `lock` at most 0.4 ms); 4 (no cap on `poll`) stands as the
+slab, with the sync, not `poll` alone; 5 falsified quiet (faults a slow frame 23 to 127, a
+fraction of a millisecond); 6 reframed (Hold C: the slab's spread, not the cores); 7
+falsified (stop line 1); 8 falsified (`prepare`, `encode`, `submit` under 2.5 ms together);
+9 falsified (acquire and present under 0.3 ms in the window); 10 stands (the F and A pairs are
+runs of two); 11 is Phase 7's.
+
+### The remedies: Phases 6a to 6g
+
+The rules of every remedy phase: release, the RTX picked by name, the exclusive perf lock, a
+16 GiB scope, load1 printed at each run's start and end; **quiet** is load1 at most 2 at the
+start; the hold is projected from its first run and not started past 20 minutes; the arms
+alternate (A B A B), two runs an arm; the parent commit's binary is the base arm. **The
+reading of record is the quiet headless cave at the tester's line** (Phase 2's), with the
+castle where a phase names it; the loaded re-run is Phase 2's Hold B (32 busy loops, 60 s
+lead), one run an arm. Each phase's log section holds Phase 2's fields for every run, and
+states its bar as met or missed with the figures; a remedy that misses is reverted and its
+reading kept (the plan's Phase 6 rule). The window's figures come from Phase 7.
+
+#### Phase 6a: the shadow's notes across a window move are a delta
+- **Owner skill:** dev
+- **What:** In `notes` (`bake/queue/shadow.rs`), `whole` is true only when the mirror gives no
+  change list (`changed.is_none()`: the first frame, an overflow past `CHANGES_MAX`). A window
+  move sends the change list as every other frame does: the mirror already notes every chunk
+  the move touches (`drop_chunk` through `drop_record` and `unqueue`, `enqueue` on the
+  entering slab), so the shadow's `take` removes the leaving chunks (their note reads
+  `ChunkNote::default()`) and adds the entering ones. The columns: the changed chunks'
+  columns as today, and **every column of the window when the window's z range changed**
+  (`column_lowest` reads the range), since no chunk change names those. On the bake side,
+  `Shadow::take` prunes `columns` outside the new window when the window changed (a bounded
+  map; the bake thread's time). `ShadowNotes::then` is unchanged: `changed` stays `None` only
+  when a whole is pending. `light_notes` stays as it is (whole when the light key changes);
+  its time is read in this phase's rows, not cut.
+- **Files touched:** `crates/svet-render/src/bake/queue/shadow.rs`, its tests
+  (`bake/queue/tests.rs` or a sibling), `docs/plans/logs/0111.md`.
+- **Done when:** A CPU test (under 1 s, no GPU, no clock) feeds a model mirror of about 2 000
+  chunks in a window and moves the window by one chunk in x, then in z, then jumps it: after
+  each move the notes read `whole` false with at most the chunks the mirror's change list
+  names, and the shadow that took them answers `is_mirrored`, `is_lod`, `is_pending` and
+  `column_lowest` for every chunk and column of the new window exactly as a shadow fed whole
+  notes does (the oracle); after the z move the notes carry every column of the window; the
+  first frame's notes still read `whole` true. The quiet headless cave, two runs an arm
+  alternated against the parent: `build` p99 (the `bake thread render laps:` line) under 5.0
+  ms (Phase 2 Hold A 13.764, Hold C 9.778; the window 4.961; the A frames' 4 to 5 ms of
+  `chunk_note` over the slab and `light_notes` stay, about 1 % of the frames), `build` max
+  under 8 ms (Hold A's p99 says 13.8 or more), and slow frames whose largest stage is `build`
+  0 in both runs (Hold A 49, Hold C 43, the window 32). The loaded cave, one run an arm:
+  `build` p99 under 8.0 ms (Hold B 17.096). The first pre-roll step's notes time is
+  unchanged (Plan 0109's reading: the first frame stays whole).
+- **Expected cut (a guess):** the F frames leave the slow set: the window's quiet cave 34 to
+  under 8, outdoor 17 to about 8, castle 10 to about 7; every loaded F frame 13 to 15 ms
+  shorter.
+- **Stop rule:** `build` p99 under 2.0 ms but the cave's slow-frame count not lower in either
+  run than the parent's in the same hold: stop, the architect reads what replaced it.
+- **Beside the lanes:** yes. `shadow.rs` is no brief's of Plans 0033 or 0081.
+
+#### Phase 6b: the slab's frame, read in four arms
+- **Owner skill:** dev
+- **What:** No code. The arrival slab spread over frames, and the slot image, read as
+  settings that exist: `--sync-ms 6` (the mirror's time budget: selection stops sizing and the
+  upload stops writing whole chunks once 6 ms are spent, the rest stay pending nearest first)
+  and `--mirror-pack workers` (ADR-0056, Plan 0107), on the Phase 6a tip. Hold A, the quiet
+  cave, four arms alternated, two runs each: default, `--sync-ms 6`, `--mirror-pack workers`,
+  both (about 9 minutes). Hold B, the quiet castle, two arms alternated, two runs each: default
+  and both (about 2.5 minutes). Hold C, the loaded cave, one run an arm: default and both. The
+  arithmetic behind 6 ms: a chunk costs about 65 us in the sync on every path (above), so 6 ms
+  carries about 90 chunks a frame and a slab of 200 to 500 lands over 3 to 6 frames, 30 to 60
+  ms at the window's rate; the budget stops between chunks, so a chunk is never half-written
+  (`gpu_mirror_budget::a_sync_stops_at_its_time_budget` already defends that). ADR-0056's
+  Alternative A rejected a time budget on Plan 0064's reading (residency p95 3.0 to 13.7 s
+  against 0.30 s): that was at about 300 us a chunk against a 2 to 8 ms budget, 7 to 27
+  chunks a frame, with the queue behind; today's 65 us gives about 90 a frame against a slab
+  every 2 to 3 s, so the backlog clears in tens of milliseconds, by arithmetic. This phase
+  reads whether it does.
+- **Files touched:** `docs/plans/logs/0111.md`.
+- **Done when:** The log holds Phase 2's fields for every run, plus per arm: sync max and p99
+  (the `frames:` line), `alloc` p99, slow frames whose largest stage is `alloc`, `size` or
+  `copy`, `full residency after` and the `streaming:` fill at 5 s and 15 s. Per arm against
+  the default: the ratio of `over_33ms` and of the sync-led slow frames, and whether `full
+  residency after` is later by more than 10 %. No conclusion is written. Plan 0107's
+  conditions 2 and 3 for the `workers` arm (the eight-CPU stand-in's fresh forest, two pairs
+  alternated, `march GPU` p50 not following the arm; its full residency not later by more than
+  10 %) are read in a Hold D of about 5 minutes **only if** Hold A's `workers` arm shows
+  fewer slow frames than the default in both runs.
+- **Stop rule:** a hold projected past 20 minutes from its first run is not started.
+- **Beside the lanes:** yes (no code).
+
+#### Phase 6c: the picks from 6b
+- **Owner skill:** human
+- **What:** The architect reads 6b's rows and picks, for each setting, default on or off, by
+  the rule: a default flips when the arm shows fewer sync-led slow frames in both quiet cave
+  runs and fewer `over_33ms` in the loaded one, with `full residency after` not later by more
+  than 10 %; `workers` also needs Plan 0107's conditions 2 and 3. A flip of the time budget
+  gets an ADR (the rejected alternatives: a cap on the chunks a `poll` absorbs, which bounds
+  `poll` and `events` too but not `copy`'s table runs; fewer workers, which Hold C showed and
+  which slows every load; and ADR-0056's Alternative A's reading, explained by the arithmetic
+  above). The owner approves the picks.
+- **Files touched:** this plan (an appended section), `docs/adrs/` if a budget flips,
+  `docs/adrs/README.md`, `docs/plans/README.md`.
+- **Done when:** The picks are written with the rows they rest on, and approved.
+
+#### Phase 6d: the picked defaults, and the identity test the flip owes
+- **Owner skill:** dev
+- **What:** The defaults 6c picked: `--sync-ms` in `apps/flythrough/src/cli` (and the tester's
+  line, which takes the fly-through's defaults) and, if picked, `MirrorConfig::packing` in
+  `crates/svet-render/src/gpu_world/mod.rs` with the fly-through's `--mirror-pack`. Both stay
+  settings with their other arm (the owner's rule). If `workers` flips, Plan 0107's owed test
+  lands here: `gpu_mirror_image` at `r_lod` above `r_full` with a focus move that promotes and
+  demotes a record, asserting the pool, the records, the table and the light samples equal
+  byte for byte against the inline arm (lavapipe, under the soak line, its time stated).
+  The HUD rows and the start-up banner show the new defaults. If 6c picks nothing, this
+  phase is skipped and the log says so.
+- **Files touched:** `apps/flythrough/src/cli/flags.rs`, `apps/flythrough/src/cli/settings.rs`,
+  `crates/svet-render/src/gpu_world/mod.rs`, `crates/svet-render/tests/gpu_mirror_image.rs`,
+  `docs/flythrough.md`, `docs/plans/logs/0111.md`.
+- **Done when:** `flythrough --help` and the banner name the picked defaults; the settings-row
+  test of the fly-through (`gpu_settings_rows`) reads them; the quiet headless cave at the
+  defaults, two runs alternated against 6a's tip: slow frames whose largest stage is `alloc`,
+  `size` or `copy` 0 in both (Hold A 116, Hold C 128; the window 2), the `frames:` line's
+  slowest sync under 10 ms (Phase 1's cave 15.5 ms), `full residency after` within 10 % of
+  6a's. The loaded cave, one run an arm:
+  `over_33ms` at most half of 6a's.
+- **Expected cut (a guess):** the A frames leave the quiet set (cave 2, castle 5, outdoor 2 in
+  the window); the loaded cave's 124 `alloc`-led frames become about a third as many, each a
+  budgeted sync.
+- **Stop rule:** `full residency after` later by more than 10 % in either run: revert the
+  default, keep the reading, the architect.
+- **Beside the lanes:** yes; `cli/` and `MirrorConfig`'s default are no brief's of 0033 or 0081.
+
+#### Phase 6e: the outdoor's `apply`: the write lists' count read, then coalesced
+- **Owner skill:** dev
+- **What:** First the count: the `slow frame:` line's `apply` gains the writes applied and
+  their bytes in that frame (two numbers from `Lists::apply`, no new timer), and one quiet
+  headless outdoor run reads them for its `apply`-led frames. Then, if a slow frame's `apply`
+  holds hundreds of writes, `apply_list` merges adjacent writes of one kind whose offsets are
+  contiguous into one `write_buffer` (a range check and one copy into a staging `Vec` kept
+  across frames; whether the store's lists are mostly contiguous is part of the count), so a
+  list of n block writes costs a handful of wgpu calls. The landing word's patch runs before the merge,
+  as today. If the count reads low (tens a frame), the cost is per byte, not per call, and the
+  phase stops at the reading for the architect.
+- **Files touched:** `crates/svet-render/src/bake/writes.rs`, `apps/flythrough/src/run/slow_frames.rs`,
+  `docs/flythrough.md`, `docs/plans/logs/0111.md`.
+- **Done when:** A CPU test on `Lists::apply` with a recorder applier: a list of 300 writes of
+  one kind at contiguous offsets applies as one write of their joined bytes, a gap or a kind
+  change starts a new one, and a landing word written into a merged range reads the frame's
+  word (the existing `a_fade_ahead_of_its_landing_list_keeps_the_applied_word` still passes).
+  The quiet headless outdoor, two runs alternated against 6d's tip: `apply` p99 (the laps
+  line) under 2.0 ms and `apply` max under 8 ms (the window read 3.446 / 64.697; Hold A's
+  outdoor slow frames had `apply` as the largest stage 12 times); slow frames whose largest
+  stage is `apply` 0 in both runs.
+- **Expected cut (a guess):** the outdoor's 6 `apply` frames (window) and 12 (headless) leave.
+- **Stop rule:** the count reads under 50 writes in every `apply`-led frame: stop at the
+  reading.
+- **Beside the lanes:** yes; `writes.rs` is no brief's of 0033 or 0081.
+
+#### Phase 6f: the sweep's evictions and the mirror's drops spread over frames
+- **Owner skill:** dev
+- **What:** For the focus jump (the castle's two 125 ms frames) and the loaded F frames: the
+  poll's sweep hands at most `EVICT_PER_POLL` evictions and demotions to the store lock a
+  poll (a constant the dev sets from a reading this phase adds to the `slow frame:` line, the
+  chunks a poll evicted: the castle's jump evicted them in 42 to 47 ms of `poll`, and the
+  count is not printed today; 256 is the guess), keeping the rest sorted for the next poll;
+  the mirror's `apply_events` then drops only what arrived, so `events` is bounded by the
+  same count. A chunk past its keep ball lingers a few frames, mirrored and unseen; nothing
+  reads it. The frame a chunk leaves in already depends on the workers' timing; the set and
+  the order of evictions are unchanged, only their frame. A full sweep's
+  `rebuild_queue` (`update` 10 to 12 ms on a jump) is read, not cut, in this phase.
+- **Files touched:** `crates/svet-world/src/stream/mod.rs`, `crates/svet-world/src/stream/residency.rs`,
+  their tests, `docs/plans/logs/0111.md`.
+- **Done when:** A CPU test: a focus jump that puts 1 000 resident chunks past the LOD ball
+  evicts at most `EVICT_PER_POLL` a poll and all of them within the polls the arithmetic
+  gives, in the sweep's order, the oracle sweep agreeing with the incremental one at every
+  poll (`stream-oracle`). The quiet headless castle, two runs alternated against 6e's tip:
+  `over_100ms` 0 in both (Hold A 1; the window 2) and `poll` max under 10 ms (Hold A's
+  `update + poll + sync` max 79.3); the quiet cave's `poll` and `events` means over the slow
+  frames not above the parent's by more than 0.5 ms.
+- **Expected cut (a guess):** the castle's two 100 ms frames, and 5 to 10 ms off every F
+  frame under load.
+- **Stop rule:** the castle's `over_100ms` still 1 or more in both runs with `poll` under 10
+  ms: the cost moved elsewhere (`update`'s rebuild, `build`); stop for the architect.
+- **Beside the lanes:** **no.** `stream/mod.rs` and `residency.rs` are Plan 0033's streamer
+  brief's; this phase runs after that brief merges, or in its lane's order.
+
+#### Phase 6g: the render thread never waits on the workers' queue lock
+- **Owner skill:** dev
+- **What:** Loaded only (the owner's question 2 below gates it). `Streamer::update` hands the
+  new focus to a slot the workers read (`Mutex<Option<Refocus>>` beside the queue, taken for
+  a store only) and the next worker to take the queue lock applies the shift or rebuild
+  before it pops; the render thread never takes `shared.queue`. The quiet `update` of 1 to
+  1.5 ms moves to a worker with it. `send`'s inbox lock (`ThreadLink::send`) is read in this
+  phase's rows; cut here only if its shape is the same and the fix is a `try_lock` with the
+  message carried to the next frame.
+- **Files touched:** `crates/svet-world/src/stream/mod.rs`, `crates/svet-world/src/stream/workers.rs`,
+  `crates/svet-world/src/stream/residency.rs`, their tests, `docs/plans/logs/0111.md`.
+- **Done when:** A CPU test: a focus step while a test thread holds the queue lock returns
+  from `update` (a hang is the failure, under nextest's timeout; no clock is read), and the
+  queue reads the shifted keys once the lock is released and a worker ran. The loaded outdoor, one run an arm against 6f's tip:
+  slow frames whose largest stage is `update` 0 (`l-outdoor` 13; Hold B 8); `update` max
+  under 5 ms (Hold B's outdoor: `update` mean 2.747 ms over its slow frames, 8 led by it).
+  The quiet cave's `update` mean over the slow frames under 0.3 ms (1.2 today).
+- **Expected cut (a guess):** the loaded outdoor's 13 `update` frames; nothing quiet.
+- **Stop rule:** `update` max under 5 ms but the loaded `over_33ms` not lower: stop at the
+  reading.
+- **Beside the lanes:** **no**, as 6f.
+
+### The hitch line for `docs/nfr.md` section 2 (a proposal, to be measured)
+
+No line counts hitches today. Proposed, from Phase 4's quiet window (cave 34 in 80 s, castle
+10 in 37 s, outdoor 17 in 75 s: 25, 16 and 14 a minute): **frames over 33.3 ms a minute of
+the tester's benchmark path, quiet, the RTX host's window: at most 5 on each streamed path,
+and none over 100 ms outside a focus jump.** The figure is a quarter of today's and a guess;
+Phase 7's `run.json` sets the reading, and the close writes the measured count beside the
+line. The headless cave is not the line's reading (the `present` wait above).
+
+### What runs beside the lanes
+
+Phases 6a to 6e run beside Plans 0033 and 0081 (their files are no brief's). Phases 6f and 6g
+edit `crates/svet-world/src/stream/`, Plan 0033's streamer brief's ground, and run after it or
+in that lane's order. If Plan 0033's far field merges before Phase 7, Hold A is re-read on the
+merged tree first (the plan's risk, unchanged).
+
+### Owner questions (each with the recommended option first; none is answered here)
+
+1. **Phase 6's order and scope: 6a, then 6b to 6d, then 6e, then 6f, with 6g gated by
+   question 2?** Recommended: yes, as written, 6a first since it removes the most frames for
+   the least code. Alternative: 6b to 6d first (settings that exist, no code, a reading in
+   an afternoon), 6a after; this delays the largest cut by a day.
+2. **Does the engine hold up under a loaded box as a goal, or are the loaded tables readings
+   only?** Recommended: readings only, with Phase 6g deferred to the backlog ("Plan 0107's
+   leftovers" grows a line) unless 6a to 6f's loaded re-runs still show `update`-led frames;
+   a loaded box is not a budget line, and the tester's README says "close other heavy
+   programs". Alternative: 6g in this plan, after 6f.
+3. **The castle's focus jump (two 125 ms frames): Phase 6f in this plan, or parked?**
+   Recommended: 6f in this plan, since it also trims the loaded F frames and its file is one
+   the plan already names. Alternative: park it in the backlog with the reading; a scene cut
+   can hide behind a fade in a game, and the owner judges the castle in Phase 7.
+4. **A default flip in 6c on the rule written there, or every flip asked of you?**
+   Recommended: the rule, with the picks shown to you before 6d starts (the phase is yours to
+   approve). Alternative: each flip its own question.
