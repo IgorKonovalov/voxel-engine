@@ -1,6 +1,6 @@
 # 0107: The mirror's slot image packed on the stream workers
 
-> **Status:** in-progress (Phases 1-5 done; Phase 5's no-gain stop fired, the default stays `inline`; the architect reads it before Phase 6). Approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
+> **Status:** implemented, awaits the fresh close review (Phases 1-5 and 7 done; Phase 5's no-gain stop fired and `inline` stays the default; Phase 6 routed to Plan 0111, Phase 8 skipped, Phase 9 cut to the tip, per the amendment of 2026-11-27). Approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
 > [the review of 2026-11-26](../reviews/2026-11-26-work-off-the-render-thread.md) on the owner's
 > "all recommended" (its question 1: draft now, Phase 1 the re-read), with no further interview;
 > the guesses and the questions left are under "Risks & open questions", each with a recommended
@@ -670,12 +670,12 @@ the default.
 | 2: the slot image as a pure function | dev | done; bench read loaded | 6afbb90c |
 | 3: the mirror takes an image, behind a setting | dev | done; gpu readings loaded | 68513d6e |
 | (merge of main v0.82.0, no conflicts) | dev | done | 344ec173 |
-| 4: the sizes and the emitters from the image | dev | done; gpu readings loaded | committed with this row |
-| 5: the readings (tail, workers, held bytes) | dev | done; the no-gain stop fires (sync p99 -14.4 % cave, -15.1 % forest); quiet at each hold | committed with this row |
-| 6: the wanted set kept in order | dev | not started | |
-| 7: the thread counts in one place | dev | done; the defaults unchanged on 1 to 64 CPUs; starts read loaded | committed with this row |
-| 8: the owner's window (only if 5 did not stop the default) | human | not started | |
-| 9: the pick as the default, and the lines | dev | not started | |
+| 4: the sizes and the emitters from the image | dev | done; gpu readings loaded | e765a000 |
+| 5: the readings (tail, workers, held bytes) | dev | done; the no-gain stop fires (sync p99 -14.4 % cave, -15.1 % forest); quiet at each hold | 103e6715 |
+| 6: the wanted set kept in order | dev | not run, routed to Plan 0111 | |
+| 7: the thread counts in one place | dev | done; the defaults unchanged on 1 to 64 CPUs; starts read loaded; comments fixed for the hygiene gate | 77d872ce, b0fc6cef |
+| 8: the owner's window (only if 5 did not stop the default) | human | skipped (the no-gain stop) | |
+| 9: the pick as the default, and the lines | dev | cut to the tip: main merged; gate 1505 of 1506, the HUD golden re-blessed for Phase 3's row | 3608a1b7, 07e0228c |
 
 ### Notes
 
@@ -725,6 +725,11 @@ each. Empty is fine.)_
   the CLI test is `cli/tests/threads.rs` (`cli/tests.rs` is near the size cap).
 - Phase 7: the line prints at every start's pre-roll, streamed or not; on a bounded scene the
   workers it names are the default's, unused.
+- Phase 3: the HUD's `mirror pack` row went into `gpu_hud_golden`'s fixed stats without a
+  re-bless of `hud.png`; found by the tip's gate, re-blessed at `07e0228c` (the diff only in
+  the text rows from that row down, y 80 to 151 of 320x180; `live/hud-golden/`).
+- Phase 3: the README's `hud` still (`docs/images/shots.json`) shows the stats overlay, so it
+  gains the row too; not re-shot, `shoot-images.mjs --check` not run.
 - Phase 5: (c)'s fresh forest start is the forest glide with `--pre-roll near`.
 - Phase 5: frames over 33 ms for the forest runs come from the diag submit deltas (1 ms grain),
   as the forest glide writes no `run.json`.
@@ -737,11 +742,31 @@ each. Empty is fine.)_
 
 _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
-- **What shipped:**
-- **Public API changed:**
-- **Budget readings:**
-- **Gate at the tip:**
-- **Outstanding `human` phases:**
+- **What shipped:** the slot image (`SlotImage`, made by the stream workers' hook, `ImageHook`)
+  and the mirror's copy of it for a new full record of a never-edited chunk, behind
+  `MirrorConfig::packing` / `--mirror-pack inline|workers` / `U`, default `inline`; the sizes
+  and emitters from the image; the `streaming: residency latency` and `streaming: mirror
+  images` exit lines and `poll` in `frames:`; `ThreadPlan` and the start-up's `threads:` line.
+- **Public API changed:** `svet_render::{ImageHook, ImageHookStats, Packing,
+  DEFAULT_IMAGE_CAP_BYTES, ThreadPlan, logical_cpus}`; `Frame::set_bake_listers`;
+  `GpuWorld::emitter_lists` (doc-hidden); `internals::slot_image_maker` (doc-hidden).
+- **Budget readings:** Phase 5, `103e6715`'s release binary with the first-frame mark inside
+  `wait_first_frame` (the committed mark is after frame 0's `draw`, not re-read); RTX 3080
+  Laptop, Ryzen 9 5900HS, exclusive perf lock, quiet at ask and hold. Sync p99 inline / workers:
+  RTX cave 14.491 / 12.400 (-14.4 %), RTX forest 12.036 / 10.216 (-15.1 %), leaf 128 -19.0 %,
+  RENOIR cave -13.3 %, stand-in cave -10.3 %, stand-in fresh forest +8.0 %. `docs/nfr.md` §2:
+  `alloc` p99 <= 3.0 ms missed in both arms (7.34 / 7.72 inline, 7.01 / 7.14 workers);
+  `update + poll + sync` p99 <= 16.6 ms met in both (15.914 / 16.316, 13.896 / 14.304);
+  forest leaf 128 sync p99 <= 6 ms missed (11.334 / 9.181). Held images: peak 67 108 736 B of
+  the 67 108 864 cap (RENOIR). Rows in [logs/0107.md](logs/0107.md), Phase 5.
+- **Gate at the tip:** `scripts/build-guests.sh`; `cargo nextest run --workspace --profile gate
+  --no-fail-fast` at `3608a1b7`, perf lock, load1 3.64 / 3.64 / 3.22: 1506 run, 1505 passed,
+  1 failed (`gpu_hud_golden::hud_golden_over_the_carved_view_is_pixel_exact`), 252 skipped,
+  911 s; re-blessed at `07e0228c` and the `gpu_hud_golden` binary re-run, 6 of 6. clippy
+  `--workspace --all-targets -D warnings` 0; `cargo fmt --all --check` 0; `cargo deny check`
+  ok; every `scripts/check-*.mjs` 0 (after `b0fc6cef`); `node --test "scripts/*.test.mjs"`
+  46 of 46. The tier not re-run on the final tree.
+- **Outstanding `human` phases:** none (Phase 8 skipped by the amendment).
 
 ## Followups
 
