@@ -8,7 +8,8 @@ can run rather than a property nobody has re-tested since the day it was written
 The gates skip this directory **by path** (`scripts/fixtures`, named once in each script) on an
 ordinary run over the repository, and scan a subdirectory when it **is** the root, which is the
 only way its seeded breaks are reachable. Both gates enumerate files with `git ls-files`, so a
-fixture file is read only once it is tracked.
+fixture file is read only once it is tracked (`check-doc-links.mjs` and `check-images.mjs` also
+read untracked files git would track, so a new page is checked before it is staged).
 
 The trees are kept per gate, because a shared fixture that drifts into serving one gate stops
 being an instrument for the other. The gates and their trees are copied from Ritmolux (the owner's
@@ -213,6 +214,59 @@ Expect **exit 1 and exactly two findings**, then the count line `2 finding(s) ac
 | resume notes in the plan body | `0099-seeded-log-dump.md`: a `### Resume notes (...)` heading inside the log | `docs/plans/0099-seeded-log-dump.md:<line> -> resume notes in the plan body: ...` |
 | a short log that names resume notes in prose | `0098-seeded-within-cap.md`: "Resume notes" in a bullet, never a heading | not reported |
 | a plan numbered before 0055 | none seeded; the repository's own plans up to 0054 are the case | not scanned; their readings stay inline |
+
+## `images/`: for `check-images.mjs`
+
+```
+node scripts/check-images.mjs scripts/fixtures/images
+```
+
+Expect **exit 1 and exactly five findings**, one per line, then the count line `5 finding(s)`.
+The tree is a `README.md`, a `docs/page.md` and a `docs/images/` with a `shots.json` of five
+entries (one a draft), one frozen file, and a top-level `readme_cap_bytes` of 2000, lowered from
+the 5 000 000 bytes the repository's README is held to so that the total is crossed by small
+files. The images are runs of zero bytes, not pictures: the gate reads names and sizes only.
+
+| Case | Seeded as | Expected |
+|------|-----------|----------|
+| an image reference with empty alt text | `docs/page.md` line 5, `![](images/big.webp)` | `docs/page.md:5 -> image images/big.webp has empty alt text` |
+| an image not in the manifest | `docs/images/stray.png`, 100 bytes | `docs/images/stray.png -> an image the manifest neither names nor freezes` |
+| a still over the still cap | `docs/images/big.webp`, 301 000 bytes (zeros; a few hundred bytes as a git object) | `docs/images/big.webp -> 301000 bytes, over the still cap of 300000` |
+| an entry no markdown references | `orphan` -> `orphan.webp`, 100 bytes | `docs/images/orphan.webp -> entry orphan: no markdown references it` |
+| the README's images over the total cap | `README.md` shows `hero.webp` (markdown) and `loop.webp` (`<img>`), 1200 bytes each | `README.md -> its 2 image(s) total 2400 bytes, over the cap of 2000` |
+| an unjudged entry | `loop` carries `"unjudged"` | not reported; printed on the `unjudged:` line before the findings |
+| a draft entry | `soon` -> `soon.webp`, `"draft": true`, no file and no reference | not reported; counted as the one draft |
+| a frozen file no markdown references | `old.png` under `frozen` | not reported |
+| a reference inside a fence or a code span | `docs/page.md`: `![](images/orphan.webp)` twice | not reported, and `orphan` stays unreferenced |
+| an `<img>` with alt text | `README.md` line 7 | not reported, and counted in the README total |
+
+`node scripts/check-images.mjs --self-test` asserts these five lines in this order, the one
+draft and the one unjudged entry (`loop`), and that the repository itself reports nothing; CI runs it beside the plain gate.
+
+## `doc-links/`: for `check-doc-links.mjs`
+
+```
+node scripts/check-doc-links.mjs scripts/fixtures/doc-links
+```
+
+Expect **exit 1 and exactly two broken links**, both fragments, after the count line
+`check-doc-links: 2 broken relative link(s):`:
+
+| Case in `page.md` | Expected |
+|-------------------|----------|
+| a cross-file fragment whose heading left (line 6) | `page.md:6 -> backlog.md#gone (no heading or anchor #gone in backlog.md)` |
+| a same-file fragment with no heading (line 14) | `page.md:14 -> #nowhere (no heading or anchor #nowhere in page.md)` |
+| a cross-file fragment whose heading is there | not reported |
+| a heading with a code span, a colon, a comma and brackets | not reported; the slug drops them: `#--still-at-a-still-at-frame-n-v2` |
+| the second of two headings with one text | not reported as `#notes-1` |
+| an HTML anchor `<a id="pinned">` | not reported |
+| a fragment in other letter case | not reported; fragments compare lowercased |
+| a fragment on a file that is not markdown (`notes.txt#L2`) | not reported; only markdown targets are read for headings |
+| a fragment inside a code span | not reported |
+| a same-file fragment whose heading is there (`#page-seeded`) | not reported |
+
+`backlog.md` also holds `## A heading in a fence` inside a fenced block; no link names it, and it
+is not a heading the gate collects.
 
 ## `--self-test`: the counts are asserted, not printed
 

@@ -917,7 +917,7 @@ creature that hunts or flees rather than wanders.
 
 ### Hundreds or thousands of entities
 
-Parked 2026-11-16 by the owner ("minecraft can have thousands of entities"). Today: `MAX_ENTITIES` 64, `MAX_ENTITY_PARTS` 512 (`svet-render` `entities.rs`), 6 instance bits in the hit record. The cost is the trace, not the caps: Plan 0062 Phase 4 (`docs/plans/logs/0062.md`) read 64 walkers at +3.4 to 4.4 ms on the RTX 3080 Laptop and +32 to 34 ms on the Radeon iGPU, growing with screen cover and shadowing lights. **Hundreds:** wider caps and hit bits, the instance tree built on the GPU, coarse far models, shadow rays testing only entities near their light (one or two plans, no ADR). **Thousands:** entities rasterized into the hit buffer beside the traced world, which reverses ADR-0050's choice: an ADR and a spike first. **The owner's direction (2026-11-16): trace only the near ones, merge the crowded ones.** Distance tiers: near entities traced in full; mid ones traced on a coarse merged model (parts folded into one volume at detail 1); far ones as one box or impostor, or dropped below a pixel. Clusters: entities sharing a spot re-voxelized together at low resolution on the GPU each frame (or every few) into one cluster volume, walked once per ray instead of once per overlapping entity. Shadow rays test the near tier only. The server's ray query stays exact per entity; the tiers are render-only. Pick up when a consumer needs more than 64 on screen. Sharpened 2026-11-19 (Bonsai's 1.1.0 and 1.3.10 notes): the CPU side needs a per-chunk entity list as the broadphase (the mover's sweeps and the entity ray query walk the chunk's list, not every instance) and an LRU eviction of models from the pool when the library outgrows it, on top of Plan 0078's free list.
+Parked 2026-11-16 by the owner ("minecraft can have thousands of entities"). Today: `MAX_ENTITIES` 64, `MAX_ENTITY_PARTS` 512 (`svet-render` `entities.rs`), 6 instance bits in the hit record. The cost is the trace, not the caps: Plan 0062 Phase 4 (`docs/plans/logs/0062.md`) read 64 walkers at +3.4 to 4.4 ms on the RTX 3080 Laptop and +32 to 34 ms on the Radeon iGPU, growing with screen cover and shadowing lights. **Hundreds:** wider caps and hit bits, the instance tree built on the GPU, coarse far models, shadow rays testing only entities near their light (one or two plans, no ADR). **Thousands:** entities rasterized into the hit buffer beside the traced world, which reverses ADR-0050's choice: an ADR and a spike first. **The owner's direction (2026-11-16): trace only the near ones, merge the crowded ones.** Distance tiers: near entities traced in full; mid ones traced on a coarse merged model (parts folded into one volume at detail 1); far ones as one box or impostor, or dropped below a pixel. Clusters: entities sharing a spot re-voxelized together at low resolution on the GPU each frame (or every few) into one cluster volume, walked once per ray instead of once per overlapping entity. Shadow rays test the near tier only. The server's ray query stays exact per entity; the tiers are render-only. Pick up when a consumer needs more than 64 on screen. Sharpened 2026-11-19 (another voxel engine's 1.1.0 and 1.3.10 release notes): the CPU side needs a per-chunk entity list as the broadphase (the mover's sweeps and the entity ray query walk the chunk's list, not every instance) and an LRU eviction of models from the pool when the library outgrows it, on top of Plan 0078's free list.
 
 ### Jelly entities: see-through glowing voxels, and true soft bodies
 
@@ -1397,7 +1397,7 @@ Per-frame and per-chunk readings are affected little. Readings should name the c
 boot), is the owner's call. Pick up: at the owner's next reboot, or before any plan's budget
 readings are compared with ones from before 2026-11-05. Sharpened 2026-11-19: Plan 0091's
 profiler reads `Instant` (through its backend) and the GPU timestamps, never a raw `rdtsc` as
-Bonsai does, so this entry stays a question of reading cost, not of correctness; per-brick laps
+another voxel engine does, so this entry stays a question of reading cost, not of correctness; per-brick laps
 inside hot loops stay out of the profiler's scopes for the same reason.
 
 ### The HUD paints a bounded level's full record reservation as mirror pressure
@@ -1439,7 +1439,7 @@ spike after it lands; the spike's own question, a different compiler on the same
 
 ### A bugs journal: date, hours lost, tags, the lesson
 
-Raised 2026-11-19 (Bonsai's `bugs.md`: one heading per bug with the date, the hours it cost,
+Raised 2026-11-19 (another voxel engine's `bugs.md`: one heading per bug with the date, the hours it cost,
 whether it is closed, tags such as `concurrency`, and a paragraph on what it was and what to
 remember). Our defects live in plan logs and close reviews, spread over many files, so the
 same class of mistake (a held lock, an unstable clock, a stale golden) is not counted. **What
@@ -1476,7 +1476,7 @@ roadmap, budgets) plus rustdoc, with CI as a link and render guard; a getting-st
 a gallery only once the look is picked (after Plans 0067 and 0058) and Plan 0045 has moved the
 files. Starlight's npm tree falls outside `cargo deny`, and mdBook is the lighter alternative,
 so it takes an ADR. Pick up when the owner asks. Sharpened 2026-11-19: a cheap first step
-needs no site: four numbered guides in `docs/` the way Bonsai's `docs/00_getting_started.md`
+needs no site: four numbered guides in `docs/` the way another voxel engine's `docs/00_getting_started.md`
 to `03_async.md` read (get started, build, a first consumer, the threads), each under a page.
 
 ### The tester mode's key filter is structural, not tested in the frame loop
@@ -1488,16 +1488,68 @@ Taken by [Plan 0080](plans/done/0080-the-fly-throughs-menu-one-overlay-a-palette
 Done 2026-11-13 (4ea561f): a `--path` benchmark starts the lamp off unless `--lamp` is given, and `run.json` names it. **Bench readings of the cave and castle paths from before 4ea561f ran with the lamp on and are not compared with readings after it.**
 
 
-## Ideas from Bonsai
+### The clip example's frames differ run to run on one adapter (2026-11-26)
 
-Parked 2026-11-19: the owner pointed at [Bonsai](https://github.com/scallyw4g/bonsai), a C++
+From [Plan 0093](plans/done/0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) Phase 2d (its section "Amended 2026-11-26 (architect, a loop's tolerance)", C3; readings in `docs/plans/logs/0093.md`). Two runs of `clip --clip walk --seed 1 --fps 25` on the RTX 3080 Laptop gave PNG frames that are the same for frames 0 to 11 and differ from frame 12 on in about a hundred scattered pixels of 921600 (largest channel difference 14), nowhere near the model; an earlier pair of the same command was bit-identical, and the walker's two pairs were.
+
+- **What the code says:** the example's loop is paced by the frame number, starts no live queue and no bake thread, and reads no clock and no non-waiting read-back, so the cause is inside `Frame::step`'s passes or the driver. Not attributed; not a wall-paced wait, so not Plan 0106's.
+- **What it would take:** a reading on that adapter: pairs of runs with one pass or setting off at a time (the upscaler at scale 1, the filter, the temporal pass, the entity pool) until the frames are bit-identical, and the same pairs on lavapipe, where the golden images are blessed.
+- **Pick it up when:** a golden image or a loop's check turns flaky and this is the suspect, or a plan asks for bit-identical frames from a fixed-step tool. Plan 0093 carries it as noise inside its loops' tolerances.
+- **2026-11-27, the same finding again (Plan 0093, G12):** a seventh render of the spider's loop left the common frames at PNG frame 6, earlier than any of the fifteen pairs of its set (frames 7 to 24), with 55 to 79 pixels of 921600 differing by at most 5 levels; encoded, that is 0.0044 of the loop's cells against a set whose largest pair was 0.0020. The load was the night's lowest (load1 2.21), so the load is not what moves it. A reading here should count the departures over some twenty runs and the frame each leaves at, before switching passes off.
+
+### A settled start's still differs in one patch with the machine's load (2026-11-26)
+
+From [Plan 0093](plans/done/0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) Phase 2e (its section "Amended 2026-11-26 (architect, a loop's wrong pictures)", D3; readings in `docs/plans/logs/0093.md`). Eight `--settled-start` renders of the outdoor forest shot on the RTX 3080 Laptop print the same `settled:` counts, and the two taken under load differ from the other six by up to 60 levels in one patch of 24 x 24 pixels of the 1600 x 900 file: a far tree crown, the same outline, another shading.
+
+- **What the logs say:** the settle ends on chunks and jobs, not on the light store. Each run's first `bake queue:` line after it prints a depth near 7600 and `in view 134 waiting`; the pre-roll's coarse pass, ended by its 5 s wall box, left 1675 to 1807 coarse chunks in the six and 1489 and 1311 in the two. Not attributed to a chunk or a record.
+- **What it would take:** the same shot with the pre-roll ended by its coarse pass (Plan 0106's stepped pre-roll) under load and idle, the patch read in each; if it still splits, the queue's record for the crown's chunk in both states.
+- **Pick it up when:** Plan 0093 reads the hero's set again before its final shoot (its B3 note), or a still or golden taken after a settled start turns out to depend on load.
+
+### A settled start ends in more than one light state: the lamp cave, a second case (2026-11-27)
+
+From [Plan 0093](plans/done/0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) Phase 6d (its section "Amended 2026-11-27 (architect, a zero set refuted)", G9; readings in `docs/plans/logs/0093.md`). Six `--settled-start` renders of the lamp-lit cave still on the RTX 3080 Laptop were identical as PNG; a seventh by the same command, under a higher load, differs in scattered pixels at voxel edges over the lamp pool (53 of 22600 cells past 4 levels, the largest 10.56; largest channel difference 40). The entry above is the same finding outdoors.
+
+- **What the logs say:** every run prints the same `settled:` chunk counts. The queue steps to the settle's end range from 3023 to 19562 inside the identical six, so the step count names nothing. The first `bake queue:` line after the settle prints `baked` 5380, 5300 and 5050 (four times) in the six and 5370 in the seventh; the pre-roll's coarse pass, ended by its 5 s wall box, left 1754 to 2543 coarse chunks in the six and 2564 in the seventh. The cave's dig still settled at 5318 baked once against 5074 with an identical PNG; the chapel still's two baked counts (5636, 5062) are two PNGs with no cell past the level. Not attributed to a chunk, a record or a pass.
+- **Why it matters:** a still or a golden taken after a settled start is claimed to be one picture per command. It is one picture most of the time.
+- **What it would take:** the lamp-cave entry rendered some twenty times with the pre-roll ended by its coarse pass (the stepped pre-roll) and as it is, the PNGs grouped; if the groups remain, the light records of the chunks under the differing pixels in both states, and whether the settle's end should wait on the light store and not only on chunks and jobs.
+- **A third state (Plan 0093 Phase 6d2):** of fourteen renders twelve are one PNG, the seventh another, and the fourteenth (the third check's) a third: 0.001239 of the cells against the common one, largest channel difference 21, with 5238 baked and 2472 coarse at the box, both inside the common group's ranges. Six more renders taken for the purpose were all the common PNG, so the other states are rare and no count in the log separates them.
+- **Pick it up when:** the stepped pre-roll goes onto the README's entries (the entry below), or a plan asks a golden image of a settled start to be bit-identical.
+
+### The README's images after the unattended close (owner, 2026-11-26)
+
+From [Plan 0093](plans/done/0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) (its section "Amended 2026-11-26, late evening", G1 to G8; readings in `docs/plans/logs/0093.md`). The owner: "all good, just use what we have as images, merge and push. no need to wait for me. and tag". The plan closed without his confirmation of the re-shoots, without Plan 0105 and without Plan 0106's `--pre-roll-stepped`. What that left, none of it blocking:
+
+- **His corrections to the default picks.** `dig`, `walkers` and `castle` were picked by the dev against the plan's bars (the log's Phase 5d, with every tile's path and the candidate not taken). A correction is the entry's flags and `node scripts/shoot-images.mjs --only ID`.
+- **His glance at the page on GitHub.** No command reads whether each loop plays in a browser, whether the title, the tagline and the whole hero show at a 1080p width without scrolling, how it reads on a phone, and the opening read aloud. A loop that shows as a still takes its entry's GIF `fallback`.
+- **The dig after Plan 0105.** The `dig` entry was shot on the dig before Plan 0105's default (a still of the settled dig instead of the loop if the log's Phase 5d read a flash). **Pick it up when** Plan 0105 is in main: `node scripts/shoot-images.mjs --only dig,skylight`, the loop back in place of a still, and the two entries' noise sets read again.
+- **The stepped pre-roll after Plan 0106. Ready since v0.79.0** (close review, 2026-11-27): `--pre-roll-stepped` was in the tree at the final shoot (main `cbedce57` merged), and the entries were shot without it as the plan's G2 ruled before the merge. It is the first follow-up to take: it may also make `walkers` judged. The `flythrough` entries shoot on `--settled-start` with the pre-roll's wall box, so the hero may hold the patch of the entry above ("A settled start's still differs in one patch"). **Pick it up when** the flag is in main: the entries take it, `validate` asks for it, and the hero's set and every entry marked `unjudged` in `docs/images/shots.json` (`node scripts/check-images.mjs` names them) are read again.
+- **The noise sets kept by the script.** Every `--check` in that plan's last phases drew a render outside some entry's six-render set, and the sets were enlarged by hand from rigs under an untracked `live/` (its G13). The script could keep each entry's set renders and read the tolerances itself (`--noise N` adds N renders to the sets; `--check` on unchanged sources offers its render to the set), and a new set after a change of the look should start nearer fourteen renders than six. **Pick it up when** the entries are next re-shot.
+- **A castle under the sun.** His "castle 2, maybe its better under sunlight". The castle stands in the streamed cave; `--vox` is ignored on `--source outdoor`. A castle placed on a hill is code and scene work, a plan of its own if he wants the shot.
+
+**What the close review saw on the page (2026-11-27), for him to correct:**
+
+- **`dig` does not show a dig.** The first feature image is a near-black frame: one over-bright ore corner at the lower left and two ore specks; no opening, no carved wall reads (mean luma 12 of 255 by the log's Phase 5b, whose own line says "the dig does not read"). It is his "dig 3 but no lamp", picked by the letter of the bar (rock reads in one corner). Its alt text and caption say what it is: almost black, the headlamp off. Raising the exposure does not help: `--exposure-comp 1` gives the same bytes, since the eye is at its ceiling. **The fallback** is candidate 3, the same pose with the headlamp on (`"flags"` of the `dig` entry with `--lamp on`, then `node scripts/shoot-images.mjs --only dig` and its noise set), or the loop once Plan 0105's default is in main (the bullet above).
+- **`walkers` has no judged tolerance.** Twice its largest pair (0.014828) is over a third of its smallest wrong share (0.035982, the loop one frame late), so `--check` renders it and counts nothing. Accepted at the close: the size cap, the manifest row and the alt text are gated, and the picture is the picked one. The cause is the measure, not the still: the spider moves little from one frame to the next, so "one frame late" is nearly the same loop. **What would judge it:** a wrong picture scaled to the motion (the loop late by the number of frames at which its share passes three times the set's doubled pair; the yaw turned 2 degrees already reads 0.526575, which would give a tolerance of 0.02 under a ceiling of 0.175), an architect's ruling since the plan's G2 forbade swapping the wrong picture on the night; or a quieter set once the stepped pre-roll is on the entries.
+- **`walkers` reads as a spider standing among crystals.** At the first, middle and last frame its box moves by under 10 pixels of 1280; the legs step. The caption says "wandering". A pose or a frame range in which it crosses the frame would match the caption.
+- **`hud` shows a red and two yellow lines** (a 36.67 ms worst frame, the mirror at its full pressure, the light queue's line) and four lines run off the right edge at 1600 px. It is the overlay as it is; a shot after the start-up frames would read calmer.
+- **`hall` and `chapel` are dark** but read: ores and crystals in the hall, the stone front and its window in amber in the chapel.
+- **Two bullets say a little more than the code:** "each casting a shadow" (a per-light flag, on by default; the sixteen include the headlamp, and the 720p profile caps the list at four) and "every render pass" in the overlay (the per-pass times need timestamp queries on the adapter).
+- **The 8.3 ms figure is a headless reading with the bake thread on** (`docs/nfr.md` section 2, quiet). The README's "Try it" lines open a window, where the bake thread is on by default, so the sentence holds; the line to keep true is the forest's wall p50 row there.
+
+### The old hero example still writes `docs/images/hero.png` by default (2026-11-27)
+
+From [Plan 0093](plans/done/0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) (G11). `apps/flythrough/examples/hero.rs`, `out_path`: without `--out` it writes `docs/images/hero.png`, a file the plan removed; the README's hero is now the manifest's `hero` entry, shot by the fly-through. A file written there is refused by `node scripts/check-images.mjs` (an image the manifest neither names nor freezes), so the default cannot slip into a commit unseen. **What it would take:** either the default moved under `target/` (one line and the example's usage comment), or the example retired if nothing reads its shots any more (`--shot all` and `--carve` have readers in older plans' logs; check before removing). **Pick it up when** the example is next edited, or at the next tidy of `apps/flythrough/examples/`.
+
+## Ideas from another voxel engine
+
+Parked 2026-11-19: the owner pointed at another voxel engine, a C++
 voxel engine with meshed chunks, GL deferred shading and an in-engine editor, under WTFPL, active.
-The source paths below are Bonsai's. What we already carry was left out: octree LOD, generation-time
+The source paths below are that engine's. What we already carry was left out: octree LOD, generation-time
 stamping, AO, traced shadows, OIT, particles, the profiler, debug views, settings files, the
 sky. A second pass (2026-11-19, read against this file) added the entries from "Per-job
 performance tracking" on, the profiler (Plan 0091) and WGSL hot reload (Plan 0092).
 
-**Rejected as alternatives (2026-11-19), so nobody re-opens them from Bonsai:** its 2.0 moved
+**Rejected as alternatives (2026-11-19), so nobody re-opens them from that engine:** its 2.0 moved
 generation and editing to the GPU; ours stay on the CPU in `svet-world`, headless and
 deterministic (ADR-0001, the non-negotiables), and a GPU source would break replay from seed
 plus log (ADR-0007). Its 1.6.2 stores a 16-bit HSV colour per voxel; ours stores a material id
@@ -1506,7 +1558,7 @@ edit, not a re-write of every voxel.
 
 ### A hybrid far field: raster the far LOD as meshes, march near
 
-Raised 2026-11-19 in the Bonsai comparison: Bonsai rasterizes meshed chunks. For us the hit pass
+Raised 2026-11-19 in the comparison with that engine, which rasterizes meshed chunks. For us the hit pass
 reads 1.4 to 1.9 ms of a 7.8 ms GPU frame (RTX 3080, hills, the 86c window's HUD); the rest is
 light, denoise and FSR 2, which raster would not remove. Meshing every 10 cm voxel would also cost
 triangles, edit latency and memory beside the brick map. Where raster can win is a long view, where
@@ -1532,7 +1584,7 @@ normal's band", under Engine mechanisms) was taken by Plan 0098.
 
 ### World-space debug lines: lines, boxes and a highlighted voxel over the frame
 
-Raised 2026-11-19 (Bonsai's `src/engine/debug_draw.cpp`: lines, AABBs, a highlighted voxel,
+Raised 2026-11-19 (that engine's `src/engine/debug_draw.cpp`: lines, AABBs, a highlighted voxel,
 chunk boxes). We have a cutaway view, the HUD's text grid and the entity mark (ADR-0074); no
 way to draw a chunk's box, a sweep's path, a light's reach or a job's chunk in the world.
 **What it takes:** a line list the app fills each frame (world-space segments with a colour),
@@ -1544,7 +1596,7 @@ to see where a job or a sweep went.
 
 ### Per-job performance tracking: reserve, retire and scopes per streaming and bake job
 
-Raised 2026-11-19 (Bonsai's `work_queue.h` `TrackPerformance` flag; its debug view draws a
+Raised 2026-11-19 (that engine's `work_queue.h` `TrackPerformance` flag; its debug view draws a
 job's scopes over its reserve-to-retire span). Our streaming workers (`svet-world`
 `stream/mod.rs`) and the bake queue's jobs are timed as stages and per-second lines, never as
 one job from its queueing to its retirement, so a job that waits long and runs short reads the
@@ -1556,7 +1608,7 @@ streaming or settle entry above asks why a chunk arrived late rather than why it
 
 ### Fan-in continuations: "generate these chunks, then bake their light" as one dependency
 
-Raised 2026-11-19 (Bonsai's `OnComplete`, `docs/03_async.md`): a job may name a continuation
+Raised 2026-11-19 (that engine's `OnComplete`, `docs/03_async.md`): a job may name a continuation
 that runs once every job in its group has retired, so a fan-out of chunk jobs fans in without
 polling. Ours poll: the live queue re-checks each frame whether a chunk's reach is resident
 before its bake may run (the "reach-bound" census). **What it takes:** a group counter on the
@@ -1567,7 +1619,7 @@ readings (the entries under Next up) name the poll's latency, not the bake, as t
 
 ### Edit coalescing per chunk per tick: a check first
 
-Raised 2026-11-19 (Bonsai's 1.6.1 notes, per the research pass: several edits on one chunk in a
+Raised 2026-11-19 (that engine's 1.6.1 notes, per the research pass: several edits on one chunk in a
 tick give one re-mesh). Ours should already coalesce: `sync` visits the world's dirty-chunk set
 (`svet-render` `gpu_world/mod.rs`), a set, so two ops on one chunk between syncs should give one
 upload. Not asserted anywhere read. **What it takes:** a headless test that applies two carves
@@ -1576,31 +1628,31 @@ the fix is in the dirty set's handling. Size S. **Pick up** at the next sync or 
 
 ### Hot-reload a logic component, then replay to the current tick
 
-Bonsai reloads its game library when the file changes (`game_loader.cpp`). We can go further:
+That engine reloads its game library when the file changes (`game_loader.cpp`). We can go further:
 swap the WASM component when it is rebuilt, then replay the op and input log from the seed to
 the current tick, so state stays exact (determinism is what makes this possible). **What it
 takes:** a watcher in the fly-through and a re-instance in `svet-script-wasm`, driven through
 `svet-net`'s log. Size S to M. **Pick up with** the authoring loop (ADR-0072), or sooner if
 writing logic gets slow. Sharpened 2026-11-19: one mtime watcher in the fly-through should
 serve every reloadable file: the WGSL (Plan 0092 builds the watcher), this component, and the
-settings file (Bonsai's `settings.init` and `hotkeys.init` are parsed by struct member name,
+settings file (that engine's `settings.init` and `hotkeys.init` are parsed by struct member name,
 its 1.4.2 notes), so a second reload adds a path and a handler, not a second poll.
 
 ### A two-stage world source: shape, then decorate by slope
 
-Bonsai's generation shapes (solid or air, with colour), takes the gradient, then decorates with
+That engine's generation shapes (solid or air, with colour), takes the gradient, then decorates with
 the surface normal in hand: cliff rock on steep faces, grass on flat ground. Its user stages
 hot-reload in a playground (`docs/terrain_gen.md`). **What it takes:** a `WorldSource` helper in
-`svet-world`, on the CPU, because Bonsai's GPU generation would break the headless world. Add a
+`svet-world`, on the CPU, because that engine's GPU generation would break the headless world. Add a
 reloadable parameters file in the fly-through for tuning. Size S to M.
 **Pick up with** M10's outdoor work or a consumer's surface source. Sharpened 2026-11-19: the
-part worth copying first is Bonsai's noise-to-value remap through a polyline (a table of
+part worth copying first is that engine's noise-to-value remap through a polyline (a table of
 `(in, out)` points, integer-friendly) and the small visualizer that draws the curve while it is
 edited (its 1.3.0 release notes); terrace, plateau and cliff come from that one remap.
 
 ### Edit algebra: smooth booleans, shape modifiers, more primitives
 
-Bonsai's edits union, intersect and subtract, each also smooth with a blend radius, and every
+That engine's edits union, intersect and subtract, each also smooth with a blend radius, and every
 shape takes hollow, rounding, stretch, repeat and rotation over rect, sphere, line, cylinder,
 plane, torus and pyramid (`src/engine/editor.h`, `shaders/terrain/world_edit.fragmentshader`).
 We have sphere, box and capsule with carve, fill and replace (`svet-world` `shape.rs`). **What it
@@ -1610,7 +1662,7 @@ a consumer wants arches, rounded rooms or hollow shells as single edits.
 
 ### Layered procedural brushes as one op
 
-A Bonsai brush stacks up to 16 layers. Each layer is a shape or a noise (Perlin, Voronoi, white,
+A brush of that engine stacks up to 16 layers. Each layer is a shape or a noise (Perlin, Voronoi, white,
 lattice), with a blend (add, subtract, multiply) and clamps or thresholds, and is saved as a
 `.brush` file (`docs/editor.md`). That gives crater, erosion and growth brushes instead of perfect
 spheres. **What it takes:** an op kind in `svet-world` that names its brush by content id, like
@@ -1619,7 +1671,7 @@ ADR. **Pick up after** the edit algebra above.
 
 ### Edits you can still change: named layers, hide, reorder, regenerate
 
-Bonsai keeps a level as records of edits (region, brush, rotation, order, hidden), grouped into
+That engine keeps a level as records of edits (region, brush, rotation, order, hidden), grouped into
 named layers. Chunks re-apply the edits that overlap them when they are generated
 (`editor.h`, `world.cpp`). We replay an append-only log (ADR-0007) and persist edited chunks
 (ADR-0003); moving, hiding or reordering a past edit is new. **What it takes:** a level document
@@ -1632,12 +1684,12 @@ against ADR-0072's authoring text first. **Pick up with** the editor entries und
 adjacencies and solves a new volume by constraint propagation, in the style of WFC. One
 hand-made sample would give endless cave or room variants. **What it takes:** baking the rules in
 `svet-assets`, and a seeded solver as a `WorldSource` in `svet-world`. Size M to L. Unverified:
-whether Bonsai 2.0 still wires it into generation. **Pick up when** a consumer wants generated
+whether that engine's 2.0 still wires it into generation. **Pick up when** a consumer wants generated
 interiors from samples.
 
 ### Versioned saves and logs, migrated on load
 
-Bonsai's serialisation versions each struct and keeps the old layouts (`world_edit_0`), which it
+That engine's serialisation versions each struct and keeps the old layouts (`world_edit_0`), which it
 converts forward on load (`serdes.h`). Our spill and log files refuse any other version
 (`persist.rs`, `wire.rs`). **What it takes:** pure migration functions in `svet-world`, one per
 version step, each tested on fixed vectors. Size S to M. **Pick up before** the first consumer
@@ -1645,18 +1697,18 @@ ships a save or a recorded log that must survive an engine upgrade.
 
 ### Inspector rows derived from struct annotations
 
-Bonsai's `poof(@do_editor_ui ...)` generates a live inspector for any struct, with ranges,
+That engine's code generator (a `@do_editor_ui` annotation) generates a live inspector for any struct, with ranges,
 conditions and skip flags, so brushes, particles and nodes need no hand-written UI. Our field
 table (ADR-0058) covers only the render settings. **What it takes:** a small proc-macro crate
 that derives overlay menu rows, used by the apps. Materials, brushes, sources and poses would
 then get rows for free. `crates/` gains no UI dependency. Size M. **Pick up with** the
 editor-interface entry under Later apps. Sharpened 2026-11-19: the annotation set to copy is
 small: a range (`@ui_value_range`), a skip (`@ui_skip`) and an escape to a hand-written row
-(`@custom_ui`), as Bonsai's `render_settings.h` uses them; the derive needs no more at first.
+(`@custom_ui`), as that engine's `render_settings.h` uses them; the derive needs no more at first.
 
 ### Bloom from HDR emission
 
-Bonsai gathers emission above 1.0 into a luminance target and blurs it through a three-level
+That engine gathers emission above 1.0 into a luminance target and blurs it through a three-level
 downsample and upsample chain (`src/engine/bloom.h`, `shaders/bloom_*`). We have no bloom.
 Glowing lamps and ores in the dark suit the first consumer. **What it takes:** a pass in
 `svet-render` after the upscaler, as a render setting (ADR-0055). It must add no flicker
@@ -1669,7 +1721,7 @@ engine levers.
 
 ### Lit world-space sprites (cards)
 
-Bonsai's cards are instanced quads written into the g-buffer, so they are depth-tested, lit and
+That engine's cards are instanced quads written into the g-buffer, so they are depth-tested, lit and
 occluded like geometry. They can billboard, take a tint and an alpha cutoff, and share one sprite
 array (`src/engine/card.h`). Uses: markers, decals, cheap debris, and the impostors that "hundreds
 of entities" names. **What it takes:** sprites traced or merged into `svet-render`'s hit buffer,

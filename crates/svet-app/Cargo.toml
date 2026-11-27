@@ -15,3 +15,8 @@ log.workspace = true
 pollster.workspace = true
 wgpu.workspace = true
 winit.workspace = true
+
+[dev-dependencies]
+# The minimal window example renders a world; its headless test reads the software adapter.
+svet-render = { workspace = true, features = ["test-support"] }
+svet-world.workspace = true

@@ -2,6 +2,8 @@
 
 > **Status:** accepted 2026-11-19 (the owner approved Plan 0091 with every recommendation)
 > **Date:** 2026-11-19
+> **Wording edited 2026-11-27** on the owner's word: an outside project's name in Alternative B is
+> replaced by a neutral phrase. No decision changed.
 > **Related plan(s):** [Plan 0091](../plans/0091-the-frame-profiler-scopes-across-threads-a-gpu-lane-a-dump-for-agents-and-a-hud-ticker.md)
 
 ## Context
@@ -86,9 +88,9 @@ carry two logging facades, and `tracy-client-sys` compiles Tracy's C++ client, w
 Windows arm and `cargo deny` would then own at a pinned viewer version. `profiling`'s `profile-with-tracing`
 feature keeps this open as a backend if structured fields are ever wanted.
 
-### Alternative B: our own `vxe-profile` crate, Bonsai's way
+### Alternative B: our own `vxe-profile` crate, another voxel engine's way
 
-Bonsai's `bonsai_debug` is about 3.8 k lines of C++: per-thread scope trees per frame from an
+That engine's debug module is about 3.8 k lines of C++: per-thread scope trees per frame from an
 arena, a 128-frame ring, a frame ticker, flame bars, a function list, a memory view, its own
 immediate-mode UI. We could write the same in Rust with our overlay as the UI. It lost because
 the collector is the part a library already does well (puffin's per-thread streams and frame
