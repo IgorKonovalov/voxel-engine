@@ -840,6 +840,19 @@ and invisible to Plan 0090's pop counter. Cost a guess: one hash and one multipl
 per-material style word), not on the material row. Size S; a look spike with an owner window, the content pass it
 waited for is done (2026-11-20, the showcase's palette).
 
+### Surface colour as the voxels' texture, in three layers, before any image texture
+
+Parked 2026-11-27 (owner: "later", on the question of textures on the blocks). No image
+textures on faces: a tiled picture per face outlines every cube (the Lego look the owner
+refuses), goes sub-pixel past a few metres at 10 cm and sparkles under FSR 2, and needs an
+atlas, mips and per-face UVs. Instead, three stateless layers, cheapest first, each judged in
+an owner window before the next: (1) the per-voxel hash speckle above; (2) low-frequency
+world-space hue and brightness drift per material over tens of metres, with the AO-driven
+colour ramp below for crevices (the cave); (3) a sub-voxel procedural grain per material,
+faded by projected size with Plan 0081's fade-band rule so it never reaches sparkle sizes.
+Layers 1 and 2 only recolour and sit under 0081's geometric detail. Size: layer 1 is S (one
+look spike and one window); layer 3 waits until layers 1 and 2 have been looked at.
+
 ### Ambient occlusion driving a per-material colour ramp
 
 Parked 2026-11-12 (owner, from the video "the voxel rendering tech nobody talks about", youtube.com/watch?v=1gxcNUUc37Y). Instead of darkening albedo by AO, AO picks a colour along a per-material ramp: snow white to cyan to deep blue in crevices, sand yellow to red, grass bright to deep green. The video's form: per material `light`/`mid`/`dark` colours plus `t_mid`/`t_high` thresholds, `mix(mix(dark, mid, smoothstep(0, t_mid, ao)), bright, smoothstep(t_high, 1, ao))`; AO is per-corner neighbour occupancy shaped by `pow(ao, 1.5)`; fixed face weights (up 1.0, down 0.1, x 0.5, z 0.9) and side faces capped at 0.7 of the ramp; each colour hue-rotated by low simplex noise over world xz for variety.
