@@ -189,8 +189,6 @@ struct Hills {
     world: World,
     eye: VoxelCoord,
     facing: [i64; 3],
-    /// The tunnel's chamber's centre (`inside`'s axis runs from the eye toward it).
-    chamber: VoxelCoord,
 }
 
 impl Hills {
@@ -231,7 +229,6 @@ impl Hills {
             world,
             eye,
             facing,
-            chamber: source.base().chamber(),
         })
     }
 
@@ -344,21 +341,10 @@ fn cave_mouth_hills() -> Option<Hills> {
 /// faces the noon sun).
 const OPENING: [u32; 4] = [120, 5, 200, 40];
 const WALL: [u32; 4] = [0, 100, 60, 170];
-/// The tunnel's walls in the view up the covered bore toward the mouth: the frame's left and
-/// right quarters at mid height.
-const WALLS_IN: [[u32; 4]; 2] = [[0, 40, 80, 140], [240, 40, 320, 140]];
 
 /// Plan 0032 Phase 7 bar 2: `cave_mouth.png` (the `inside` spawn facing out at 12:00) matches, and
-/// the opening reads brighter than the tunnel's shaded wall. Then the seal (Plan 0086 Phase 9's
-/// claim, re-derived by Plan 0094 Phase 8 on the sky term the composite shades with): in the
-/// bore 40 voxels past a 20-voxel stretch from where its roof stays covered to the chamber,
-/// facing the mouth, the lamp and the key light off, manual exposure 1, every material's
-/// emission scale 0, the filter on, the walls' sky term (the filter's irradiance, which holds
-/// the stored part and the pair's term) after 64 frames unsealed; then a fill of rock across
-/// that stretch (an edit, so history dies in its box) seals the tunnel, and 256 frames after it
-/// the walls' sky term is at or under one sixteenth of the unsealed (the 64-frame value and the
-/// display's lit mean over the walls at 64 and 256 printed): a sealed cave takes no sky light
-/// through its walls.
+/// the opening reads brighter than the tunnel's shaded wall. A sealed cave's darkening (Plan 0086
+/// Phase 9's claim) is `gpu_bake`'s `a_sealed_pit_takes_no_sky_light_after_its_rebake`.
 #[test]
 #[ignore = "soak"]
 fn the_cave_mouth_is_lit_from_outside() {
@@ -371,124 +357,6 @@ fn the_cave_mouth_is_lit_from_outside() {
     let wall = rect_mean(&img, 4, WALL, luma8);
     println!("cave mouth: opening luma {opening:.1}, wall {wall:.1}");
     assert!(opening > wall, "{opening} against {wall}");
-
-    // The tunnel's axis from the spawn toward the chamber, and where its roof (5 voxels of rock
-    // over the bore of radius 25) stays covered to the chamber: the tunnel crosses open ground
-    // on its way, so the start is 5 voxels past the last step whose roof is open, short of
-    // the chamber.
-    let e = h.eye.0.map(|v| f64::from(v) + 0.5);
-    let d = [0, 1, 2].map(|k| f64::from(h.chamber.0[k] - h.eye.0[k]));
-    let len = d.iter().map(|v| v * v).sum::<f64>().sqrt();
-    let inward = d.map(|v| v / len);
-    let axis = |t: f64| [0, 1, 2].map(|k| e[k] + t * inward[k]);
-    let covered = |t: f64| {
-        let p = axis(t).map(|v| v.floor() as i32);
-        (26..31).all(|dz| h.world.material_at(VoxelCoord([p[0], p[1], p[2] + dz])) != Some(AIR))
-    };
-    // Short of the chamber (radius 60) and the 80 voxels the rig needs.
-    let start = (0..(len - 140.0) as i32)
-        .rev()
-        .map(f64::from)
-        .find(|&t| !covered(t))
-        .expect("the bore opens at the mouth")
-        + 5.0;
-    // The camera 40 voxels past it, facing the mouth.
-    let c = axis(start + 60.0).map(|v| v as f32);
-    let camera = flythrough::camera_looking_at(c, [0, 1, 2].map(|k| c[k] - inward[k] as f32));
-    println!("cave mouth: the bore covered from {start} voxels along the axis; camera at {c:?}");
-    // Manual exposure 1: an auto exposure would raise the sealed pose's.
-    let dark = |l: Lighting| Lighting {
-        lamp: false,
-        exposure: Exposure::Manual(1.0),
-        ..l
-    };
-    // The walls' mean over their rectangles: the filter's irradiance's luminance (scaled to the
-    // lighting grid) and the display's luma.
-    let walls = |h: &mut Hills, frame: &Frame| {
-        let f = svet_render::debug::read_rgba16f(&h.device, &h.queue, frame.filtered());
-        let (w, hh) = (frame.filtered().width(), frame.filtered().height());
-        let lum = |p: &[f32; 4]| f64::from(0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]);
-        let mut s = (0.0, 0usize);
-        for r in WALLS_IN {
-            let g = [
-                r[0] * w / WIDTH,
-                r[1] * hh / HEIGHT,
-                r[2] * w / WIDTH,
-                r[3] * hh / HEIGHT,
-            ];
-            for y in g[1]..g[3] {
-                for x in g[0]..g[2] {
-                    s.0 += lum(&f[(y * w + x) as usize]);
-                    s.1 += 1;
-                }
-            }
-        }
-        let img = svet_render::debug::read_rgba8(&h.device, &h.queue, frame.target());
-        let lit = WALLS_IN
-            .iter()
-            .map(|r| rect_mean(&img, 4, *r, luma8))
-            .sum::<f64>()
-            / 2.0;
-        (s.0 / s.1 as f64, lit)
-    };
-    let mut open = h.frame(at([12, 0]), dark);
-    open.set_light_hooks(svet_render::LightHooks {
-        key_off: true,
-        ..Default::default()
-    });
-    let rows = h.world.materials().len() as u16;
-    for m in 0..rows {
-        open.set_emission_scale(&h.queue, m, 0.0);
-    }
-    h.settle(&mut open, &camera, 64);
-    let unsealed = walls(&mut h, &open);
-    // Rock across the covered stretch's 20 voxels, 40 voxels to either side of the axis.
-    let (near, far) = (axis(start), axis(start + 20.0));
-    let lo = [0, 1, 2].map(|k| near[k].min(far[k]).floor() as i32 - if k == 0 { 0 } else { 40 });
-    let hi = [0, 1, 2].map(|k| near[k].max(far[k]).ceil() as i32 + if k == 0 { 0 } else { 40 });
-    let corner = |v: [i32; 3]| Fixed3(v.map(|c| i64::from(c) * FIXED_ONE));
-    let seal = EditOp {
-        shape: Shape::Box_ {
-            min: corner(lo),
-            max: corner(hi),
-        },
-        mode: Mode::Fill(flythrough::cave::ROCK),
-    };
-    let r = h.world.apply(&seal).expect("the seal applies");
-    let aabb = r.aabb.expect("the seal fills air");
-    h.gpu
-        .sync_now(&h.world, &h.device, &h.queue)
-        .expect("the mirror fits");
-    open.invalidate(aabb.0.0, aabb.1.0);
-    let mut sealed = [(0.0, 0.0); 2];
-    for i in 1..=256 {
-        open.step(
-            &h.device,
-            &h.queue,
-            &h.gpu,
-            &camera,
-            &LightParams::headlamp(),
-        );
-        if let Some(k) = [64, 256].iter().position(|&n| n == i) {
-            sealed[k] = walls(&mut h, &open);
-        }
-    }
-    println!(
-        "cave mouth walls' sky term (filtered irradiance): unsealed {:.4e}; sealed at 64, 256 frames {:.4e}, {:.4e} ({:.3} %, {:.3} %); display luma unsealed {:.2}, sealed {:.2}, {:.2}",
-        unsealed.0,
-        sealed[0].0,
-        sealed[1].0,
-        100.0 * sealed[0].0 / unsealed.0,
-        100.0 * sealed[1].0 / unsealed.0,
-        unsealed.1,
-        sealed[0].1,
-        sealed[1].1,
-    );
-    assert!(unsealed.0 > 0.0, "the unsealed walls take sky light");
-    assert!(
-        sealed[1].0 <= unsealed.0 / 16.0,
-        "256 frames: {sealed:?} against {unsealed:?}"
-    );
 }
 
 /// Plan 0032 Phase 7 bar 1: `outdoor_noon.png`, `outdoor_sunset.png` and `outdoor_night.png`
