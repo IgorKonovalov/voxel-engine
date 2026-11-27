@@ -633,8 +633,9 @@ encode.
 Every image under `docs/images/` is a row of [`docs/images/shots.json`](images/shots.json),
 or named in its `frozen` map (kept, never re-rendered). A row says how the image is made: the
 `source` (`flythrough`, or `clip` for the example above), its `flags`, the frame (`still_at`,
-or a range `A..B` for a loop from the fly-through), the seed, the encoded `width`, `quality`
-and, for a loop, `fps`, and the `tolerance` that `--check` holds it to, with the reading
+or a range `A..B` for a loop from the fly-through, `A..B/S` for every `S`-th frame of it: a
+headless frame is 1/60 s, so a loop of every third frame at `fps` 20 plays in real time), the
+seed, the encoded `width`, `quality` and, for a loop, `fps`, and the `tolerance` that `--check` holds it to, with the reading
 behind it in `note`.
 
 `node scripts/shoot-images.mjs` builds the fly-through and the `clip` example in release (in a
