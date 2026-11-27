@@ -354,18 +354,18 @@ fn the_pre_roll_takes_full_near_or_off_and_the_banner_names_it() {
     assert_eq!(stepped("off"), (0.0, f64::INFINITY));
 }
 
-/// Plan 0108 Phase 4, the owner's pick: unset, `--pre-roll` is `near` in a window over a
-/// streamed source (`cave`, `outdoor`) and `full` over a bounded one (`level`, `showcase`);
+/// Unset, `--pre-roll` is `near` in a window over `outdoor` only and `full` over every other
+/// source (the streamed `cave`, the bounded `level` and `showcase`);
 /// `full` under `--headless` for all four, and `full` with `--pre-roll-drain` in a window. The
 /// banner's queue row names the mode in effect beside the bake thread's. A given value wins
 /// everywhere.
 #[test]
-fn the_pre_roll_defaults_to_near_in_a_window_over_a_streamed_source_only() {
+fn the_pre_roll_defaults_to_near_in_a_window_over_the_outdoor_source_only() {
     use crate::cli::PreRollMode;
     use crate::run::hud_feed::write_queue_banner_row;
     let parse = |a: &[&str]| parse_args_from(argv(a)).unwrap();
     for (source, window) in [
-        ("cave", PreRollMode::Near),
+        ("cave", PreRollMode::Full),
         ("outdoor", PreRollMode::Near),
         ("level", PreRollMode::Full),
         ("showcase", PreRollMode::Full),
@@ -395,6 +395,41 @@ fn the_pre_roll_defaults_to_near_in_a_window_over_a_streamed_source_only() {
     }
     let drained = parse(&["--source", "outdoor", "--pre-roll-drain", "30"]);
     assert_eq!(drained.pre_roll(), PreRollMode::Full);
+}
+
+/// `default_pre_roll` over every run mode: in a window without a drain only the outdoor hills
+/// resolve `Near`; the streamed cave resolves `Full` like the bounded worlds, and a drain or
+/// `--headless` gives `Full` everywhere.
+#[test]
+fn the_cave_in_a_window_pre_rolls_full_and_the_outdoor_hills_near() {
+    use crate::cli::{PreRollMode, RunMode, default_pre_roll};
+    let modes = [
+        RunMode::Cave,
+        RunMode::Level,
+        RunMode::Showcase,
+        RunMode::Outdoor,
+        RunMode::Room(32),
+        RunMode::ThinRig,
+        RunMode::SeamRig,
+    ];
+    for mode in modes {
+        let window = if mode == RunMode::Outdoor {
+            PreRollMode::Near
+        } else {
+            PreRollMode::Full
+        };
+        assert_eq!(default_pre_roll(false, mode, false), window, "{mode:?}");
+        assert_eq!(
+            default_pre_roll(true, mode, false),
+            PreRollMode::Full,
+            "{mode:?}"
+        );
+        assert_eq!(
+            default_pre_roll(false, mode, true),
+            PreRollMode::Full,
+            "{mode:?}"
+        );
+    }
 }
 
 /// `--sky-anchor-floor` reaches the auto exposure, 1/8 by default and unnamed; another value is
