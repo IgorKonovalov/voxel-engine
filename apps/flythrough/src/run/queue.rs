@@ -172,6 +172,9 @@ pub(crate) struct QueueRun {
     /// queue is first empty) and the newest hashes read (`QueueDrain::rule_hashes`).
     pub(crate) hash_asked: u64,
     pub(crate) rule_hashes: Option<std::sync::Arc<svet_render::RuleHashes>>,
+    /// The queue's openings when the pre-roll ended, until the `first frame light:` line is
+    /// printed: the first stats past them carry the census the pre-roll's end asked for.
+    pub(crate) first_light: Option<u64>,
 }
 
 /// One edit's frame of the live queue (a reading).
@@ -726,6 +729,10 @@ impl Run {
                         );
                         self.queue.dig = None;
                     }
+                }
+                if self.queue.first_light.is_some_and(|at| st.openings > at) {
+                    println!("{}", super::loading::first_light_line(&st, self.frame));
+                    self.queue.first_light = None;
                 }
                 self.queue.stats = Some(st);
                 self.note_empty(&st);

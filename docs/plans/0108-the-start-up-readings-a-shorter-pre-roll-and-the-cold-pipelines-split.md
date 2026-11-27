@@ -1,6 +1,6 @@
 # 0108: The start-up readings: a shorter pre-roll, and the cold pipelines split
 
-> **Status:** approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
+> **Status:** in-progress (Phase 1 landed 2026-11-27; Phase 2, the owner's look, next). Approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
 > [the review of 2026-11-26](../reviews/2026-11-26-work-off-the-render-thread.md) on the owner's
 > "all recommended" (its question 2: the pre-roll reading now as a chore beside Plan 0093, the
 > cold-pipeline split before the next tester archive), with no further interview; the guesses
@@ -339,9 +339,11 @@ A note on Phase 1's readings; no phase changes.
 > resume notes go to the plan's readings log, `docs/plans/logs/0108.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
+Readings: [`logs/0108.md`](logs/0108.md).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: `--pre-roll`, and what the first frames show | dev | not started | |
+| 1: `--pre-roll`, and what the first frames show | dev | done; stop not met (forest: `near` about 5 s sooner on both adapters) | committed with this row |
 | 2: the owner looks at the start (skipped if 1 stops) | human | not started | |
 | 3: the cold pipelines on 1, 2 and 4 threads | dev | not started | |
 | 4: the picks written down | dev | not started | |
@@ -351,6 +353,12 @@ A note on Phase 1's readings; no phase changes.
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1: `a_pre_roll_boxed_at_zero_ends_at_the_near_chunks` asserts `coarse_chunks` 72 (the full chunks mirrored at the near chunks' moment: `PreRollSummary::coarse_chunks` counts the coarse pass's cover), not 0 as written; with an empty near list the pre-roll ends at its second step, not its first (the box ends it at the step after the near chunks' moment, here step 1). `pre_roll.rs` was not changed.
+- Phase 1: files beyond the list: `run/mod.rs` (the `first frame light: not read` line at the run's end), `run/tests.rs` (the HUD queue row's literal gains `pre-roll full`).
+- Phase 1: the starts ran `--frames 8`, not 3: `first frame light:` is the census of the first opening after the pre-roll, which the bake thread reached at frame 1 to 4 on the forest and 18 to 43 on the hall; the hall's counts come from the stills' runs.
+- Phase 1: `load_stages` (run.json) not read: `--report` needs `--path` or `--queue-rule-reading`; the pre-roll's stage ms are the `bake queue:` line's work times.
+- Phase 1: stills in two passes; the sheets show the second, whose frame counts come from the first pass's own rate (the first landed at 0.74 to 0.81, 1.5 and 3.7 s on the RTX). The sheets are untracked under `live/`.
 
 ### Close triggers
 

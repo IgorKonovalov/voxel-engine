@@ -513,6 +513,11 @@ impl Drop for Run {
         if let Some(line) = self.hud.run.line() {
             println!("{line}");
         }
+        if self.queue.first_light.take().is_some() {
+            println!(
+                "first frame light: not read (no opening after the pre-roll by the run's end)"
+            );
+        }
         self.take_rule_hashes("the run's end", true);
         self.write_report();
         if self.args.spawn_hash || !self.args.switch_at.is_empty() {

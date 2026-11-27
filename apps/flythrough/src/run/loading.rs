@@ -11,7 +11,7 @@
 //! the RTX 3080 Laptop.
 
 use crate::app::{diag, ms_since};
-use crate::cli::{Args, RunMode};
+use crate::cli::{Args, PreRollMode, RunMode};
 use crate::edits::{ball, voxel_of};
 use crate::now;
 use crate::run::hud_feed::HUD_SCALE;
@@ -33,6 +33,32 @@ use svet_world::ChunkCoord;
 
 /// The pre-roll's cap on its step time, in ms.
 pub(crate) const PRE_ROLL_CAP_MS: f64 = 120_000.0;
+
+/// The `first frame light:` line: the candidates with no block and with a coarse one by where
+/// they lie against the view (the `bake queue view:` line's counts), read at the first opening
+/// after the pre-roll, at frame `frame`.
+pub(crate) fn first_light_line(st: &svet_render::QueueStats, frame: u32) -> String {
+    let w = st.view_waiting;
+    format!(
+        "first frame light: waiting (blank/coarse) shell {}/{} in view {}/{} out {}/{}, read at frame {frame} (the first opening after the pre-roll)",
+        w[0][0], w[0][1], w[1][0], w[1][1], w[2][0], w[2][1],
+    )
+}
+
+/// The pre-roll's coarse box and cap in ms of work. `--pre-roll-stepped`: no box and no cap,
+/// so the pre-roll ends by its chunks alone. `--pre-roll near|off`: the box is 0 ms, so the
+/// pre-roll ends at the step after the near chunks' moment, stepped or not.
+pub(crate) fn pre_roll_limits(args: &Args) -> (f64, f64) {
+    let (box_ms, cap_ms) = if args.loading.pre_roll_stepped {
+        (f64::INFINITY, f64::INFINITY)
+    } else {
+        (COARSE_PRE_ROLL_MS, PRE_ROLL_CAP_MS)
+    };
+    match args.bake.pre_roll {
+        PreRollMode::Full => (box_ms, cap_ms),
+        PreRollMode::Near | PreRollMode::Off => (0.0, cap_ms),
+    }
+}
 
 /// The stages' names, as the loading frame and the `loading frame` diag lines show them.
 pub(crate) const PIPELINES: &str = "building the pipelines";
@@ -699,7 +725,8 @@ impl Run {
                 .map(|v| (v / 64.0).floor() as i32),
         );
         let r = self.args.bake.near;
-        let near: Vec<ChunkCoord> = (-r..=r)
+        let mode = self.args.bake.pre_roll;
+        let mut near: Vec<ChunkCoord> = (-r..=r)
             .flat_map(|z| {
                 (-r..=r).flat_map(move |y| {
                     (-r..=r).map(move |x| {
@@ -708,14 +735,13 @@ impl Run {
                 })
             })
             .collect();
+        // `--pre-roll off` holds no near chunk: the near stage is over at the first step.
+        if mode == PreRollMode::Off {
+            near.clear();
+        }
         l.progress.enter(NEAR);
         l.progress.set(0, Some(near.len() as u64));
-        // `--pre-roll-stepped`: no box and no cap, so the pre-roll ends by its chunks alone.
-        let (box_ms, cap_ms) = if self.args.loading.pre_roll_stepped {
-            (f64::INFINITY, f64::INFINITY)
-        } else {
-            (COARSE_PRE_ROLL_MS, PRE_ROLL_CAP_MS)
-        };
+        let (box_ms, cap_ms) = pre_roll_limits(&self.args);
         Stage::PreRoll(Box::new(PreRollRun {
             pre: PreRoll::new(PreRollConfig {
                 near,
@@ -813,8 +839,13 @@ impl Run {
             PreRollState::Coarse { passed, of } => {
                 l.progress.enter(COARSE);
                 let by_count = (passed as u64 * COARSE_UNITS) / (of.max(1) as u64);
+                let box_ms = p.pre.config().box_ms;
                 let by_box = p.pre.near_ms().map_or(0.0, |at| {
-                    ((p.work_ms - at) / COARSE_PRE_ROLL_MS).clamp(0.0, 1.0)
+                    if box_ms > 0.0 {
+                        ((p.work_ms - at) / box_ms).clamp(0.0, 1.0)
+                    } else {
+                        1.0
+                    }
                 });
                 let by_box = (by_box * COARSE_UNITS as f64) as u64;
                 l.progress
@@ -859,7 +890,7 @@ impl Run {
             if s.boxed {
                 format!(
                     ", ended by its {:.0} s box with the rest of the {} chunks to the queue",
-                    COARSE_PRE_ROLL_MS / 1e3,
+                    p.pre.config().box_ms / 1e3,
                     s.coarse_chunks
                 )
             } else {
@@ -889,6 +920,10 @@ impl Run {
         // The pre-roll's near chunks take the full count under `--near`; the live queue's
         // full-first radius starts here.
         frame.set_bake_full_first(self.args.full_first());
+        // The `first frame light:` line reads the census of the first opening after the
+        // pre-roll, asked for here.
+        self.queue.first_light = Some(st.openings);
+        frame.set_bake_queue(svet_render::BakeQueue::request_census);
     }
 
     /// Loading's end: the band census and the loading lines.

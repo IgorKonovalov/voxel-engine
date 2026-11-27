@@ -647,6 +647,40 @@ pub struct BakeArgs {
     /// `SECONDS` have passed, then the budget returns to `budget` (a testbed lever for a look at
     /// a view whose far light is baked).
     pub(crate) pre_roll_drain: Option<f64>,
+    /// `--pre-roll full|near|off`: where the start-up's light pre-roll ends ([`PreRollMode`]).
+    pub(crate) pre_roll: PreRollMode,
+}
+
+/// `--pre-roll`: where the start-up's light pre-roll ends. `Full` bakes the near chunks and
+/// then runs the coarse pass in its 5 s box; `Near` ends at the near chunks (the box at 0 ms:
+/// the coarse pass runs in the live queue behind the first frame); `Off` also passes no near
+/// chunk, so the pre-roll ends at its second step. The live queue after the first frame is the
+/// same in all three: `--near` and `--coarse` set it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum PreRollMode {
+    #[default]
+    Full,
+    Near,
+    Off,
+}
+
+impl PreRollMode {
+    pub(crate) fn from_name(s: &str) -> Option<Self> {
+        match s {
+            "full" => Some(Self::Full),
+            "near" => Some(Self::Near),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Near => "near",
+            Self::Off => "off",
+        }
+    }
 }
 
 /// What `--render` names: a fixed output size the window scales, or the window's own size.

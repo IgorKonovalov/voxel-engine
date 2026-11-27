@@ -335,7 +335,8 @@ pub(super) fn sections() -> Vec<Section<Parsing>> {
 }
 
 /// `flags` (the light queue's) with the testbed's pre-roll drain (`--pre-roll-drain`, a look at
-/// the outdoor scenes with their far light baked) after them.
+/// the outdoor scenes with their far light baked) and the pre-roll's end (`--pre-roll`) after
+/// them.
 pub(super) fn with_drain_flags(mut flags: Vec<Flag<Parsing>>) -> Vec<Flag<Parsing>> {
     flags.push(Flag::value(
         &["--pre-roll-drain"],
@@ -344,6 +345,16 @@ pub(super) fn with_drain_flags(mut flags: Vec<Flag<Parsing>>) -> Vec<Flag<Parsin
         |p: &mut Parsing, v| {
             let s = v.parse_if(|s: &f64| (1.0..=600.0).contains(s), "1 to 600 s")?;
             p.args.bake.pre_roll_drain = Some(s);
+            Ok(())
+        },
+    ));
+    flags.push(Flag::value(
+        &["--pre-roll"],
+        "full|near|off",
+        "where the start-up's light pre-roll ends: full, the near chunks in full and then the coarse pass for up to 5 s; near, at the near chunks (the coarse pass runs in the live queue behind the first frame); off, at once, no near chunk held (a reading's arm); the live queue after the first frame is the same in all three; near and off refuse --pre-roll-drain [full]",
+        |p: &mut Parsing, v| {
+            p.args.bake.pre_roll =
+                v.named(super::PreRollMode::from_name, "full, near or off")?;
             Ok(())
         },
     ));
