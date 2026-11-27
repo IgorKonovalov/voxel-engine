@@ -1,6 +1,6 @@
 # 0105: The dig's flash at depth: a held estimate that follows the hole's own light
 
-> **Status:** in-progress (Phase 7b3c done 2026-11-27: the burst on `live/bin/p7b3/flythrough` (`e1060437`) reads outcome E against session 6's binary; Reading 18, the gpu tier, `gpu_settings_rows` and the two soak tests as 7a5; the temporal pass +0.007 ms over the dig frames; next 7b4, the owner's third look; Phase 7b3b done 2026-11-27: a marked dig face leaves the temporal pass with the moments' w 2 and its mark reads under `SKY_STALE`; step 1's count 780 at D5+0 on the tree before, 0 after; B's ring at D5+0 / D5+1 0.46 / 0.43 %, white over 8 / 16 0.32 / 0.11 %, black over 32 1.37 %, worst ring D5+2 1.21 %, all as before the fix; the bars asserted in the soak test; B dig 4 reads 0.17 % at D+0; next 7b3c; ruled 2026-11-27 on Phase 7b3's two moved figures: F4 stands; the ring at D5+0 0.46 % is 7a4a's group back, no pixel of it reads the mark, and 7a4b's 0.06 % was held up by the white F4 removes; proven fault: a marked face is still counted as cast by the filter; next 7b3b (that fix, the read without `SKY_STALE`, the bars asserted in the soak test), 7b3c (the burst on the new binary, 7a5's re-reads), 7b4; Phase 7b3 steps 1 to 5 done 2026-11-27: the hole's white bar over 8 and 16 levels in the soak test, red on B at 0.57 / 0.53 %, green after F4 at 0.32 / 0.11 %; T3's ring at D5+0 0.46 %; step 6, 7a5's re-reads, owed; Phase 7b2 read 2026-11-27: outcome E, the two binaries he saw equal on a burst of four digs, lockstep `p7b` whiter than `p6` over 16 levels in the dig's region at 0.001 % of the frame at most against the control's 0.015 %, on the thread 0.000 % within the runs' spread; next 7b3; Phase 7b looked 2026-11-27, not confirmed: the owner reads the default `depth` as flashing a bit where session 6's did not, `surface` as "big flashes"; `depth` stays the default and the plan does not close on it; ruled 2026-11-27: the ordinary dig takes session 6's bytes by the code, so Phase 7b2 reads the two binaries on a burst, Phase 7b3 bounds and removes the whole dig's white (F4), Phase 7b4 is the side-by-side look; next 7b2; Phase 7b-prep done 2026-11-27: the fly-through's `dig settled: rings 1 and 2` line prints `digs whole N` for each dig, so 7b's fly-fast dig is on the record; next 7b; Phase 7a5 done 2026-11-27: the re-reads on `6dfc0b1a` moved nothing: Reading 18 `down` lockstep `depth` on the RTX, at 5 m every frame on a record, B1 from 2 m, 1 m -4.554; `gpu_queue`, `gpu_queue_reach`, `gpu_lights`, `gpu_outdoor` 39/39, `gpu_sun` 35/35, the two soak tests and Phase 5's CPU test pass; 7b's binary at `live/bin/p7b/flythrough`; next 7b; Phase 7a4b done 2026-11-27: under `depth` a held record moves only the dig's faces; at D5+0 and D5+1 the ring 0.06 % and 0.02 %, group 2 3 and 5; the soak test `a_fresh_hole_holds_its_value_until_its_light_lands` passes under the default, B's ring 1.20 % at most, no frame over 2 %; 7a4c not built; next 7a5; Phase 7a4a done 2026-11-27: a whole dig's summary is `SKY_STALE` from the put to the landing; at D5+0 and D5+1 the whole chunk's group 912 and 857 dark pixels, none `own summary`; ring 3.50 % and 3.05 %, group 2 6094 and 5257; next 7a4b (F1); Phase 7a3's result ruled 2026-11-27 under "Amended 2026-11-27 (architect, Phase 7a3's result ...)": next Phase 7a4a (F2), then 7a4b (F1), 7a4c (F3) only if the ring is still over 2 %, 7a5, 7b; Phase 7a3 read 2026-11-27: of the ring's dark pixels at D5+0, 2695 (31 %) are outcome A (the whole chunk's untouched bricks, sky source to `own summary`, its summary `VIS_BAKED`, not stale, sky 0) and 6133 (69 %) outcome E (dug chunks with a block, bricks dig 5 does not touch, the sky ray cast at every pixel, `record stale` in both frames); the tables go back to the architect before 7a4; Phase 7a2's stop ruled 2026-11-27 under "Amended 2026-11-27 (architect, Phase 7a2's stop ...)": the first ruling's cause is not what the reading shows; one more reading, Phase 7a3, then the fix 7a4 and the re-reads 7a5, before 7b; Phase 7a2 stopped for the architect 2026-11-27 at step 2: B's dig 5 is a whole dig, but none of the ring's dark pixels at D5+0 and D5+1 lies in a touched brick of a chunk with no block (66 to 70 % in touched bricks of chunks with a block); the CPU test is in, red on clauses 1 and 3; no fix built; Phase 7a's stop ruled 2026-11-26 under "Amended 2026-11-26 (architect, Phase 7a's stop ...)": a fault in `depth`'s hold of a chunk with no block, which writes over faces the dig did not make; Phase 7a2 fixes it before 7b, the ring bar stands, 7c is cut into 7c and 7d; Phase 7a read 2026-11-26 and stopped for the architect: under the default `depth`, `gpu_outdoor`'s soak test `a_fresh_hole_holds_its_value_until_its_light_lands` misses its ring bar in sequence B, 4.42 % of the ring darker by over 4 levels against 2 %, at the fifth dig's D+0 and D+1, and passes under `surface`; `gpu_sun`'s rule 3 holds; Phase 6 done by the owner 2026-11-26: `depth` is the default; Phase 5 done 2026-11-26: the 5 m dig into a chunk with no block is held on a record under `depth`, both modes, no casting frame; B2's under clause at `down` 1 m stays the window's case; Phase 4c read 2026-11-26 and stopped for the architect: B2's restated second clause missed at `down` 1 m, lockstep, -4.53 mean under `S` at D+0, the first of six holds; the five others read after the stop (Reading 17): `wide` meets it, the `down` bake thread misses the same way; Phase 4b done 2026-11-26: `side` lockstep `depth`, B1 met at 2, 3, 5 and 7 m against `S`, no part from 2 m over its landed byte; 4c not started; Phase 4 read 2026-11-26 and stopped for the architect: B1 missed at `side` 2 m, +9.9 mean, and B2's second clause at `down` 1 m, 8.0 levels under `surface` at D+0; Phase 3 done 2026-11-26; Phase 1 done 2026-11-26; the phases after it are rewritten under "Amended 2026-11-26 (architect)": the held floor is the flash; Phase 2 read 2026-11-26 and stopped for the architect: the exposure at D-1 is not within 1 % of D+60's at 6 of 20 read digs); approved (owner, 2026-11-26: go; his four answers are under "Amended 2026-11-26 (owner)" and bind Phase 1's sites and the remedy's bars; drafted from the owner's report after Plan 0099's window, with
+> **Status:** in-progress (Phase 7b4 looked 2026-11-27, confirmed: blind, the owner reads session 6's binary as flashing less ("a") and accepts the present one ("b is acceptable as well"); `depth` as built at `e1060437` is the default; the difference is not explained and is a backlog entry; ruled 2026-11-27: next 7c (the asserting tests, restated), 7d (the readings and the tip), the fresh close review; Phase 7b3c done 2026-11-27: the burst on `live/bin/p7b3/flythrough` (`e1060437`) reads outcome E against session 6's binary; Reading 18, the gpu tier, `gpu_settings_rows` and the two soak tests as 7a5; the temporal pass +0.007 ms over the dig frames; next 7b4, the owner's third look; Phase 7b3b done 2026-11-27: a marked dig face leaves the temporal pass with the moments' w 2 and its mark reads under `SKY_STALE`; step 1's count 780 at D5+0 on the tree before, 0 after; B's ring at D5+0 / D5+1 0.46 / 0.43 %, white over 8 / 16 0.32 / 0.11 %, black over 32 1.37 %, worst ring D5+2 1.21 %, all as before the fix; the bars asserted in the soak test; B dig 4 reads 0.17 % at D+0; next 7b3c; ruled 2026-11-27 on Phase 7b3's two moved figures: F4 stands; the ring at D5+0 0.46 % is 7a4a's group back, no pixel of it reads the mark, and 7a4b's 0.06 % was held up by the white F4 removes; proven fault: a marked face is still counted as cast by the filter; next 7b3b (that fix, the read without `SKY_STALE`, the bars asserted in the soak test), 7b3c (the burst on the new binary, 7a5's re-reads), 7b4; Phase 7b3 steps 1 to 5 done 2026-11-27: the hole's white bar over 8 and 16 levels in the soak test, red on B at 0.57 / 0.53 %, green after F4 at 0.32 / 0.11 %; T3's ring at D5+0 0.46 %; step 6, 7a5's re-reads, owed; Phase 7b2 read 2026-11-27: outcome E, the two binaries he saw equal on a burst of four digs, lockstep `p7b` whiter than `p6` over 16 levels in the dig's region at 0.001 % of the frame at most against the control's 0.015 %, on the thread 0.000 % within the runs' spread; next 7b3; Phase 7b looked 2026-11-27, not confirmed: the owner reads the default `depth` as flashing a bit where session 6's did not, `surface` as "big flashes"; `depth` stays the default and the plan does not close on it; ruled 2026-11-27: the ordinary dig takes session 6's bytes by the code, so Phase 7b2 reads the two binaries on a burst, Phase 7b3 bounds and removes the whole dig's white (F4), Phase 7b4 is the side-by-side look; next 7b2; Phase 7b-prep done 2026-11-27: the fly-through's `dig settled: rings 1 and 2` line prints `digs whole N` for each dig, so 7b's fly-fast dig is on the record; next 7b; Phase 7a5 done 2026-11-27: the re-reads on `6dfc0b1a` moved nothing: Reading 18 `down` lockstep `depth` on the RTX, at 5 m every frame on a record, B1 from 2 m, 1 m -4.554; `gpu_queue`, `gpu_queue_reach`, `gpu_lights`, `gpu_outdoor` 39/39, `gpu_sun` 35/35, the two soak tests and Phase 5's CPU test pass; 7b's binary at `live/bin/p7b/flythrough`; next 7b; Phase 7a4b done 2026-11-27: under `depth` a held record moves only the dig's faces; at D5+0 and D5+1 the ring 0.06 % and 0.02 %, group 2 3 and 5; the soak test `a_fresh_hole_holds_its_value_until_its_light_lands` passes under the default, B's ring 1.20 % at most, no frame over 2 %; 7a4c not built; next 7a5; Phase 7a4a done 2026-11-27: a whole dig's summary is `SKY_STALE` from the put to the landing; at D5+0 and D5+1 the whole chunk's group 912 and 857 dark pixels, none `own summary`; ring 3.50 % and 3.05 %, group 2 6094 and 5257; next 7a4b (F1); Phase 7a3's result ruled 2026-11-27 under "Amended 2026-11-27 (architect, Phase 7a3's result ...)": next Phase 7a4a (F2), then 7a4b (F1), 7a4c (F3) only if the ring is still over 2 %, 7a5, 7b; Phase 7a3 read 2026-11-27: of the ring's dark pixels at D5+0, 2695 (31 %) are outcome A (the whole chunk's untouched bricks, sky source to `own summary`, its summary `VIS_BAKED`, not stale, sky 0) and 6133 (69 %) outcome E (dug chunks with a block, bricks dig 5 does not touch, the sky ray cast at every pixel, `record stale` in both frames); the tables go back to the architect before 7a4; Phase 7a2's stop ruled 2026-11-27 under "Amended 2026-11-27 (architect, Phase 7a2's stop ...)": the first ruling's cause is not what the reading shows; one more reading, Phase 7a3, then the fix 7a4 and the re-reads 7a5, before 7b; Phase 7a2 stopped for the architect 2026-11-27 at step 2: B's dig 5 is a whole dig, but none of the ring's dark pixels at D5+0 and D5+1 lies in a touched brick of a chunk with no block (66 to 70 % in touched bricks of chunks with a block); the CPU test is in, red on clauses 1 and 3; no fix built; Phase 7a's stop ruled 2026-11-26 under "Amended 2026-11-26 (architect, Phase 7a's stop ...)": a fault in `depth`'s hold of a chunk with no block, which writes over faces the dig did not make; Phase 7a2 fixes it before 7b, the ring bar stands, 7c is cut into 7c and 7d; Phase 7a read 2026-11-26 and stopped for the architect: under the default `depth`, `gpu_outdoor`'s soak test `a_fresh_hole_holds_its_value_until_its_light_lands` misses its ring bar in sequence B, 4.42 % of the ring darker by over 4 levels against 2 %, at the fifth dig's D+0 and D+1, and passes under `surface`; `gpu_sun`'s rule 3 holds; Phase 6 done by the owner 2026-11-26: `depth` is the default; Phase 5 done 2026-11-26: the 5 m dig into a chunk with no block is held on a record under `depth`, both modes, no casting frame; B2's under clause at `down` 1 m stays the window's case; Phase 4c read 2026-11-26 and stopped for the architect: B2's restated second clause missed at `down` 1 m, lockstep, -4.53 mean under `S` at D+0, the first of six holds; the five others read after the stop (Reading 17): `wide` meets it, the `down` bake thread misses the same way; Phase 4b done 2026-11-26: `side` lockstep `depth`, B1 met at 2, 3, 5 and 7 m against `S`, no part from 2 m over its landed byte; 4c not started; Phase 4 read 2026-11-26 and stopped for the architect: B1 missed at `side` 2 m, +9.9 mean, and B2's second clause at `down` 1 m, 8.0 levels under `surface` at D+0; Phase 3 done 2026-11-26; Phase 1 done 2026-11-26; the phases after it are rewritten under "Amended 2026-11-26 (architect)": the held floor is the flash; Phase 2 read 2026-11-26 and stopped for the architect: the exposure at D-1 is not within 1 % of D+60's at 6 of 20 read digs); approved (owner, 2026-11-26: go; his four answers are under "Amended 2026-11-26 (owner)" and bind Phase 1's sites and the remedy's bars; drafted from the owner's report after Plan 0099's window, with
 > his three answers and no further interview; the questions left are under "Risks & open
 > questions", each with a recommended option). Starts on a main that holds Plan 0099.
 > **Created:** 2026-11-26
@@ -2129,6 +2129,149 @@ Where 7b3b's fix moves a figure down, its bar follows by the second row's rule; 
   that pixel as cast"; rejected (a) and (b) above beside it.
 - **Budgets:** no new figure; 7b3c reads the temporal pass with the wasted rays in it.
 
+## Amended 2026-11-27 (architect, the blind look: `depth` as built is accepted)
+
+**The ruling: the pick is confirmed. `depth` as built at `e1060437` is the default, by the
+owner's eye; the plan goes on to Phase 7c (the asserting tests), Phase 7d (the edit's readings
+and the tip) and the fresh close review. The slight difference he read between the two binaries
+is not explained and is not chased in this plan: it is a backlog entry with the candidates and
+the reading that would find it.** His two answers, the draw, the durations, the `digs whole`
+series and the series table are in the readings log ("Phase 7b4, the blind look, 2026-11-27").
+A reading from `live/session9.log`, `live/session7.log`, `live/session6.log` and the code at
+`e1060437` against `7b1725c2`; nothing was built or run.
+
+### The owner's answers
+
+Blind, A = session 6's binary (`live/bin/p6/flythrough`), B = `live/bin/p7b3/flythrough`:
+**"a"** flashes less. Told which was which: **"i guess we can leave it as is, b is acceptable
+as well"**. So he prefers session 6's binary slightly and accepts the present one. He did not
+take the unlit-ground launch.
+
+### What the look does and does not show
+
+- **It does not isolate the binary.** By the launches' own stdout they were two flights: A's
+  pit at the spawn was dug with the lamp on, 46 s after the start, on an idle queue; every dig
+  of B was dug with the lamp off, from 27 s, on a queue 2500 to 4500 deep, and B's last 24
+  carves came after he stepped the time of day round to 09:59, among 4403 key-only jobs, with
+  no dig settling before the exit. The log's table has each. This is recorded as what a
+  reproduction must hold equal, not as the cause: session 7 read the same way ("flashes a
+  bit") on `526bee74`, and session 6's run 4 dug 13 s after its start on a queue 7000 deep
+  under the old binary and read "not".
+- **The whole dig.** Launch B held one dig whole (its third settled line, carves 10 and 11,
+  the first to touch eight chunks). Launch A made the same kind of carve four times under the
+  binary that casts there, and he still read A as flashing less, so the evidence does not say
+  the old cast is what he judges by, and it does not single out F4's trade either: one line
+  of thirty, among a hundred digs, in a launch he then accepted. **F4's look at a whole dig
+  (the hole dark, the ground beside it 0.46 % darker for two frames) is accepted inside
+  launch B and has not been judged on purpose.** The close names it so.
+- **The bytes at an ordinary dig** are the two binaries' own by the earlier ruling and by
+  outcome E twice; nothing in this reading contradicts it. The headless bursts ran with the
+  lamp on (the default), four digs into a settled store, the spawn's camera.
+
+### The candidates (none read; the backlog entry carries them)
+
+| candidate | where | on screen, if it is the one |
+|---|---|---|
+| The dig's frame is longer: the render thread's wait for the dig's step reads 9 to 10 ms at the median and 13 to 17 at most under `p6`, 13 to 19 and 45 to 53 under the new binaries, its `step_rest` part 3 to 4 ms against 5 to 7 (p99 7 to 8 against 24 to 29); the headless bursts agree in sign | the queue's step at an edit: main's Plan 0101 (`bake/queue/rule.rs` `relist_zeroed` at every mirror change, the rule at every opening in `open.rs`, `list.rs`), Phase 5's `dug.push` of a whole chunk (`bake/queue/digs.rs`), `bake/thread.rs` | a held frame at the dig, two to four frames long at the tail: a hitch that can read as a blink |
+| The queue behind a dig is deeper: `ring 3` waits on about 2000 chunks against 340; a walk re-lists zeroed chunks at the border (1654 by 33 s), a dig re-lists zeroed chunks whole (140) | `rule.rs` `relist_zeroed`, `list_zeroed_again` | nothing at the dig; ring 3's landings later and longer, small steps in the ground around the pit seconds after |
+| `store_dig_held` answers a pixel at an ordinary dig: it is read wherever a pixel inside a held box finds no sky value in its own cell, and returns a byte where the record's `KEY_BAKED` is clear and a low bit of its first key word is set. `write_held` clears the word; no reading says every other writer does | `shaders/pair.wgsl` `store_dig_held`, `temporal.wgsl`'s `dig_held` path (the moments' w 2, the cast cleared) | a face steady at a wrong byte with no ray, bright or dark, until the landing, where `p6` cast |
+| F1's drop in a burst: a kept face whose cell's old record holds no sky value drops its direction, and those faces cast until the landing. Ruled absent at an ordinary dig into a settled store; not read where the old record is the last dig's held or guess block, or the start's provisional one (B dug with 2543 chunks provisional, A with 20) | `bake/held.rs` (`own_f.is_none()` with a kept face) | white speckle on the faces beside the new hole for the frames to the landing |
+| Chains: a dig joined before the last settled holds its estimate 0.4 to 1.3 s (half of B's lines, two of A's) | the flight, not the binary, unless the first candidate lengthens a landing past the gap between digs | the dark start held longer, then a fade |
+
+Read and set aside: the landing's speed (10 to 12 frames in all four runs, the old binary at
+both ends); the shaders main brought (`key_horizon_at` reads the hit in both where no
+removed setting was on; the column map lost its coarse rows, read by the removed walk alone).
+
+### Whether reverting is separable (asked, answered, not done)
+
+Session 6's bytes at a chunk with a block and the later work at a whole chunk alone is
+separable in code (`held_cells` knows whether the chunk held a block: `words.get(c)`; the
+partition and the drop at `held.rs` are one branch; `store_dig_held` reads marks only a drop
+writes). It would change nothing he can have seen if the bytes are equal at an ordinary dig,
+which is the standing reading, and F1's drop was built for chunks with a block at a whole dig
+(group 2's 6133 pixels). Not built.
+
+### Phase 7b4: done
+
+Looked 2026-11-27 (session 9), confirmed by the owner's second answer. No further owner look
+is asked by this plan.
+
+### Phase 7c, restated: the default's asserting tests
+- **Owner skill:** dev
+- **What it no longer has to add.** The fresh hole's bars are assertions since 7b3b: the soak
+  test `a_fresh_hole_holds_its_value_until_its_light_lands` (the ring per dig and at its worst
+  frame, the hole's black over 32 levels, its white over 8 and 16, sequences A and B), the
+  reading `whole_dig_ring`'s split when run by name, the CPU tests of
+  `bake/queue/split_tests/whole.rs` and `gpu_queue`'s dig line. 7c changes none of them and
+  loosens none.
+- **What it adds, two tests under the default `depth`:**
+  1. `gpu_sun`, lavapipe: a synthetic shaft 10 voxels wide dug to 40 voxels under an open sky,
+     the last dig read in lockstep. No dug cell's held visibility is over its landed one by
+     more than one byte, read as a dig's face reads it (`record_dig_visibility`; a cell that
+     takes no held record is counted and printed, and its faces are read from the frames);
+     no frame from the dig to the landing shows the box's mean over its settled frame by more
+     than 4 display levels. Expected under 10 s on lavapipe (a guess); over the soak line it
+     is born `#[ignore = "soak"]`. Broken by hand once (the estimate forced to `surface`).
+  2. `gpu_outdoor`, a soak-marked image test (`#[ignore = "soak"]`, not a gate; minutes on
+     lavapipe, projected from its first site): the forest reading of Reading 18 at `down` and
+     `side`. B1 at 3 and 5 m (5 m on a record in every frame from the dig to the landing);
+     at 1 m B2's first clause (the new faces no brighter than the settled look by more than 4
+     levels). **B2's under clause at `down` 1 m is not asserted as met:** its first-frame level
+     under the settled look is read on lavapipe here and held as a ratchet at that reading
+     rounded up to the next whole level, named in the test as the owner's accepted look of
+     2026-11-26 and a miss of B2's floor of 4.
+- **One reading more, no stop attached** (the backlog entry's third candidate): where test 2's
+  frames already hold the temporal pass's moments, print per site the count of pixels that
+  left the pass by the `dig_held` path (the moments' w 2 to 3) in the frames from the dig to
+  the landing, beside `digs whole`. At a site with `digs whole 0` the entry expects 0; the
+  count goes to the log whatever it is. If the frames do not hold the moments, the line is
+  left out and the log says so.
+- **Files touched:** `crates/svet-render/tests/gpu_sun/`, `apps/flythrough/tests/gpu_outdoor/`,
+  `docs/plans/logs/0105.md`. Nothing under `src/`.
+- **Done when:** both tests pass by name on lavapipe with their figures in the log, each
+  broken by hand once; the quick tier over the changed crates, clippy, fmt, the doc gates.
+- **Stops:** the 1 m level over 6 levels under on lavapipe (the RTX read 4.53 to 4.55); a
+  shaft cell over its landed byte by more than one; a hold projected past 20 minutes; the
+  phase past about 170k tokens (commit what holds, resume notes in the log, a fresh agent).
+  No bar is loosened, no scene or rig is changed, no test is moved to `surface`.
+- Binaries: `gpu_sun`, `gpu_outdoor`.
+
+### Phase 7d, as changed
+- Its text stands: the edit's readings in `docs/nfr/04-edits.md` (the D+0 step and an edit's
+  wait before and after, the held estimate's time, the 1 m miss beside the owner's
+  acceptance, machine and commit), Phase 5's owed `surface` after-runs at `down` and `wide`,
+  the gate tier at the tip under the perf lock, clippy, fmt, deny and the doc gates.
+- **One reading more, no stop attached** (the entry's first candidate): beside the edit's
+  wait, the dig frame's `bake dig call` and `step_rest` (p50, p99, the frames counted) of
+  `live/bin/p6/flythrough` against `live/bin/p7b3/flythrough`, copied from the logs the
+  bursts already wrote (`live/p7b2/thr-*.log`, `live/p7b3c/thr-*.log`) and from session 9's
+  two launches; no new run. The section states the figure as read on loaded holds of four
+  dig frames each, and that the wait before is the old binary's.
+- The temporal pass's time in the section is `dig_timeline`'s, as 7b3c read it (+0.007 ms
+  over the dig frames); Reading 18's run, which the plan named, prints no pass time.
+
+### For the close review (named here so none is lost)
+
+- F4's trade at a whole dig is a look no one judged on purpose (above).
+- The hole's black share at a whole dig, over 32 levels before the landing: 1.37 % against
+  Phase 7a's 0.25 %. The bar is asserted at 1.55 %; the rise is not explained.
+- Sequence B's dig 4 reads a ring of 0.17 % at D+0, over the 0.15 % the amendment before
+  asked to be reported.
+- The temporal pass's time was read from a different run than the plan named.
+- ADR-0082's Outcome addition carries F4's clause and "no later pass counts that pixel as
+  cast", with the rejected options of the two amendments before.
+- The backlog entry "`depth` on the present tree flashes slightly more than on 2026-11-26's
+  binary" stays open past the close; 7c's and 7d's two readings are added to it there.
+
+### What this changes elsewhere in the plan
+
+- **Phase 7b4** is done. The stop "session 6's: the architect amends before 7c" is met by
+  this amendment.
+- **Phase 7c** is as restated here; "Phase 7c, cut in two" and Phase 7's items (1) and (2)
+  are its sources and are superseded where they differ. **Phase 7d** gains one reading.
+- **The Implementation log** takes the row for 7b4 here; 7c and 7d from `dev`.
+- **Budgets:** no new figure. The dig frame's longer wait is read in 7d, not bounded.
+
 ## Data shapes
 
 ```rust
@@ -2227,6 +2370,7 @@ No record, block or buffer changes shape: the held record is the store's record 
 | 7b3: the whole dig's white, bounded and removed (F4), steps 1 to 5 | dev | done to step 5; step 6 (7a5's re-reads) owed. The bar (B white over 8 / 16 levels) red at 0.57 / 0.53 %; F4 built: B 0.32 / 0.11 %, A 0.07 / 0.01 %, every bar holds, B's ring 1.21 %, B's black over 32 1.37 % (7a4b 0.01). T3's ring 0.46 / 0.43 % at D5+0 / D5+1 (7a4b 0.06 / 0.02). Deviations: `flicker.rs`, `queue/digs.rs`, `lib.rs`, `pair.wgsl` touched; corner cells with no held record marked; the light pass still casts there. Phase 7b3's section in [the log](logs/0105.md) | `595d211a` |
 | 7b3b: a marked face is no cast pixel, and the bars asserted | dev | done. Step 1: 780 / 768 marked faces counted as cast at D5+0 / D5+1 before, 0 after; whole-chunk group 872 of 917 steady. CPU clause 5 red then green. B before / after: ring D5+0 / D5+1 0.46 / 0.43 %, white over 8 / 16 0.32 / 0.11 %, black over 32 1.37 %, worst ring D5+2 1.21 % (unchanged). B dig 4 0.17 % at D+0. Deviations: the bars in `dig_line::hold::bar_misses` (`flicker.rs` cap); T3 asserts the step-1 count. Phase 7b3b's section in [the log](logs/0105.md) | `e1060437` |
 | 7b3c: the burst on the new binary, and 7a5's re-reads | dev | done (no code; `live/bin/p7b3/flythrough` sha256 `b1c9dc0a...`). Burst, outcome E: lockstep `p7b3` whiter than `p6` over 16 levels at 0.002 % at most, control 0.000 %; thread 0.001 % within the spreads. Reading 18 `down`: 5 m every frame `record 100`, B1 from 2 m, 1 m -4.533. Temporal pass (`dig_timeline`, not Reading 18's run: it prints no pass time) +0.007 ms over the dig frames, three quiet rounds. Gpu tier 40/40 and 35/35, sole 1/1, both soak tests pass. Phase 7b3c's section in [the log](logs/0105.md) | committed with this row |
+| 7b4: the owner's third look, side by side | human | looked 2026-11-27, confirmed (session 9, RTX 3080 Laptop; blind, A `live/bin/p6/flythrough` at `7b1725c2`, B `live/bin/p7b3/flythrough` at `e1060437`, 117 s and 83 s, 80 and 101 carves): "a" flashes less; told which was which, "i guess we can leave it as is, b is acceptable as well". B's `digs whole` 1 on its third line of 30, else 0. The launches were two flights (lamp, the start's queue, the time of day in B); the difference is not explained and is a backlog entry. Ruled 2026-11-27: `depth` as built is the default; next 7c, 7d, the close. Record in [the log](logs/0105.md) | (no commit) |
 | 7c: the default's tests and readings | dev | not started | |
 | 7d: the edit's readings and the tip | dev | not started | |
 
