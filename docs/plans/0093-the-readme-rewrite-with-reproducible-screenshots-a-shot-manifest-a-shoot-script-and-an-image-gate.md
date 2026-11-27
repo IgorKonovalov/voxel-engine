@@ -1739,6 +1739,7 @@ pre-roll** (G2 rejected it; not in the tree).
 | 5d: the three picks by the bars, the dig's flash read (replaces 5c) | dev | done: dig 4, walkers 6 (the spider), castle 2; the dig a still of frame 96 by G3's rule; `walkers` and `dig` `--print` differ from the legend line in `--still-at` too (log) | `7e1a79d2` |
 | 6c: the noise sets and the tolerances | dev | done: 76 renders in four holds (1798 s, the longest 631 s), eleven tolerances, `walkers` unjudged (twice its largest pair over the ceiling; G2 read as covering it); `--check` exit 0; files beyond the list: the image gate's seeded fixture and its README; readings in [the log](logs/0093.md) | `23871869` |
 | 6d: the tip | dev | stopped: the second `--check` exits 1, `lamp-cave` 0.002345 over its 0 (log); Phase 6's owed doctest item (`29fee52d`, the window fence marked `rust ignore` and `readme_example.rs` with it, beyond the item's file) and old images removed (`150ad734`); README commands headless exit 0; no draft; gate tier 1464 passed, 1128 s; readings in [the log](logs/0093.md) | committed with this row (wip) |
+| 6d2: `lamp-cave`'s set read again, the third check | dev | stopped: the third `--check` exits 1, `spider-walk` 0.004395 over its 0.004 (log); thirteen `lamp-cave` renders, two groups (12 and r7), largest pair 0.002345, tolerance 0.005 (G10); `dig` and `chapel` 0; readings in [the log](logs/0093.md) | committed with this row (wip) |
 
 ### Notes
 
