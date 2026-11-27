@@ -330,6 +330,97 @@ A note on Phase 1's readings; no phase changes.
 - **A streamed start's pre-roll waits on a 30-step recheck today** ([Plan 0106](done/0106-no-gate-test-passes-by-a-clock-the-red-dig-test-stepped-by-count-the-sweep-and-a-gate-script.md), Ruling 5): a near chunk found blocked at its first opening is opened 30 steps on however soon it is ready, and 60 or 90 on when that check lands in an upload backlog. [Plan 0109](0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md) Phase 1 removes the wait. Phase 1's readings on a streamed source therefore state, per start, the `pre-roll:` line's steps and the `bake queue:` line's `waiting reach`, and whether their tree holds Plan 0109 Phase 1. Read on a tree without it, a start's seconds are the old rule's and are read again once it lands; the recommendation is to start this lane's streamed readings after it.
 - **What a window start pays for that wait is unmeasured** (Plan 0106 derives about 5 s on the RTX host from headless loaded runs). Phase 1's window-default starts are where it is measured: steps, ms a step, and the step at which the last near chunk was opened.
 
+## Amended 2026-11-27 (architect, Phase 1's rows; the joint sitting)
+
+Phase 1 came back (`e6721462`). Read for this: its section of `docs/plans/logs/0108.md`, the four sheets (`live/p1-sheet-{rtx,renoir}-{forest,hall}.png` in the lane's worktree, untracked), `PreRoll::decide` (`crates/svet-render/src/bake/pre_roll.rs`), the banner's queue row (`run/hud_feed.rs`), and [Plan 0109](0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md)'s Phases 4a and 3b in `docs/plans/logs/0109.md`. Nothing was run. Every figure is the logs': release, pipelines warm, the bake thread on, the host loaded; Phase 1's are medians of three, Phase 4a's one run each.
+
+### Ruling 1: the six deviations
+
+1. **`coarse_chunks` 72, not 0: accepted, the Done-when restated.** The draft misread the field: `PreRollSummary::coarse_chunks` is the coarse pass's cover (the full chunks mirrored at the near chunks' moment), not what the pass did. The claim is that the box ends the pre-roll before the coarse pass holds the frame, and the test's `boxed` with `steps == near step + 1` defends it. Phase 1's second Done-when reads: "`Done` at the step after the near chunks' moment, `boxed`, every near chunk held for the start, `coarse_chunks` the mirrored count".
+2. **An empty near list ends at step 2, not 1: accepted, the Done-when restated.** `decide` boxes on `work_ms - near_ms > box_ms`, and an empty list's near moment is step 1, so the step after it is step 2: the same rule as the clause above, which the draft contradicted by its own arithmetic. One step is 34 to 61 ms on the RTX in `off`'s rows; no change to `pre_roll.rs` is owed for it.
+3. **`run/mod.rs` and `run/tests.rs`: accepted.** Both follow from the phase's own lines (a run that ends before the census still has to print `first frame light:`; the HUD row's literal gained the mode).
+4. **`--frames 8`, not 3: accepted.** Three frames end before the first opening after the pre-roll, so the line the phase asked for would not print. The hall's counts from the stills' runs are accepted as that line's reading.
+5. **`load_stages` not read: accepted.** `--report` needs a path; the `bake queue:` line's work times are the two stages, and `first frame after` is the figure Phase 4 writes to `docs/nfr/07-startup-and-build.md`. Phase 4 names those two lines, not `load_stages`.
+6. **The test at 8.2 to 8.5 s on lavapipe: it stays in the gate, and gains a CPU twin (a fix brief, below).** Both readings are under the 10 s line, loaded; the margin is thin. `decide` is a function of its arguments, so the same claim costs nothing on the CPU. With the twin in place, a reading over the line at the tip marks the GPU test `#[ignore = "soak"]` without the gate losing the claim; without one it stays.
+
+**Fix brief (dev, rides Phase 4's commit; `crates/svet-render/src/bake/pre_roll.rs`, its test module only):** `a_zero_box_ends_the_pre_roll_the_step_after_the_near_moment`, CPU, under 1 s: `decide` with `box_ms` 0, a near list of 2 and a cover of 4 not passed is `Near` until the list settles, `Coarse` on that step, and `Done` on the next with `boxed`, `coarse_chunks` 4 and `steps` the near step plus 1; with an empty near list it is `Done` at step 2 with `near_baked` 0. Broken by hand once (`>` to `>=` turns it red).
+
+### Ruling 2: which arm may become a default
+
+The owner's standing rules bind any change of the start: a stable image first; no waiting for light, with a stable approximation while it bakes; no held camera in a window; a window opens on his word. What Phase 1's stills show under the shorter arms (black unlit patches at frame 0 in the hall under `near`; a black region for about 2 s on the RENOIR; a frame 0 there much brighter than the frame a second later; dark chunk-sized squares under `off`) are stability matters. **They are his to see and judge. Nothing here answers them.**
+
+| arm | first frame (RTX forest / hall; RENOIR forest / hall), ms | standing |
+|---|---|---|
+| `--pre-roll full` (the defaults; Plan 0109's W1) | 6430 / 1646; 6639 / 3505 | the before; stays unless he picks otherwise |
+| `--pre-roll near` | 1445 / 1287; 1560 / 2092 | **candidate** |
+| `--near 0 --coarse 0` (Plan 0109's W3) | 927 to 1074 / 616 to 642; unread on the RENOIR | **candidate, with a caveat he is told**: it also turns the coarse pass off for the whole run, and the coarse pass is the approximation shown while the full light bakes |
+| `--column-wait on` (Plan 0109's W2) | 22078 (forest unread; the default spawn, one run) | **reference, launched only if he asks**: 15 s more than the before for the same words at frame 0 at both spawns read |
+| `--pre-roll off` | 766 / 628; 838 / 891 | **reference, the sheet only** (the plan's own "a reading's arm"); launched only if he asks |
+
+What the sheets cannot say, and the window is the first reading of: the forest's sheet shows no difference between `full` and `near` from 1 s on, but its pose looks 10 degrees down at a slope, where almost everything in view is inside the near shell; the horizon is not in it. The forest's frame 0 is near-white in every arm headless; whether a window shows that is unread, and it is not an arm's doing.
+
+### Ruling 3: one sitting for this plan's Phase 2 and Plan 0109's Phase 4
+
+**Phase 2 as amended** (it replaces Phase 2's What; its Owner skill and Files touched stand, and the verdicts are also written to `docs/plans/logs/0109.md`). Six counted launches on Linux, opened only on the owner's word, the terminal beside the window. No launch passes `--pre-roll-drain` or `--settled-start`; nothing holds the camera; the bake thread is on (the window's default, and the banner's queue row says so).
+
+- **The binary:** a release build of `e6721462`, copied to `live/bin/p2/flythrough` in the plan-0108 lane's worktree before the sitting (the lane's tree moves under Phase 3; if it has moved, build that commit in a detached scratch worktree, memory-capped, outside the lock). It holds both plans' code: `plan-0108` is stacked on `plan-0109` at `7384c862`, and Plan 0109's two later commits (`7384c862`, `327ece91`: Phases 4a and 3b) change `docs/` only, so no merge is needed. It lacks main's v0.79.1 (Plan 0093: stills and README, nothing seen here) and this plan's Phase 3. The runner's header says both.
+- **Before he is called (the orchestrator):** the four sheets open; the runner rehearsed (`REHEARSE=`), which also warms the RTX's pipelines for both sources; one headless `--frames 3` start with launch 6's flags to warm the RENOIR, and proof that a window opens on it (if it does not, launch 6 is dropped, he is told, and the RENOIR sheet stands for it). The mode text of every launch names its arm: launches 2, 4 and 6 read `pre-roll near`; launch 3 reads `near 0` and `coarse 0` in the queue row. A launch whose mode text does not is a finding, not something to talk around.
+- **Launch 0, not counted:** launch 1's line, closed as soon as the world shows. A new binary's first window pays the cold pipelines. In every later launch the `loading:` line's `building the pipelines` reads hundreds of ms; one that reads seconds is cold and is repeated.
+
+| # | launch (`live/bin/p2/flythrough` and) | arm | what he does | expect (headless, RTX unless said) |
+|---|---|---|---|---|
+| 1 | `--source outdoor --spawn forest --hud` | **the before**: the defaults, `pre-roll full` | at the first frame turn once all the way round, slowly (about 10 s); then walk forward 20 s | first frame about 6.4 s |
+| 2 | `--source outdoor --spawn forest --pre-roll near --hud` | `near` | the same | about 1.4 s |
+| 3 | `--source outdoor --spawn forest --near 0 --coarse 0 --hud` | the camera's chunk only; **no coarse pass in this run** | the same | about 0.9 s |
+| 4 | `--source showcase --shot hall --pre-roll near --hud` | `near`, where an unbaked surface is black | stand 5 s watching the pillars and the back wall, then walk to the back wall | about 1.3 s (the before here is 1.6 s, the sheet's top row) |
+| 5 | `--source outdoor --spawn inside --hud` plus the flags of whichever of 2 or 3 he leans to (`--pre-roll near`, or `--near 0 --coarse 0`); the plain line if he leans to the before | his leaning arm in the tunnel | stand 5 s facing out, walk out of the mouth, turn and look back in | the before reads 6.5 s here (Phase 4a); `near` and the camera's chunk are unread at this spawn |
+| 6 | `--adapter RENOIR --profile portable --source showcase --shot hall --pre-roll near --hud` | `near` on the slow adapter: the worst case on the sheets | as 4 | about 2.1 s (the before 3.5 s); the sheet shows a black region over the back for about 2 s |
+
+Launch 6 belongs in the sitting. The tester build takes the window's default (his answer of 2026-11-26), testers run slow adapters, and a still cannot show how a 2 s black region or a bright first frame reads in motion; the sheet alone would be answering for him. The forest on the RENOIR is not launched: its sheet shows the forest's arms alike, as on the RTX.
+
+Not launched unless he asks, each a line the runner offers at the end: **7**, `--source outdoor --spawn forest --column-wait on --hud` (about 22 s to the first frame); **8**, `--pre-roll off` on either scene; **9**, the hall's before (`--source showcase --shot hall --hud`); the default spawn facing the cave mouth (`--source outdoor --hud` with any arm), which the forest stands for here.
+
+**The terminal lines he is pointed at, each launch:** `loading: the longest step of each stage` (pipelines warm), the two `pre-roll:` lines, `first frame after N ms`, and `first frame light:` (the chunks in view still waiting). In the window: the banner's queue row.
+
+**The questions, in ready words** (asked after the launch named; a stability answer is his alone):
+
+- **After 3, the forest:** "Which start do you take outdoors: (a) today's, about 6 s; (b) `near`, about 1.5 s, the surroundings' light landing in view; (c) the camera's chunk only, under 1 s, with no coarse light while the rest bakes; or (d) between: today's with a shorter wait, say how many seconds?"
+- **After 1, once:** "Did the first frame flash white before the picture settled?" (seen in every arm headless; if he sees it in the before it is no arm's fault and goes to `docs/backlog.md` with the still).
+- **After 4 and 6, the hall:** "Under `near` the hall opens with black patches (RTX: gone within a second; the slow adapter: a black region for about 2 s) for a start 0.4 s and 1.4 s sooner. (a) acceptable; (b) not acceptable in a bounded scene: the shorter start only where the world is streamed; (c) not acceptable anywhere."
+- **After 5, the tunnel:** "Does the tunnel change your answer for outdoors?"
+- **At the end:** "Do you want final light before the first frame at the cost of about 15 s more (launch 7)? Yes shows it; no closes that arm."
+
+**Done when** (Phase 2's, restated): the owner's words on each question are in both plans' logs, dated, with the launch each was said at and any still he asked for; and they name one row of Ruling 4's table.
+
+### Ruling 4: what each answer starts
+
+The forest answer and the hall answer combine into one row. Each row is launchable as written; none needs a further ruling.
+
+| he says | this plan | Plan 0109 |
+|---|---|---|
+| (a) today's stays, hall (c) | **Phase 4** is the nfr lines and the fix brief alone; the setting stays, default `full` | W1: no Phase 5; 6a, 6b |
+| (b) `near`, hall (a) | **Phase 4** as written: `near` the default in a window, `full` under `--headless`, the tester's scenes the same | W1: no Phase 5; 6a, 6b |
+| (b) `near`, hall (b) | **Phase 4, restated here:** in a window the default is `near` where the source is streamed (`cave`, `outdoor`) and `full` where it is bounded (`level`, `showcase`); `--headless` keeps `full`; the CLI test asserts the four sources' defaults and the banner rows | W1: no Phase 5; 6a, 6b |
+| (d) between, N seconds | **Phase 2b (dev), then Phase 4:** `--pre-roll` also takes a number of seconds, 0.5 to 5 (the coarse box; `full` is 5, `near` 0; the row reads `pre-roll N s`), CLI test for the range and the row; Phase 1's starts repeated for N only on both adapters and the forest (three starts, a still at frame 0 and 1 s). Phase 4 then sets N as the window's default, by the hall answer as in the two rows above. No second sitting unless he asks: he named the number | W1: no Phase 5; 6a, 6b |
+| (c) the camera's chunk only | **Phase 4** is the nfr lines and the fix brief; `--pre-roll` stays `full` (with `--coarse 0` there is no coarse stage for it to box, so it is inert there) | **Phase 5, W3 form** (its "Amended 2026-11-27, third") |
+| yes to launch 7, and he picks it | Phase 4 as its row above says for his `--pre-roll` answer | **Phase 5, W2 form** (the same section) |
+
+**Where two picks meet:**
+
+- **`near` with W3's settings.** `--near 0 --coarse 0` already ends the pre-roll at its one chunk, so adding `--pre-roll near` changes nothing; a pick of (c) is W3 alone. The combination that is not on the table as launched is **the camera's chunk only with the coarse pass kept** (`--near 0 --pre-roll near`, `--coarse` left at 256): it would start about as soon as W3 and keep the approximation. It is unread and unseen. If he asks for it (in words such as "(c), but keep the coarse light"), it is **not shipped from this sitting**: Phase 2b reads it first (Phase 1's starts and frame 0 and 1 s stills for that line, both adapters, both scenes, and the in-view wait after the first frame from the `bake queue view:` line), then a second look of two launches (forest and hall), then Phase 4.
+- **`near` with W2** (`--column-wait on --pre-roll near`): unread; `near` can save the 5 s box of W2's 22 s. One start of it is read in Plan 0109's Phase 5 before both defaults ship together.
+- **Any default that moves** states, in Phase 4's nfr lines, the in-view wait after the first frame beside the time to it, on both adapters (the `bake queue view:` line, headless, the thread on): `docs/backlog.md`'s note that a second saved before the first frame may cost more after it is answered by that figure, as a reading; his eye was the gate.
+
+### Ruling 5: Phase 3b's remainder and the notes' first step
+
+Neither this plan's nor Plan 0109's nor Plan 0107's: a `docs/backlog.md` entry, "The mirror's notes for the bake's shadow: a whole read on the render thread", written with this amendment. This plan reads seconds to the first frame in release, where one 140 ms step (dev profile, lavapipe host) is inside the spread; Plan 0109 says it does not fix the step's cost; Plan 0107 moves the slot image's packing, not the notes. The entry names Plan 0107 Phase 1's re-read as where the notes are first timed in release and in motion.
+
+### What proceeds now
+
+Phase 3 runs on (it does not wait for the sitting and the sitting does not wait for it). The orchestrator builds the binary, rehearses, warms, and pings the owner; the window opens on his word. After his answers: this plan's Phase 2b or Phase 4 by Ruling 4's row, and Plan 0109's Phase 5 or 6a by the same row.
+
+**Recorded, the recommended option taken** (none a stability question): the six deviations (Ruling 1); `off` and `--column-wait on` shown only on ask; one launch on the RENOIR; the bounded-scene and between answers pre-written. **Left to the owner:** every question of Ruling 3.
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
