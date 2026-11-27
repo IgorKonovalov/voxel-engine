@@ -1,4 +1,4 @@
-# svet
+# Svet
 
 A Rust voxel engine for worlds you dig, ray-marched on the GPU.
 
@@ -10,7 +10,7 @@ A Rust voxel engine for worlds you dig, ray-marched on the GPU.
 
 <sub>The forest on the hills at 18:10, from under the trees.</sub>
 
-svet streams worlds of small voxels that you can dig, fill and build on. Compute shaders
+Svet streams worlds of small voxels that you can dig, fill and build on. Compute shaders
 ray-march the voxels directly, with no meshes. The name is Slavic: *svet* means "light", and
 also "the world".
 
