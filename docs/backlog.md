@@ -1504,6 +1504,15 @@ From [Plan 0093](plans/0093-the-readme-rewrite-with-reproducible-screenshots-a-s
 - **What it would take:** the same shot with the pre-roll ended by its coarse pass (Plan 0106's stepped pre-roll) under load and idle, the patch read in each; if it still splits, the queue's record for the crown's chunk in both states.
 - **Pick it up when:** Plan 0093 reads the hero's set again before its final shoot (its B3 note), or a still or golden taken after a settled start turns out to depend on load.
 
+### A settled start ends in more than one light state: the lamp cave, a second case (2026-11-27)
+
+From [Plan 0093](plans/0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) Phase 6d (its section "Amended 2026-11-27 (architect, a zero set refuted)", G9; readings in `docs/plans/logs/0093.md`). Six `--settled-start` renders of the lamp-lit cave still on the RTX 3080 Laptop were identical as PNG; a seventh by the same command, under a higher load, differs in scattered pixels at voxel edges over the lamp pool (53 of 22600 cells past 4 levels, the largest 10.56; largest channel difference 40). The entry above is the same finding outdoors.
+
+- **What the logs say:** every run prints the same `settled:` chunk counts. The queue steps to the settle's end range from 3023 to 19562 inside the identical six, so the step count names nothing. The first `bake queue:` line after the settle prints `baked` 5380, 5300 and 5050 (four times) in the six and 5370 in the seventh; the pre-roll's coarse pass, ended by its 5 s wall box, left 1754 to 2543 coarse chunks in the six and 2564 in the seventh. The cave's dig still settled at 5318 baked once against 5074 with an identical PNG; the chapel still's two baked counts (5636, 5062) are two PNGs with no cell past the level. Not attributed to a chunk, a record or a pass.
+- **Why it matters:** a still or a golden taken after a settled start is claimed to be one picture per command. It is one picture most of the time.
+- **What it would take:** the lamp-cave entry rendered some twenty times with the pre-roll ended by its coarse pass (the stepped pre-roll) and as it is, the PNGs grouped; if the groups remain, the light records of the chunks under the differing pixels in both states, and whether the settle's end should wait on the light store and not only on chunks and jobs.
+- **Pick it up when:** the stepped pre-roll goes onto the README's entries (the entry below), or a plan asks a golden image of a settled start to be bit-identical.
+
 ### The README's images after the unattended close (owner, 2026-11-26)
 
 From [Plan 0093](plans/0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) (its section "Amended 2026-11-26, late evening", G1 to G8; readings in `docs/plans/logs/0093.md`). The owner: "all good, just use what we have as images, merge and push. no need to wait for me. and tag". The plan closed without his confirmation of the re-shoots, without Plan 0105 and without Plan 0106's `--pre-roll-stepped`. What that left, none of it blocking:
@@ -1513,6 +1522,10 @@ From [Plan 0093](plans/0093-the-readme-rewrite-with-reproducible-screenshots-a-s
 - **The dig after Plan 0105.** The `dig` entry was shot on the dig before Plan 0105's default (a still of the settled dig instead of the loop if the log's Phase 5d read a flash). **Pick it up when** Plan 0105 is in main: `node scripts/shoot-images.mjs --only dig,skylight`, the loop back in place of a still, and the two entries' noise sets read again.
 - **The stepped pre-roll after Plan 0106.** The `flythrough` entries shoot on `--settled-start` with the pre-roll's wall box, so the hero may hold the patch of the entry above ("A settled start's still differs in one patch"). **Pick it up when** the flag is in main: the entries take it, `validate` asks for it, and the hero's set and every entry marked `unjudged` in `docs/images/shots.json` (`node scripts/check-images.mjs` names them) are read again.
 - **A castle under the sun.** His "castle 2, maybe its better under sunlight". The castle stands in the streamed cave; `--vox` is ignored on `--source outdoor`. A castle placed on a hill is code and scene work, a plan of its own if he wants the shot.
+
+### The old hero example still writes `docs/images/hero.png` by default (2026-11-27)
+
+From [Plan 0093](plans/0093-the-readme-rewrite-with-reproducible-screenshots-a-shot-manifest-a-shoot-script-and-an-image-gate.md) (G11). `apps/flythrough/examples/hero.rs`, `out_path`: without `--out` it writes `docs/images/hero.png`, a file the plan removed; the README's hero is now the manifest's `hero` entry, shot by the fly-through. A file written there is refused by `node scripts/check-images.mjs` (an image the manifest neither names nor freezes), so the default cannot slip into a commit unseen. **What it would take:** either the default moved under `target/` (one line and the example's usage comment), or the example retired if nothing reads its shots any more (`--shot all` and `--carve` have readers in older plans' logs; check before removing). **Pick it up when** the example is next edited, or at the next tidy of `apps/flythrough/examples/`.
 
 ## Ideas from Bonsai
 
