@@ -19,6 +19,7 @@ import {
   parseCli,
   printLines,
   readManifest,
+  relPosix,
   REQUIRED,
   ROOT,
   validate,
@@ -64,11 +65,19 @@ test("the manifest names every image file under docs/images, as an entry or froz
   const dir = path.join(ROOT, "docs/images");
   const walk = (d) =>
     fs.readdirSync(d, { withFileTypes: true }).flatMap((x) =>
-      x.isDirectory() ? walk(path.join(d, x.name)) : [path.relative(dir, path.join(d, x.name))],
+      x.isDirectory() ? walk(path.join(d, x.name)) : [relPosix(dir, path.join(d, x.name))],
     );
   for (const f of walk(dir).filter((f) => /\.(png|gif|webp|jpe?g|svg)$/.test(f))) {
     assert.ok(named.has(f), `${f} is in the manifest`);
   }
+});
+
+test("a relative path is joined with / on Windows too", () => {
+  const w = path.win32;
+  const dir = w.join("D:\\a\\svet", "docs", "images");
+  assert.equal(relPosix(dir, w.join(dir, "light", "hall-diff-2048-vs-8192-x8.png"), w), "light/hall-diff-2048-vs-8192-x8.png");
+  assert.equal(relPosix(w.join("D:\\a\\svet", "target"), w.join(dir, "a.webp"), w), "../docs/images/a.webp");
+  assert.equal(relPosix("/r/docs/images", "/r/docs/images/light/x.png", path.posix), "light/x.png");
 });
 
 test("validate names a missing field, a bad range and a flag the script adds", () => {

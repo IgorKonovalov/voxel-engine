@@ -6,6 +6,8 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+- **Fixed (harness): `scripts/shoot-images.test.mjs` passes on Windows; the relative paths `scripts/shoot-images.mjs` makes (its test's walk of `docs/images/`, the contact sheet, the index's hrefs, a render's log) are joined with `/` on every platform (`relPosix`), so a walked `light\x.png` matches the manifest's `light/x.png` (the images-windows chore).**
+
 ## [0.79.1] - 2026-11-27
 
 Plan 0093 (a patch bump: docs and testbed tooling, no engine crate's public API changed; the Plan 0012 precedent, and the owner asked for a tag; no ADR). **The README is rewritten around images the engine renders.**
