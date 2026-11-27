@@ -565,6 +565,23 @@ impl Drop for Run {
         if let Some(line) = self.hud.run.line() {
             println!("{line}");
         }
+        if let Some(s) = self.stream.as_ref() {
+            let rss =
+                crate::app::peak_rss_bytes().map_or_else(|| "n/a".to_owned(), |b| format!("{b} B"));
+            println!(
+                "{}; process peak RSS {rss}",
+                s.tally.residency_line(&s.latency_ms)
+            );
+            println!(
+                "{}",
+                s.tally.images_line(
+                    s.images.packing(),
+                    s.images.stats(),
+                    svet_render::DEFAULT_IMAGE_CAP_BYTES,
+                    self.queue.stats.as_ref()
+                )
+            );
+        }
         if self.queue.first_light.take().is_some() {
             println!(
                 "first frame light: not read (no opening after the pre-roll by the run's end)"

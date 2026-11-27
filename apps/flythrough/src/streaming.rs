@@ -176,6 +176,115 @@ pub(crate) struct Stream {
     /// autopilot and the HUD read after it (and the autopilot's settle, before it, a frame
     /// late). `None` before the first step.
     pub(crate) stats: Option<svet_world::StreamStats>,
+    /// The exit's `streaming:` lines' readings.
+    pub(crate) tally: ExitTally,
+}
+
+/// The seconds after the first world frame at which [`ExitTally`] reads the fill.
+pub(crate) const FILL_AT_S: [f64; 2] = [5.0, 15.0];
+
+/// What the exit's `streaming:` lines read beyond the `frames:` line: when the first world
+/// frame ran (milliseconds since start) and how many latencies `Stream::latency_ms` held
+/// then, the chunks resident full in the world and mirrored full at [`FILL_AT_S`] after it,
+/// and the syncs' slot-image counters summed (used, edited, other flags, field).
+#[derive(Debug, Default)]
+pub(crate) struct ExitTally {
+    pub(crate) first_ms: Option<f64>,
+    pub(crate) latency_from: usize,
+    pub(crate) fill: [Option<[u64; 2]>; 2],
+    pub(crate) images: [u64; 4],
+}
+
+impl ExitTally {
+    pub(crate) fn note_sync(&mut self, s: &svet_render::SyncStats) {
+        let add = [
+            s.images_used,
+            s.images_edited,
+            s.images_other_flags,
+            s.images_field,
+        ];
+        for (t, a) in self.images.iter_mut().zip(add) {
+            *t += a;
+        }
+    }
+
+    /// The fill sample due at `now_ms` (the first unread of [`FILL_AT_S`] whose time has
+    /// come), `None` before the first frame or with none due.
+    pub(crate) fn fill_due(&self, now_ms: f64) -> Option<usize> {
+        let first = self.first_ms?;
+        (0..FILL_AT_S.len())
+            .find(|&k| self.fill[k].is_none() && now_ms - first >= FILL_AT_S[k] * 1e3)
+    }
+
+    /// The residency line: the wanted-to-mirrored latency of the chunks mirrored full after
+    /// the first frame and since the start (p95 and max), and the fill at [`FILL_AT_S`].
+    pub(crate) fn residency_line(&self, latency_ms: &[f64]) -> String {
+        let lat = |v: &[f64]| {
+            if v.is_empty() {
+                return "n/a over 0 chunks".to_owned();
+            }
+            let mut v = v.to_vec();
+            format!(
+                "p95 {:.0} ms, max {:.0} ms over {} chunks",
+                crate::percentile(&mut v, 95.0),
+                crate::percentile(&mut v, 100.0),
+                v.len()
+            )
+        };
+        let after = latency_ms.get(self.latency_from..).unwrap_or(&[]);
+        let fill = FILL_AT_S
+            .iter()
+            .zip(self.fill)
+            .map(|(s, f)| match f {
+                Some([full, mirrored]) => format!("at {s:.0} s {full} full, {mirrored} mirrored"),
+                None => format!("at {s:.0} s n/a"),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "streaming: residency latency wanted to mirrored after the first frame {}, since the start {}; fill after the first frame {fill}",
+            lat(after),
+            lat(latency_ms)
+        )
+    }
+
+    /// The slot-image line: the packing, the hook's counters `hook` against its `cap`, the
+    /// syncs' summed counters, and the stream workers' time a chunk for the image (over the
+    /// images made) and, from the live queue's `queue` counters, for the masks and the verdict.
+    pub(crate) fn images_line(
+        &self,
+        packing: svet_render::Packing,
+        hook: svet_render::ImageHookStats,
+        cap: usize,
+        queue: Option<&svet_render::QueueStats>,
+    ) -> String {
+        let [used, edited, flags, field] = self.images;
+        let mean = |ns: u64, n: u64| ns as f64 / n.max(1) as f64 / 1e3;
+        let masks = queue.map_or_else(
+            || "masks n/a".to_owned(),
+            |q| {
+                format!(
+                    "masks mean {:.1} us, verdict mean {:.1} us over {} chunks",
+                    mean(q.hook_ns, q.hook_chunks),
+                    mean(q.seal_ns, q.hook_chunks),
+                    q.hook_chunks
+                )
+            },
+        );
+        let packing = match packing {
+            svet_render::Packing::Inline => "inline",
+            svet_render::Packing::Workers => "workers",
+        };
+        format!(
+            "streaming: mirror images ({packing}): made {}, used {used}, refused by the cap {}, dropped as edited {edited}, other flags {flags}, field {field}; held peak {} B of the cap {cap} B (now {} B); the workers a chunk: image mean {:.1} us over {} images, {masks}",
+            hook.made,
+            hook.refused,
+            hook.peak_bytes,
+            hook.held_bytes,
+            mean(hook.ns, hook.made),
+            hook.made
+        )
+    }
 }
 
 impl Stream {
@@ -204,6 +313,7 @@ impl Stream {
             workers,
             images,
             stats: None,
+            tally: ExitTally::default(),
         }
     }
 
@@ -230,6 +340,13 @@ impl Stream {
                 true
             }
         });
+    }
+
+    /// Marks the first world frame drawn at `at_ms` since start: the fill's clock starts there
+    /// and the latencies held so far are the start's.
+    pub(crate) fn mark_first_frame(&mut self, at_ms: f64) {
+        self.tally.first_ms = Some(at_ms);
+        self.tally.latency_from = self.latency_ms.len();
     }
 }
 
@@ -346,6 +463,59 @@ mod tests {
             (d.streak, d.longest),
             (3, 3),
             "the open streak is the longest"
+        );
+    }
+
+    /// The exit's `streaming:` lines: no fill is due before the first frame; after it at
+    /// 1000 ms the 5 s sample falls due at 6000 ms and not before, the 15 s one at 16000 ms;
+    /// the latency splits at the first frame's index; the syncs' image counters sum; the
+    /// workers' means divide by the images made and the hook's chunks.
+    #[test]
+    fn the_streaming_lines_name_the_fill_latency_and_the_image_counters() {
+        let mut t = ExitTally::default();
+        assert_eq!(t.fill_due(1e6), None, "no fill before the first frame");
+        t.first_ms = Some(1000.0);
+        t.latency_from = 2;
+        assert_eq!(t.fill_due(5999.0), None);
+        assert_eq!(t.fill_due(6000.0), Some(0));
+        t.fill[0] = Some([120, 100]);
+        assert_eq!(t.fill_due(15_999.0), None);
+        assert_eq!(t.fill_due(16_000.0), Some(1));
+        let line = t.residency_line(&[900.0, 800.0, 10.0, 30.0, 20.0]);
+        assert_eq!(
+            line,
+            "streaming: residency latency wanted to mirrored after the first frame p95 30 ms, max 30 ms over 3 chunks, since the start p95 900 ms, max 900 ms over 5 chunks; fill after the first frame at 5 s 120 full, 100 mirrored, at 15 s n/a"
+        );
+        for k in 0..2u64 {
+            t.note_sync(&svet_render::SyncStats {
+                images_used: 5 + k,
+                images_edited: 1,
+                images_other_flags: k,
+                images_field: 0,
+                ..Default::default()
+            });
+        }
+        assert_eq!(t.images, [11, 2, 1, 0]);
+        let hook = svet_render::ImageHookStats {
+            made: 4,
+            refused: 3,
+            held_bytes: 0,
+            peak_bytes: 4096,
+            ns: 8_000,
+        };
+        let queue = svet_render::QueueStats {
+            hook_chunks: 10,
+            hook_ns: 1_000_000,
+            seal_ns: 50_000,
+            ..Default::default()
+        };
+        assert_eq!(
+            t.images_line(svet_render::Packing::Workers, hook, 65_536, Some(&queue)),
+            "streaming: mirror images (workers): made 4, used 11, refused by the cap 3, dropped as edited 2, other flags 1, field 0; held peak 4096 B of the cap 65536 B (now 0 B); the workers a chunk: image mean 2.0 us over 4 images, masks mean 100.0 us, verdict mean 5.0 us over 10 chunks"
+        );
+        assert!(
+            t.images_line(svet_render::Packing::Inline, hook, 1, None)
+                .contains("(inline)")
         );
     }
 

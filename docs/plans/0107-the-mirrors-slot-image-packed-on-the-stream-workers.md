@@ -1,6 +1,6 @@
 # 0107: The mirror's slot image packed on the stream workers
 
-> **Status:** in-progress (Phases 1-4 done; Phase 5 next). Approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
+> **Status:** in-progress (Phases 1-5 done; Phase 5's no-gain stop fired, the default stays `inline`; the architect reads it before Phase 6). Approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
 > [the review of 2026-11-26](../reviews/2026-11-26-work-off-the-render-thread.md) on the owner's
 > "all recommended" (its question 1: draft now, Phase 1 the re-read), with no further interview;
 > the guesses and the questions left are under "Risks & open questions", each with a recommended
@@ -496,7 +496,7 @@ The owner: "go on both, all recommended, do not start until these lanes finish".
 | 3: the mirror takes an image, behind a setting | dev | done; gpu readings loaded | 68513d6e |
 | (merge of main v0.82.0, no conflicts) | dev | done | 344ec173 |
 | 4: the sizes and the emitters from the image | dev | done; gpu readings loaded | committed with this row |
-| 5: the readings (tail, workers, held bytes) | dev | not started | |
+| 5: the readings (tail, workers, held bytes) | dev | done; the no-gain stop fires (sync p99 -14.4 % cave, -15.1 % forest); quiet at each hold | committed with this row |
 | 6: the wanted set kept in order | dev | not started | |
 | 7: the thread counts in one place | dev | not started | |
 | 8: the owner's window (only if 5 did not stop the default) | human | not started | |
@@ -538,6 +538,19 @@ each. Empty is fine.)_
 - Phase 4: a record from an image counts no `light_bricks`, `light_emitter_bricks` or
   `rescan_inserts`; with `debug_assertions` its light lists are checked against a scan.
 - Phase 4: the gpu runs were taken loaded (load1 5.3 to 19.2).
+- Phase 5: the two new exit lines (`streaming: residency latency ...`, `streaming: mirror
+  images ...`) are in `streaming.rs` and `run/mod.rs`, not `report.rs`; `run.json` does not
+  carry them. The fill is read as chunks resident full and mirrored full, at 5 s and 15 s.
+- Phase 5: the image counter `used` sums world frames' syncs only, not the pre-roll's.
+- Phase 5: the readings ran on a binary whose first-frame mark sat in `wait_first_frame`; the
+  committed mark is after frame 0's `draw` (clippy's `too_many_lines`); not re-read.
+- Phase 5: (c)'s fresh forest start is the forest glide with `--pre-roll near`.
+- Phase 5: frames over 33 ms for the forest runs come from the diag submit deltas (1 ms grain),
+  as the forest glide writes no `run.json`.
+- Phase 5: the stand-in cave's latency since the start moved +110 % (1738 to 3654 ms p95)
+  while its latency after the first frame held (144 / 144); the stand-in fresh forest's
+  workers arm read slower frames (wall p50 22.3 against 15.5 ms, march GPU p50 15.1 against
+  10.1 ms), one run an arm.
 
 ### Close triggers
 
