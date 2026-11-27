@@ -688,14 +688,14 @@ impl PreRollMode {
     }
 }
 
-/// `--pre-roll`'s default: `Near` in a window over a streamed world (the cave, the outdoor
-/// hills), where the coarse pass then runs behind the first frame; `Full` in a window over a
-/// bounded one (the level, the showcase, a room or a rig), where an unbaked surface shows
-/// black; `Full` under `--headless`, so the goldens and the headless readings start as they
-/// did; and `Full` with `--pre-roll-drain`, which holds the camera to bake longer and refuses
-/// a shorter pre-roll. The owner's pick of 2026-11-27 (Plan 0108 Phase 2).
+/// `--pre-roll`'s default: `Near` in a window over the outdoor hills, where the coarse pass
+/// then runs behind the first frame; `Full` in a window over every other source, the streamed
+/// cave as well as the bounded ones (the level, the showcase, a room or a rig), where an
+/// unbaked surface shows black; `Full` under `--headless`, so the goldens and the headless
+/// readings start as they did; and `Full` with `--pre-roll-drain`, which holds the camera to
+/// bake longer and refuses a shorter pre-roll.
 pub(crate) fn default_pre_roll(headless: bool, mode: RunMode, drain: bool) -> PreRollMode {
-    if !headless && !drain && mode.streams() {
+    if !headless && !drain && mode.is_outdoor() {
         PreRollMode::Near
     } else {
         PreRollMode::Full
