@@ -675,7 +675,7 @@ fn the_profiles_keep_the_key_defaults() {
 #[test]
 fn eye_places_the_outdoor_camera() {
     let r = parse_args_from(argv(&["--source", "outdoor"])).unwrap();
-    assert_eq!(r.outdoor.eye, None);
+    assert_eq!(r.eye, None);
     let r = parse_args_from(argv(&[
         "--source",
         "outdoor",

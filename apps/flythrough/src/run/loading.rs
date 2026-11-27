@@ -42,6 +42,7 @@ pub(crate) const RESIDENCY: &str = "streaming the near chunks";
 pub(crate) const NEAR: &str = "lighting the near chunks";
 pub(crate) const COARSE: &str = "lighting the coarse pass";
 pub(crate) const FIELD: &str = "filling the field";
+pub(crate) const SETTLE: &str = "settling the world";
 
 /// The stages' weights: their share of the loading time on the RTX 3080 Laptop, headless at
 /// 1280 x 720: the streamed cave's and the castle's near residency about 5 % and the
@@ -174,6 +175,8 @@ pub(crate) enum Stage {
     Upload(Upload),
     Residency(Residency),
     PreRoll(Box<PreRollRun>),
+    /// `--settled-start`'s wait for full residency and an idle queue ([`crate::run::settle`]).
+    Settle(Box<crate::run::settle::Settle>),
     Field,
     Done,
 }
@@ -246,6 +249,7 @@ impl Loading {
                 PreRollState::Near { .. } => NEAR,
                 _ => COARSE,
             },
+            Stage::Settle(_) => SETTLE,
             Stage::Field => FIELD,
             Stage::Done => "done",
         }
@@ -261,9 +265,12 @@ impl Loading {
                 PreRollState::Coarse { passed, of } => format!("{passed} / {of} chunks"),
                 PreRollState::Done(s) => format!("{} chunks", s.baked),
             },
-            Stage::Build(_) | Stage::Pipelines(_) | Stage::Arms(_) | Stage::Field | Stage::Done => {
-                String::new()
-            }
+            Stage::Build(_)
+            | Stage::Pipelines(_)
+            | Stage::Arms(_)
+            | Stage::Settle(_)
+            | Stage::Field
+            | Stage::Done => String::new(),
         }
     }
 
@@ -460,6 +467,18 @@ impl Run {
             loading.note_step(name, worked.max(ms_since(t)));
             return;
         }
+        // The settle steps the run's own stream and queue, which read the run's objects.
+        if let Stage::Settle(s) = &mut loading.stage {
+            if self.settle_step(gpu, s) {
+                loading.stage = if self.failure.is_some() {
+                    Stage::Done
+                } else {
+                    Stage::Field
+                };
+            }
+            loading.note_step(name, ms_since(t));
+            return;
+        }
         let Some(mut gfx) = self.gfx.take() else {
             loading.stage = Stage::Done;
             return;
@@ -467,7 +486,7 @@ impl Run {
         let stage = std::mem::replace(&mut loading.stage, Stage::Done);
         loading.stage = match stage {
             // Handled above, before the run's objects are taken.
-            Stage::Build(_) => Stage::Done,
+            Stage::Build(_) | Stage::Settle(_) => Stage::Done,
             Stage::Pipelines(next) => {
                 // A walker may be placed on any frame, so the entity pipelines are built
                 // before the first world frame, and the frame that draws the first part
@@ -826,7 +845,11 @@ impl Run {
                 l.progress.enter(COARSE);
                 l.progress.next();
                 diag(format_args!("pre-roll done"));
-                Stage::Field
+                if self.args.still.settled {
+                    Stage::Settle(Box::default())
+                } else {
+                    Stage::Field
+                }
             }
         }
     }

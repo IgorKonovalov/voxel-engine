@@ -39,6 +39,7 @@ pub(crate) mod loading;
 pub(crate) mod pilot;
 pub(crate) mod profile;
 pub(crate) mod queue;
+pub(crate) mod settle;
 pub(crate) mod still;
 pub(crate) mod switch;
 pub(crate) mod tour;

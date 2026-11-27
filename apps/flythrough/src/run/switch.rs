@@ -41,12 +41,14 @@ pub(crate) fn argv_for(argv: &[String], mode: crate::cli::RunMode) -> Vec<String
 /// The arguments of the first source after `args.mode` (in `--source`'s order) whose flags
 /// parse beside the run's others; a source that refuses one prints why and the next is
 /// tried. `--frames` and `--switch-at` count on from `frames_run`, the frames the run drew.
+/// `--eye` is the first source's pose, so the next source starts at its own.
 pub(crate) fn switched_args(args: &Args, frames_run: u32) -> Option<Args> {
     let mut mode = args.mode;
     for _ in 0..SOURCES.len() - 1 {
         mode = next_source(mode);
         match parse_args_from(argv_for(&args.argv, mode)) {
             Ok(mut a) => {
+                a.eye = None;
                 a.frames = args.frames.map(|n| n.saturating_sub(frames_run));
                 a.spawn_hash |= !args.switch_at.is_empty();
                 a.switch_at = args
@@ -55,6 +57,7 @@ pub(crate) fn switched_args(args: &Args, frames_run: u32) -> Option<Args> {
                     .filter(|&&f| f > frames_run)
                     .map(|f| f - frames_run)
                     .collect();
+                a.still.at = count_on(&args.still.at, frames_run);
                 return Some(a);
             }
             Err(e) => println!(
@@ -64,6 +67,14 @@ pub(crate) fn switched_args(args: &Args, frames_run: u32) -> Option<Args> {
         }
     }
     None
+}
+
+/// `--still-at`'s frames still to come after `frames_run`, counted from the next run's first.
+fn count_on(at: &[u32], frames_run: u32) -> Vec<u32> {
+    at.iter()
+        .filter(|&&f| f >= frames_run)
+        .map(|f| f - frames_run)
+        .collect()
 }
 
 /// The flags of `argv` with `--trees` dropped and `--trees NAME` of `trees` appended.
@@ -95,6 +106,7 @@ pub(crate) fn retreed_args(args: &Args, frames_run: u32) -> Option<Args> {
                 .filter(|&&f| f > frames_run)
                 .map(|f| f - frames_run)
                 .collect();
+            a.still.at = count_on(&args.still.at, frames_run);
             Some(a)
         }
         Err(e) => {

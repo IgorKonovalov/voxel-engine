@@ -6,6 +6,22 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+- **Fixed (harness): `scripts/shoot-images.test.mjs` passes on Windows; the relative paths `scripts/shoot-images.mjs` makes (its test's walk of `docs/images/`, the contact sheet, the index's hrefs, a render's log) are joined with `/` on every platform (`relPosix`), so a walked `light\x.png` matches the manifest's `light/x.png` (the images-windows chore).**
+- **Changed (docs): the README's `dig` image is the owner's pick, the same pose with the headlamp on** (the near-black lamp-off frame of 0.79.1 stays in the manifest as candidate 4); still a still, its noise set and tolerance read again (the readme-dig chore).
+- **Changed (docs): the README's `walkers` caption, alt text and manifest `shows` say what the loop shows, a spider standing and turning on its legs among the crystals (one second slowed to three), not a wander; the image and its `unjudged` state stay, the `hud` image stays as it is (the owner's rulings, 2026-11-27; `docs/backlog.md`).**
+
+## [0.79.1] - 2026-11-27
+
+Plan 0093 (a patch bump: docs and testbed tooling, no engine crate's public API changed; the Plan 0012 precedent, and the owner asked for a tag; no ADR). **The README is rewritten around images the engine renders.**
+
+- **Changed (docs):** `README.md` opens with a tagline, the hero still, three short paragraphs with one measured figure and a status line, then Quickstart (the release archive first, three `cargo run` lines and eight keys), Use it as a library (a `svet-world` example and the minimal window), Features in nine groups each closed by an image and a command to try it, a Gallery, a Wishlist and the licence. The layout table, building, the examples, the checks and how the project is run move to the new `docs/development.md`. `docs/entities.md` shows the two rig loops as WebP and points at the manifest for them.
+- **Added (docs):** twelve images under `docs/images/`, each a row of `docs/images/shots.json` and rendered by `node scripts/shoot-images.mjs`.
+- **Added (fly-through):** `--still-at F,..` and `--still-dir DIR` (a PNG of each listed frame, without the HUD unless `--hud`), `--eye X,Y,Z,YAW,PITCH` on every source (refused with `--path`), and `--settled-start` (headless only: frame 0 waits for full residency and an idle light queue).
+- **Added (`svet-app`):** the example `minimal_window` (a window on a small carved world with the renderer's Floor profile), run headless on the software adapter by `tests/gpu_minimal_window.rs`; the README quotes a span of it, held byte-equal by `tests/readme_example.rs`. The README's `svet-world` example runs as a doctest (`cargo test --doc -p svet-world`).
+- **Added (harness):** `scripts/shoot-images.mjs` (shoots every manifest row headless under the perf lock; `--check` compares a fresh render with the committed file by the share of 8 px cells whose mean moved over 4 levels, against a tolerance read from the entry's own renders; `--candidates` makes contact sheets) and `scripts/check-images.mjs` in CI's doc gates (size caps, a 5 MB total for the README, every image a manifest row or frozen, every reference with alt text), with a seeded fixture. `scripts/check-doc-links.mjs` validates `#fragment` links.
+- **Removed (docs):** `docs/images/hero.png`, `spider-walk.gif` and `walker-walk.gif`; their WebP successors are manifest rows.
+- **Disclosed:** the plan closed on the owner's word without his second look at the re-shot images. The `dig` image is a still and is near black; the `walkers` loop has no judged tolerance (its own noise is over a third of its nearest wrong picture, so `--check` renders it and counts nothing); a settled start can end in more than one light state, so three checks in the last phases read a render outside an entry's set before the tolerances were read from every render. Each is in `docs/backlog.md` ("The README's images after the unattended close" and the entries beside it).
+
 ## [0.79.0] - 2026-11-26
 
 Plan 0106 (a minor bump: new public items on `svet-render`, none removed; no ADR). **No gate test passes by a clock.** CI's push run of the Plan 0099 merge failed a test that counted frames paced by a sleep beside the bake thread. A sweep of the gate tier and then of the soak tier classed every test that sleeps, polls, counts beside a second thread or bounds a duration; each now waits for its worker, counts what the code counts, or compares a clock only with itself, with its assertions as written. A script in CI keeps the class out.

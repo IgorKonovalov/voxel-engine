@@ -1,11 +1,15 @@
 //! `--still` and `--mode-text`: a headless run writes the banner its first frame composes, and
 //! at the end of `--frames` its last frame's output and the mode and stats rows, for a window
 //! rehearsal (`scripts/rehearse-window.mjs`) to read before the owner opens the window.
+//! `--still-at`: the listed frames as PNGs, the frame's output or the overlay over it.
 
+use crate::cli::{Args, RunMode};
 use crate::run::Run;
+use crate::run::hud_feed::Overlay;
 use std::fmt::Write as _;
 use std::path::Path;
 use svet_app::Gpu;
+use svet_render::wgpu;
 
 impl Run {
     /// The first frame's text: the banner the frame composes, then the mode banner as it shows
@@ -63,6 +67,149 @@ impl Run {
     }
 }
 
+/// `--still-at`'s file stem for the run's scene: `showcase-hall`, `outdoor-15-00` (the
+/// start's clock), `castle-nave`, `level-vein` under `--pose`, else the source's name.
+pub(crate) fn still_stem(args: &Args) -> String {
+    if args.castle {
+        return format!("castle-{}", args.castle_shot.name());
+    }
+    match args.mode {
+        RunMode::Showcase => format!("showcase-{}", args.shot.name),
+        RunMode::Outdoor => {
+            let m = args.outdoor.clock.minutes.floor() as u32 % 1440;
+            format!("outdoor-{:02}-{:02}", m / 60, m % 60)
+        }
+        RunMode::Level => args
+            .pose
+            .map_or_else(|| "level".to_owned(), |p| format!("level-{}", p.name)),
+        RunMode::Cave => "cave".to_owned(),
+        RunMode::Room(edge) => format!("room-{edge}"),
+        RunMode::ThinRig => "thin-rig".to_owned(),
+        RunMode::SeamRig => "seam-rig".to_owned(),
+    }
+}
+
+impl Run {
+    /// After drawn frame `frame`, when `--still-at` lists it: writes its still ([`write_png_at`]),
+    /// under the stats HUD the overlay over the output as drawn ([`compose`]), else the frame's
+    /// output alone.
+    pub(crate) fn write_still_at(&self, gpu: &Gpu, frame: u32) {
+        let Some(gfx) = self
+            .gfx
+            .as_ref()
+            .filter(|_| self.args.still.at.contains(&frame))
+        else {
+            return;
+        };
+        let hud = Overlay::of(self.args.tester, self.menu.is_open(), self.hud.visible);
+        let output = gfx.frame.target();
+        let composed =
+            (hud == Overlay::Stats).then(|| compose(gpu, &gfx.presenter, &gfx.hud, output));
+        write_png_at(gpu, &self.args, frame, output, composed.as_ref());
+    }
+}
+
+/// A texture the presenter and the overlay draw into, in a submit of their own after the
+/// frame's: the surface is a render target the app cannot read back, so the still is the same
+/// two passes, over the same output and overlay rows, drawn again into a texture it can.
+pub(crate) fn compose(
+    gpu: &Gpu,
+    presenter: &svet_render::Presenter,
+    hud: &svet_render::HudOverlay,
+    output: &wgpu::Texture,
+) -> wgpu::Texture {
+    let [w, h] = gpu.size;
+    let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("still composed"),
+        size: wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: gpu.surface_format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+    let mut enc = gpu
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    presenter.encode(&gpu.device, &mut enc, output, &view);
+    hud.encode_timed(&mut enc, &view, w, h, None);
+    gpu.queue.submit([enc.finish()]);
+    tex
+}
+
+/// Writes frame `frame`'s still as `DIR/<stem>-<frame:05>.png`: `composed` when the overlay
+/// was drawn into one ([`compose`]), else the frame's output; prints the `still:`
+/// line or why it was not written.
+fn write_png_at(
+    gpu: &Gpu,
+    args: &Args,
+    frame: u32,
+    output: &wgpu::Texture,
+    composed: Option<&wgpu::Texture>,
+) {
+    let path = args
+        .still
+        .dir()
+        .join(format!("{}-{frame:05}.png", still_stem(args)));
+    let (tex, bgra) = match composed {
+        Some(t) => {
+            use wgpu::TextureFormat as F;
+            match t.format() {
+                F::Rgba8Unorm | F::Rgba8UnormSrgb => (t, false),
+                F::Bgra8Unorm | F::Bgra8UnormSrgb => (t, true),
+                f => {
+                    eprintln!(
+                        "still: cannot write {}: a {f:?} surface is not read back",
+                        path.display()
+                    );
+                    return;
+                }
+            }
+        }
+        None => (output, false),
+    };
+    let (w, h) = (tex.width(), tex.height());
+    let rgba = svet_render::debug::read_rgba8(&gpu.device, &gpu.queue, tex);
+    match write_png(&path, &rgb(&rgba, bgra), w, h) {
+        Ok(()) => println!("still: {} {w}x{h} frame {frame}", path.display()),
+        Err(e) => eprintln!("still: cannot write {}: {e}", path.display()),
+    }
+}
+
+/// `rgba` (or BGRA when `bgra`) as tightly packed RGB, alpha dropped.
+pub(crate) fn rgb(rgba: &[u8], bgra: bool) -> Vec<u8> {
+    let mut out = Vec::with_capacity(rgba.len() / 4 * 3);
+    for px in rgba.chunks_exact(4) {
+        if bgra {
+            out.extend_from_slice(&[px[2], px[1], px[0]]);
+        } else {
+            out.extend_from_slice(&px[..3]);
+        }
+    }
+    out
+}
+
+/// `rgb` (`width` x `height`, rows top to bottom) as an 8-bit RGB PNG at `path`, its directory
+/// made if missing.
+fn write_png(path: &Path, rgb: &[u8], width: u32, height: u32) -> Result<(), String> {
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(file), width, height);
+    enc.set_color(png::ColorType::Rgb);
+    enc.set_depth(png::BitDepth::Eight);
+    enc.write_header()
+        .and_then(|mut wr| wr.write_image_data(rgb))
+        .map_err(|e| format!("png: {e}"))
+}
+
 /// Prints where a file went, or why it did not.
 fn report(path: &Path, r: std::io::Result<()>) {
     match r {
@@ -96,6 +243,15 @@ mod tests {
         let head = b"P6\n2 2\n255\n";
         assert_eq!(&p[..head.len()], head);
         assert_eq!(&p[head.len()..], &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    }
+
+    /// The still's RGB keeps red, green and blue in order from RGBA and swaps them from BGRA,
+    /// alpha dropped either way.
+    #[test]
+    fn rgb_drops_alpha_and_unswaps_bgra() {
+        let px = [1, 2, 3, 255, 4, 5, 6, 0];
+        assert_eq!(rgb(&px, false), vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(rgb(&px, true), vec![3, 2, 1, 6, 5, 4]);
     }
 
     /// `--still` and `--mode-text` take a path each and need `--headless` and `--frames`;

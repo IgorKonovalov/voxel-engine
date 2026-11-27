@@ -334,6 +334,8 @@ pub(crate) fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
             pitch: pose.pitch_deg.to_radians(),
             vfov: 70f32.to_radians(),
         }
+    } else if let Some(eye) = args.eye {
+        eye_camera(eye)
     } else if args.castle {
         castle_camera(args.castle_shot)
     } else if args.mode.is_showcase() {
@@ -356,16 +358,28 @@ pub(crate) fn start_camera(args: &Args, spawn: VoxelCoord) -> Camera {
     }
 }
 
+/// `--eye`'s camera: the point in voxels, the yaw and pitch in degrees.
+pub(crate) fn eye_camera([x, y, z, yaw, pitch]: [f32; 5]) -> Camera {
+    Camera {
+        position: [x, y, z].into(),
+        yaw: yaw.to_radians(),
+        pitch: pitch.to_radians(),
+        vfov: 70f32.to_radians(),
+    }
+}
+
+/// The voxel `--eye` stands in, if given: the streamer's and the mirror's centre in place of
+/// the source's spawn.
+fn eye_voxel(args: &Args) -> Option<VoxelCoord> {
+    args.eye
+        .map(|[x, y, z, ..]| VoxelCoord([x, y, z].map(|v| v.floor() as i32)))
+}
+
 /// `--spawn`'s camera on the outdoor source of `args.seed`: the eye voxel's centre, facing
 /// the spawn's direction; `--eye`'s point and view in its place when given.
 pub(crate) fn outdoor_camera(args: &Args) -> Camera {
-    if let Some([x, y, z, yaw, pitch]) = args.outdoor.eye {
-        return Camera {
-            position: [x, y, z].into(),
-            yaw: yaw.to_radians(),
-            pitch: pitch.to_radians(),
-            vfov: 70f32.to_radians(),
-        };
+    if let Some(eye) = args.eye {
+        return eye_camera(eye);
     }
     let (eye, d) = OutdoorSource::new(args.seed).spawn(args.outdoor.spawn);
     let [x, y, z] = d.map(|v| v as f32);
@@ -461,6 +475,12 @@ pub(crate) fn load_logic(choice: &LogicChoice) -> Box<dyn Logic> {
 /// whose file cannot be read sets `failure` and builds nothing, so the session tears down as
 /// usual and the failure prints at the end.
 pub(crate) fn build_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pending) {
+    let (spawn, pending) = source_world(args, failure);
+    (eye_voxel(args).unwrap_or(spawn), pending)
+}
+
+/// [`build_world`]'s world before `--eye` moves the spawn: the source's own spawn.
+fn source_world(args: &mut Args, failure: &Failure) -> (VoxelCoord, Pending) {
     let seed = args.seed;
     if let Some(path) = args.replay.clone() {
         replay_world(args, &path, failure)
@@ -608,7 +628,9 @@ fn level_world(args: &Args) -> (VoxelCoord, Pending) {
 fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
     let seed = args.seed;
     let source = CaveSource::unbounded(seed);
-    let spawn = source.spawn();
+    // `--vox` places at the source's spawn; the workers start around `--eye` when given.
+    let placed_at = source.spawn();
+    let spawn = eye_voxel(args).unwrap_or(placed_at);
     let workers = args.workers.unwrap_or_else(default_workers);
     let table = world_table(args, &materials(args));
     let world = World::new(&table);
@@ -635,7 +657,7 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
         return (spawn, Pending::StreamBuilding(build));
     }
     let streamer = if args.vox.is_some() && !args.vox_op {
-        Streamer::new(Arc::new(vox_source(args, &table, spawn, source)), cfg)
+        Streamer::new(Arc::new(vox_source(args, &table, placed_at, source)), cfg)
     } else if args.vault {
         println!(
             "vault: {VAULT_EDGE}^3 shell room at {:?}",
@@ -655,10 +677,7 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
 /// as the cave is, over the same [`world_table`] as every other source.
 fn outdoor_world(args: &Args) -> (VoxelCoord, Pending) {
     let hills = OutdoorSource::new(args.seed);
-    let spawn = match args.outdoor.eye {
-        Some([x, y, z, ..]) => VoxelCoord([x, y, z].map(|v| v.floor() as i32)),
-        None => hills.spawn(args.outdoor.spawn).0,
-    };
+    let spawn = eye_voxel(args).unwrap_or_else(|| hills.spawn(args.outdoor.spawn).0);
     let trees = args.outdoor.trees();
     let workers = args.workers.unwrap_or_else(default_workers);
     let world = World::new(&world_table(args, &materials(args)));

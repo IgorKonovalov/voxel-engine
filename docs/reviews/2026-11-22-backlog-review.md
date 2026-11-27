@@ -60,7 +60,7 @@ here as deletable, since the file is for what "no plan, ADR or roadmap milestone
 - **568, "Budget lines over with no owner"**: "Upscale, 1.5 ms" and "the bake's slice ... has no line". Verified `docs/nfr.md:48-57`: the upscale line is 3.0 ms and a bake line exists since Plan 0069's close. Action: prune to the bullets still true (streaming CPU p50, time to first frame, the ledger tables).
 - **1305**: "the re-read runs ... as the first M10 step" against the README's run order "0081, 0033, ...". Also the roster shows Plan 0033 (marched clipmap, ADR-0028) as approved while the backlog calls the hybrid the agreed direction.
 - **282, "Darker scenes, and light intensity varied by seed"**: sends its testbed half to the palette entry, where the owner's window P1 did not take the darker key (line 555). What is left is only the seeded per-light spread.
-- **1143** (the Bonsai section intro): "added the entries from 'Per-job performance tracking' on" is false now; five non-Bonsai entries follow.
+- **1143** (the intro of the section of ideas from another voxel engine): "added the entries from 'Per-job performance tracking' on" is false now; five entries that are not from it follow.
 - **Plans README, outside the backlog**:
   - The Plan 0096 paragraph says "awaits the go", and line 237 says "Every active plan but Plan 0096 is approved"; the roster says approved.
   - The Plan 0099 paragraph says "draft ... awaits the owner's go and five answers"; the roster and the plan say approved 2026-11-22.
@@ -82,7 +82,7 @@ here as deletable, since the file is for what "no plan, ADR or roadmap milestone
 Entries were appended at the end of whatever section was last.
 
 - **Under "Later apps", seven lighting entries**: 1462 "The fired lights' grain", 1476 "Settle early", 1522 "A second `Frame` on one rig does not drain its bake queue", 1533, 1550, 1580 "The key term's grain at rest on a penumbra", 1596.
-- **Under "Ideas from Bonsai", not Bonsai's**: 1331, 1347 "The F9 steps view drops the window to about 14 fps", 1354, 1371. 1305 is by now the owner's far-field direction.
+- **Under "Ideas from another voxel engine", not that engine's**: 1331, 1347 "The F9 steps view drops the window to about 14 fps", 1354, 1371. 1305 is by now the owner's far-field direction.
 - **Under "Tooling and process"**: 975 "A held fallback still moves on screen" (render), 1100 "Pathfinding over the coarse grid and the walkable map" (engine), 1113 "The built-in walker and its scripted circle" (app chore), 1123 "The spider's mover tick costs twice the guess" (performance).
 - **Under "Engine mechanisms"**: 430 "The bake and strip examples drift" (tooling), 480 and 498 (tests), 494 "A consumer's settings file in the render example" (apps).
 - **"Next up" is not a next-up list**: of its fifteen entries, four are one-liners to plans, one is done and one is "Done:".

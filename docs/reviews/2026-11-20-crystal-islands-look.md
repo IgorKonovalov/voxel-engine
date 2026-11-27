@@ -190,7 +190,7 @@ finer than our 10 cm (a lupin spike is six to eight voxels wide); it is unknown 
   and 3:40, and 1:38's soft edge is within what the video's compression does to a saturated
   edge.
 - **Ours today:** none.
-- **Gap:** the backlog's "bloom from HDR emission" entry (Bonsai) stands, lower than before:
+- **Gap:** the backlog's "bloom from HDR emission" entry (from another voxel engine) stands, lower than before:
   the frames say the look does not rest on it.
 
 ## Content levers (no engine change; the testbed's palette and scenes, a consumer's assets)

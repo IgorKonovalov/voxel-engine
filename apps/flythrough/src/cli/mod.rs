@@ -687,6 +687,9 @@ pub struct Args {
     /// `--pose NAME`: the settle rig's still camera the bounded level starts at (its exposure
     /// is not applied).
     pub(crate) pose: Option<crate::Pose>,
+    /// `--eye X,Y,Z,YAW,PITCH`: the camera's start in voxels and its view in degrees on any
+    /// source, in place of the source's own start; a streamed world centres on its voxel.
+    pub(crate) eye: Option<[f32; 5]>,
     pub(crate) autopilot: bool,
     pub(crate) headless: bool,
     /// `--adapter SUBSTRING`: the run takes the first adapter whose name contains it (in a
