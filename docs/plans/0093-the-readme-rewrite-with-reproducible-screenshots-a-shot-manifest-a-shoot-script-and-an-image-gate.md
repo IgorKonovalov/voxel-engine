@@ -1613,6 +1613,9 @@ the renders' own logs under `live/r/p6c/`.
 
 ### G10. Ruling 2: a zero set stands until a render differs, and is then read again by D2
 
+> **Amended by G13 (2026-11-27, second):** the first bullet stands; "six more" renders and
+> "once per entry" are withdrawn, and the tolerance is G13's for every entry.
+
 C2's clause "0 stays 0 when all 15 pairs read 0" is amended. It bites `lamp-cave` now and
 binds `dig`, `chapel` and any later entry whose set reads all 0.
 
@@ -1708,6 +1711,134 @@ pre-roll** (G2 rejected it; not in the tree).
   included (C2's stop: nothing edited, frames and logs to the architect); a pair of the
   thirteen whose doubled share is over the ceiling is not a stop but G2's `unjudged`; a hold
   that would pass 900 s; a second round asked of the same entry.
+
+## Amended 2026-11-27, second (architect, the checks are renders of the sets)
+
+Phase 6d2 stopped at its third `--check`: `spider-walk` read 0.004395 against 0.004. Two
+rulings: the reading is noise (G12); and one rule for every entry replaces the stop, so the
+phase ends without the architect (G13): on the set's binaries a check's render is a member
+of the entry's set, every tolerance is twice the largest pair of the set as it has grown,
+under the same ceiling, and the only stop left is a reading as large as a wrong picture.
+The remainder is Phase 6d3 below; the rows of 6d and 6d2 stay as they read. No owner
+question: the pictures are the picked ones.
+
+### G12. Ruling 1: `spider-walk`'s reading is noise, with a thinner margin than `lamp-cave`'s
+
+Read from [the log](logs/0093.md) (Phase 6d2), `live/p6d2/` and the frames themselves.
+
+- **By the plan's line it is on the noise side.** 0.004395 is 1/18 of the smallest wrong
+  share (the loop one frame late, 0.079048) and 1/6 of the ceiling (0.026349); the largest
+  cell is 10 levels where the late loop's is 240. That is less room than `lamp-cave`'s
+  1/237, and still inside the third the plan asks of every entry.
+- **As PNG it is surer than `lamp-cave`'s.** The check's frames against the committed
+  loop's (frames 6, 12, 20 and 39 read): 55 to 79 pixels of 921600 differ, by at most 5
+  levels at frame 6 and 2 at the others. The late loop differs in 258523 pixels at frame 0.
+  It is C1's noise: a hundred scattered single pixels, which the animated encoder turns
+  into moved cells and carries forward.
+- **The worst frame says nothing new.** Frame 12 reads 0.034737 of its cells from 55 pixels
+  two levels apart. C2 ruled the worst frame unjudged for this reason (one frame's noise is
+  as large as a wrong picture's share) and D1 and D2 judge a loop over the loop; the late
+  loop's own worst frame is 0.096316.
+- **What is new is where it departs:** at PNG frame 6 against every set render, where the
+  set's fifteen pairs depart at frames 7 to 24. An earlier departure carries through more
+  frames, hence a share over twice the set's largest pair (0.003974). D2's doubling assumed
+  the set had seen the furthest state; six renders had not.
+- **Not the settled start's finding.** The `clip` example starts no live queue and no
+  settle (C3); the load at this hold was the night's lowest (load1 2.21). It is the clip
+  example's entry in [the backlog](../backlog.md), extended today. `lamp-cave`'s third
+  state (the third check, 0.001239 against the committed file, another PNG than r7's) goes
+  to the settled start's entry.
+
+### G13. Ruling 2: on the set's binaries a check is a render of the set; one rule for every entry
+
+Three checks, three renders outside a set (`lamp-cave`, `spider-walk`; `hud` twice over its
+set's largest pair and inside its tolerance by the rounding alone; F4's `walker-walk` before
+them). Six to eight renders do not hold an entry's states. And between a set and a check
+nothing that makes the picture changed: the same manifest, the same sources, the same
+adapter. Such a check cannot meet a wrong picture; it can only draw one more sample of the
+noise. The stop it kept raising asked the architect, each time, to say so.
+
+- **Membership.** Every render of an entry as it stands, by binaries built from the sources
+  its set was read on, is a member of that entry's set: a set render or a check's. A set
+  only grows; no render is left out of it. This is C2's definition, not a new one.
+- **The tolerance, for every judged entry, still or loop:** twice the largest pair of the
+  set as it stands, rounded up to one significant figure, and at most a third of the
+  smallest wrong share. A set whose every pair reads 0 keeps 0. C2's rounding alone is
+  withdrawn for stills: its headroom is whatever the rounding happens to leave (`hud`'s was
+  luck), and D2's reason holds for a still as for a loop, since the committed file is one
+  state and a render may be in another the set has not met.
+- **A check on the set's binaries, per entry, has four outcomes and none is a stop but the
+  last.** At or under the tolerance: nothing. Over it and at or under the ceiling: the
+  render joins, the tolerance is read again by the rule above on the CPU, the note and the
+  log say so, and the check's exit code is logged as it was. A tolerance the rule puts over
+  the ceiling, or a reading over the ceiling and under the smallest wrong share: the entry
+  is `unjudged` by G2 with its numbers. A reading at or over the smallest wrong share, or a
+  render that fails: a stop, since the same binary has then drawn something as far off as a
+  wrong picture, and that is not noise by any reading here.
+- **After a change it is C2 again.** Once anything under the fly-through or the engine
+  crates differs from the set's sources, a `--check` over a tolerance is what the gate is
+  for: a named change of the look gives a new set, anything else is a finding. The rule
+  above ends there.
+- **Why this is the measure saying so.** The tolerance is a function of the entry's own
+  renders and of nothing else; the function was fixed before the readings it is applied to
+  (D2, 2026-11-26); every render that exists goes in, the ones that passed with the ones
+  that did not; the ceiling is each entry's own and does not move. What no rule here does:
+  pick a number so that a given check passes, drop a render, or restate an exit code. An
+  exit 1 of the final check is logged as exit 1, with the entries that joined; that is a
+  disclosed reading, not a finding for the close review.
+- **What it costs the gate.** Tolerances of two to four times the noise seen, from about 1/8
+  (`spider-walk`, expected) to under 1/100 of the smallest wrong share; Phase 6d3 reads them. The gate refuses every wrong
+  picture the plan read, with the plan's third, and anything that moves more cells than
+  twice the entry's own noise.
+
+Rejected: **every tolerance at its ceiling** (the hero's is 0.20: a change in a fifth of
+its cells would pass; the sets are what makes the gate finer than its grossest wrong
+picture); **larger sets for every entry now** (some eighty renders and half an hour of a
+lock the lanes share, for sets that would again be samples; the checks' renders exist
+and cost nothing); **`unjudged` for an entry whose check exceeds its set** (by tonight's
+pattern that ends with most entries unjudged and no gate; `spider-walk` would lose a check
+that separates its wrong pictures by 18); **six more renders and one more check per
+failing entry** (G10's shape: no bound on the night's holds, since each check may name
+another entry); **a second failure made `unjudged`** (the render is as much a member the
+second time; G2's mark is for a ceiling broken, not for a count of misses).
+
+**G10, as amended by this:** its first bullet stands (a zero set's 0 stands until a render
+differs). Its "six more" renders and its "once per entry" are withdrawn: the render joins
+on the CPU and the tolerance is this section's. `lamp-cave`'s 0.005 is read again with the
+rest.
+
+### Phase 6d3: every set takes the checks' renders, and the final check (closes Phase 6d)
+- **Owner skill:** dev
+- **Waits on:** this ruling. No person, no other plan, and no return to the architect but
+  for the one stop.
+- **What:** no source edit and no rebuild. On the CPU, with Phase 6c's rig: for each of the
+  twelve entries the second and the third check's frames (`live/p6d/check2-frames/<id>/`,
+  `live/p6d2/check3-frames/<id>/`) join the set under the next free names (`lamp-cave`
+  holds the second check's as r7); every pair is read again. Each entry's tolerance by
+  G13; `docs/images/shots.json`: `tolerance` and `note` of every judged entry (the renders,
+  the pairs, the largest pair, "twice the largest pair (G13)", the smallest wrong share),
+  `walkers`' `unjudged` line with its set's new numbers (it stays unjudged unless G13's
+  rule now fits under its ceiling). The gates. Then one hold: the final
+  `node scripts/shoot-images.mjs --check --no-build`, as the lock comes. Each entry's
+  outcome is one of G13's four, applied on the CPU; no further render and no further
+  check. Then the close triggers are filled, the row is added, the resume notes leave the
+  log, and the gates run once more if the manifest changed after the check.
+- **Files touched:** `docs/images/shots.json`, `docs/plans/logs/0093.md`, the plan's
+  `Status:` line and Implementation log (one row; the section stays under its cap).
+- **Done when:** the log holds one table of the twelve (renders, pairs, largest pair, the
+  tolerance before and after, the ceiling, the ratio to the smallest wrong share) and the
+  groups of identical PNGs for `lamp-cave`; the final check's output is in the log with its
+  exit code as it was, its hold's wait, length and load (under 900 s), and for each entry
+  over its tolerance one line with the outcome and the numbers; after the phase every
+  judged entry's tolerance is at least every share read of it against the committed file,
+  by G13's rule from a set that holds every render there is; `check-images.mjs` exits 0
+  and names the unjudged entries; `git diff --stat` since Phase 6d's commit names no file
+  under `apps/`, `crates/` or `docs/images/` but `shots.json`; `node --test
+  "scripts/*.test.mjs"`, `check-doc-links.mjs`, `check-plan-size.mjs` and
+  `check-index-rows.mjs` pass. This replaces Phase 6d's "the second `--check` exits 0".
+  Not run again: the gate tier, clippy, fmt, deny and the doctests (as Phase 6d2).
+- **Stop, reported:** an entry of the final check reads at or over its smallest wrong
+  share, or its render fails; or the hold would pass 900 s. Nothing else stops the phase.
 
 ## Implementation log
 
