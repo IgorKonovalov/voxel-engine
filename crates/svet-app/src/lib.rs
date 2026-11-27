@@ -11,7 +11,7 @@ pub mod shell;
 
 pub use input::{Axis, Input, KeyCode, MouseButton, PadButton};
 pub use shell::{
-    App, Flow, Gpu, HeadlessConfig, Pacing, ShellConfig, ShellError, backend_label, pick_adapter,
-    pick_surface_format, run, run_headless, surface_color_space,
+    App, Flow, Gpu, HeadlessConfig, Pacing, ShellConfig, ShellError, ShellTimes, backend_label,
+    pick_adapter, pick_surface_format, run, run_headless, surface_color_space,
 };
 pub use {wgpu, winit};

@@ -21,7 +21,7 @@ use crate::streaming::{STREAM_POOL_BYTES, Stream};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Instant;
-use svet_app::{App, Flow, Gpu, Input};
+use svet_app::{App, Flow, Gpu, Input, ShellTimes};
 use svet_net::Logic;
 use svet_render::{Camera, LightParams, LoadingScreen, LoadingView, wgpu};
 use svet_world::World;
@@ -331,6 +331,12 @@ impl App for Flythrough {
         }
         if let Some(run) = self.run.as_mut() {
             pad.write_row(run.hud.stats.pad.get_or_insert_with(Default::default));
+        }
+    }
+
+    fn shell_times(&mut self, times: ShellTimes) {
+        if let Some(run) = self.run.as_mut() {
+            run.hud.run.slow.shell = times;
         }
     }
 

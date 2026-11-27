@@ -19,6 +19,7 @@ use crate::run::hud_lines::{
 };
 use crate::run::keys::{ORE_PULSE_MEAN, ore_pulse};
 use crate::run::loading::fade_loading;
+use crate::run::slow_frames::Mark;
 use crate::setup::GfxSample;
 use crate::streaming::pressure_terms;
 use std::time::Instant;
@@ -55,6 +56,11 @@ impl Run {
         let sync_ms = ms_since(ts);
         let cpu = ms_since(t);
         stream.stages_ms = [update_ms, poll_ms, apply_ms, sync_ms];
+        if let Some(p) = self.hud.run.slow.pending.as_mut() {
+            [p.update, p.poll, p.events] = [update_ms, poll_ms, apply_ms];
+            p.chunks = ev.loaded.len() as u32;
+            p.sync_from(sync_ms, synced.as_ref().ok());
+        }
         self.hud.run.poll_ms.push(poll_ms);
         stream.tick_ms.push(ms_since(self.start));
         stream.cpu_ms.push(cpu);
@@ -189,6 +195,7 @@ impl Run {
             return self.loading_frame(gpu, input, surface);
         }
         let t0 = now();
+        self.next_slow_frame(dt, t0);
         let (pass, exit) = self.key_step(input);
         if let Some(flow) = exit {
             return flow;
@@ -254,6 +261,7 @@ impl Run {
         if self.frame > drawn {
             self.write_still_at(gpu, drawn);
         }
+        self.hud.run.slow.mark(Mark::End);
         flow
     }
 
@@ -599,7 +607,7 @@ impl Run {
                 t.resolve(&mut enc);
             }
         }
-        gpu.queue.submit([enc.finish()]);
+        self.hud.run.slow.submit(&gpu.queue, enc);
         fade_loading(&mut self.loading, gpu, surface);
         if self.args.headless {
             diag(format_args!("frame {}: submitted", self.frame));
@@ -731,13 +739,16 @@ impl Run {
             match gfx.mirror.sync(&self.world, &gpu.queue, &mut enc) {
                 Ok(s) => {
                     let ms = ms_since(t);
+                    if let Some(p) = self.hud.run.slow.pending.as_mut() {
+                        p.sync_from(ms, Some(&s));
+                    }
                     self.hud.sync = (s, ms);
                     stream_ms = Some(ms);
                 }
                 Err(e) => return Err(self.mirror_failed(e)),
             }
         }
-        let enc = self.step_bake_queue(gpu, enc);
+        let enc = self.step_bake_queue_timed(gpu, enc);
         self.pilot_sample();
         let overlay = Overlay::of(self.args.tester, self.menu.is_open(), self.hud.visible);
         let hud = overlay == Overlay::Stats;
@@ -827,7 +838,8 @@ impl Run {
 
     /// The frame's settings ahead of its `params`: an upscaler or sharpening change, the
     /// lighting modes, the exposure's step, the resolution, the look, the store's read count,
-    /// the missing light and the ore's emission pulse.
+    /// the missing light and the ore's emission pulse; then marks the encode's start for the
+    /// `slow frame:` block.
     fn configure_frame(&mut self, gpu: &Gpu, dt: f32, hud: bool) {
         // Headless frames step the exposure and the lights by exactly 1/60 s; the window by
         // its measured interval, at most 0.1 s, so a hitch adapts by no more than that.
@@ -919,6 +931,8 @@ impl Run {
         // pixels' light keeps its full swing.
         gfx.frame
             .set_emission_scales(&gpu.queue, crate::cave::ORE, scale, ORE_PULSE_MEAN);
+        // The frame's preparation ends here; the encode starts.
+        self.hud.run.slow.mark(Mark::Encode);
     }
 
     /// `--frames`' readings at the exit: the walk's foot, the coarse grid, the cracks or steps

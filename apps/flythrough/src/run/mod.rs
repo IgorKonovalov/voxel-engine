@@ -40,6 +40,7 @@ pub(crate) mod pilot;
 pub(crate) mod profile;
 pub(crate) mod queue;
 pub(crate) mod settle;
+pub(crate) mod slow_frames;
 pub(crate) mod still;
 pub(crate) mod switch;
 pub(crate) mod tour;
@@ -563,6 +564,9 @@ impl Drop for Run {
             }
         }
         if let Some(line) = self.hud.run.line() {
+            println!("{line}");
+        }
+        for line in self.hud.run.slow.lines() {
             println!("{line}");
         }
         if let Some(s) = self.stream.as_ref() {

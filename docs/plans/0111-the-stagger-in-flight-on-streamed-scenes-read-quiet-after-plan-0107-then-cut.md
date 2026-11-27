@@ -1,6 +1,6 @@
 # 0111: The stagger in flight on streamed scenes: read quiet after Plan 0107, then cut
 
-> **Status:** approved (2026-11-27, owner: "go, recommended": it starts after Plan 0107 merges and does not wait for Plan 0091; he takes Phase 3's window runs in a ten-minute quiet slot; if stop line 1 fires a tester README note is enough). Was: draft (2026-11-27; the owner's go on drafting: "go both"; he approves the draft
+> **Status:** in-progress (2026-11-27: Phase 1 landed; Phase 2 next). Was: approved (2026-11-27, owner: "go, recommended": it starts after Plan 0107 merges and does not wait for Plan 0091; he takes Phase 3's window runs in a ten-minute quiet slot; if stop line 1 fires a tester README note is enough). Was: draft (2026-11-27; the owner's go on drafting: "go both"; he approves the draft
 > before any dev work). Drafted with no interview from the owner's tester report and Plan 0107's
 > Phase 1 reading; the guesses and the questions left are under "Risks & open questions", each
 > with a recommended option.
@@ -362,9 +362,11 @@ slow frame: 539 at 11.2 s, wall 108.4 ms: acquire 0.1, update 0.3, poll 2.1 (41 
 > resume notes go to the plan's readings log, `docs/plans/logs/0111.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
+Readings: [`logs/0111.md`](logs/0111.md).
+
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the `slow frame:` block, and the cave read with it | dev | not started | |
+| 1: the `slow frame:` block, and the cave read with it | dev | done; deviations: the block in a new `run/slow_frames.rs` (declared and printed from `run/mod.rs`), `svet-app`'s `lib.rs` and the fly-through's `app.rs` touched, `queue.rs` not; an `events` stage added | committed with this row |
 | 2: the four paths headless, quiet, then loaded | dev | not started | |
 | 3: the same paths in the tester's window | human | not started | |
 | 4: the window's tables, and the stop lines read | dev | not started | |

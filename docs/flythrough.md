@@ -519,6 +519,25 @@ free to the message taken; `step`, the step; `snapshot`, the books' snapshot aft
 `hand-over`, the step's results and the books put in the outbox; and `sum`, their total, the
 time from one step's pick-up to the next's, beside the frames' wall over the same frames.
 
+After the `frames: N frames;` line the teardown prints the `slow frame:` block: one line for
+each of the 64 slowest frames whose wall was over 33.3 ms, in frame order, then a `slow frames:`
+summary over every such frame. A frame's wall is the span from its start to the next frame's
+(the `dt` the `frames:` line's `wall` reads), and its line splits it into that frame's own
+stages in ms: `acquire` (the window's surface acquire for the next frame; 0 headless),
+`update`, `poll` with the chunks it inserted, `events` (the poll's events applied to the mirror
+and the frame), `sync` with its stages (`select`, `size`, `pack`, `place` and `note` the light's
+two parts, `copy`, `alloc`, `lock`, `other`) and the bricks it packed, `queue` (the live queue's
+step on the render thread) with the bake thread's render laps (`build` to `wait`, then `other`;
+`no laps` in lockstep), `prepare` (the frame's start to the encode, less the stages above),
+`encode` (to the command buffer's finish), `submit`, `after` (the submit to the frame's end: the
+read-backs and the readings), `present` (the window's present; headless, the wait for the device
+to idle that stands for it), and `rest`, the wall less every named stage. On Linux the line
+ends with the render thread's involuntary context switches and minor and major page faults
+over the frame's wall. The summary counts the frames over 33.3 ms and over 100 ms, names for
+each leaf stage (a stage with parts counts by its parts) the slow frames it was the largest in
+and its mean over them, counts those whose `rest` is over a fifth of their wall, and gives the
+counters' means over a slow frame beside any frame's.
+
 ### Audio
 
 | Flag | Does |

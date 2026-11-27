@@ -82,6 +82,8 @@ pub(crate) struct RunTimes {
     pub(crate) blocking_reads: Option<u64>,
     /// The mirror sync's stages per streaming frame.
     pub(crate) sync: SyncSeries,
+    /// Each frame's stages, for the `slow frame:` block at exit.
+    pub(crate) slow: crate::run::slow_frames::SlowFrames,
 }
 
 /// The frames each of [`RunTimes`]' series keeps: about 18 minutes at 60 frames a second, 512
@@ -101,6 +103,7 @@ impl Default for RunTimes {
             gpu_frames: 0,
             blocking_reads: None,
             sync: SyncSeries::with_capacity(RUN_SERIES_FRAMES),
+            slow: crate::run::slow_frames::SlowFrames::default(),
         }
     }
 }
