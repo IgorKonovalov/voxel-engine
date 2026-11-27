@@ -1562,6 +1562,153 @@ his glance at the page on GitHub; the dig's re-shoot once Plan 0105 is in main; 
 stepped pre-roll on the entries once Plan 0106's flag is in main, with any unjudged
 entry's set read again; a castle under the sun.
 
+## Amended 2026-11-27 (architect, a zero set refuted)
+
+Phase 6d stopped at its second `--check`: `lamp-cave` read 0.002345 against a tolerance of 0.
+Three rulings and two small ones: the reading is noise the set of six did not hold, so the 0
+never stood (G9); a set whose every pair reads 0 fixes a tolerance only until a render of the
+same entry by the same binaries differs, and is then read again enlarged, by D2's rule (G10);
+the window fence's `rust ignore` is accepted and the old hero example's default path is parked
+(G11). The remainder of Phase 6d is Phase 6d2 below; 6d's row stays as it reads. No owner
+question: the picture is the picked one.
+
+### G9. Ruling 1: `lamp-cave`'s reading is noise, and its set of six was too small
+
+Read from [the log](logs/0093.md) (Phases 6c and 6d) and from `live/p6c/`, `live/p6d/` and
+the renders' own logs under `live/r/p6c/`.
+
+- **By the plan's measure it is on the noise side.** A wrong picture is a render of something
+  else than the entry (D1, F4); `lamp-cave`'s smallest is the yaw turned 2 degrees, 0.556637,
+  its largest cell 228 levels. The check's render is the entry as it stands: 0.002345 (53 of
+  22600 cells, the largest 10.56 levels), which is 1/237 of that share and 1/79 of the ceiling
+  (0.185546). It is the size the other stills' sets read in the same holds (`canopy` 0.002611,
+  `skylight` 0.002257, `hall` 0.001195; the hero's cells 7 to 10 levels). The two PNGs,
+  differenced: scattered pixels at voxel edges over the whole lamp pool, the largest channel
+  difference 40 of 255, no shape moved, added or missing.
+- **By C2's definition the render is a member of the set.** The set is "renders of the entry
+  as it stands, by the binaries that shoot it, every pair read as `--check` reads it". The
+  check's render is that. The binary was rebuilt between the two (no source it compiles
+  changed; the `cfg(doctest)` item is not in it), and it gave `dig` and `skylight` PNGs byte
+  for byte those of their first renders, which a changed renderer would not.
+- **So the set is refuted, as F4 ruled for `walker-walk`:** six renders held one state and
+  the entry has at least two. A tolerance of 0 says the entry has no noise; that is B2's
+  rejected hash of the frame with a level under it, and six agreeing renders could not carry
+  it. The 0 did not stand. The dev's stop was the right act: nothing was edited.
+- **What the logs say of the cause, and no further.** The step count names nothing: the six
+  identical renders settled in 19562, 14556, 3414, 3571, 3023 and 5036 queue steps, the
+  check's in 21771. The settle did not end in one state either: the first `bake queue:` line
+  after it prints `baked` 5380, 5300 and four times 5050 over the six (the same picture),
+  5370 for the check's (another picture); the pre-roll's coarse pass, ended by its 5 s box,
+  left 1754 to 2543 coarse chunks in the six and 2564 in the check's. `dig`'s second check
+  settled at 5318 baked where its six all read 5074, and its PNG is its first render's;
+  `chapel`'s first render (5636 against 5062) differs from the other five as PNG with no
+  cell over the level. This is D3's finding in a second scene: equal `settled:` counts, a
+  different light store. **Not attributed:** no reading names a chunk, a record or the
+  pixel's source.
+- **Attribution is owed, not by this plan.** A settled start that prints the same counts and
+  gives another picture is a finding about `--settled-start` and what a still may claim, not
+  about the README. [The backlog](../backlog.md) has it, dated today, beside D3's entry, with
+  the reading that would attribute it; the plan that takes the stepped pre-roll onto the
+  entries (G8's list) reads it.
+
+### G10. Ruling 2: a zero set stands until a render differs, and is then read again by D2
+
+C2's clause "0 stays 0 when all 15 pairs read 0" is amended. It bites `lamp-cave` now and
+binds `dig`, `chapel` and any later entry whose set reads all 0.
+
+- **A zero set measures nothing.** Its largest pair is not a small noise; it is no reading of
+  the noise at all, only that N renders met one state. Its 0 is written and stands until a
+  render of the entry as it stands, by the binaries the set was read on, differs from the
+  committed file at the check's level.
+- **That render joins the set, with six more.** It is a member by C2's definition (G9), not
+  by what it read. Six further renders of the entry are taken in one hold, under whatever
+  load the night has (logged, not arranged), and every pair of the enlarged set is read.
+  Nothing is left out of it.
+- **The tolerance is D2's.** A set of identical groups with renders apart is states, not a
+  spread, so the tolerance is twice the largest pair, rounded up to one significant figure,
+  and still at most a third of the smallest wrong share. Over that ceiling the entry is
+  `unjudged` by G2. No ceiling moves and no wrong picture is swapped.
+- **Why this is the set saying so and not the check being fitted.** Three things hold at
+  once: the departing render is one command by one binary on one adapter, which is what
+  noise is here; the number comes from every pair of thirteen renders or more and from D2's
+  rule, not from the pair that failed (C2's bar on reading a tolerance again from that pair
+  stands: with the failed pair alone the answer would be 0.003, and it is not taken); and
+  the measure is the distance to the smallest wrong picture, which the result must keep by
+  the same third as every other entry. For `lamp-cave`, if no new pair is larger: 0.005,
+  1/111 of the smallest wrong share, 1/37 of the ceiling.
+- **Once per entry, and only on the set's binaries.** A tolerance over 0 stands on a set
+  that measured something; a `--check` over it is C2's stop, as before, frames and logs to
+  the architect. After a change under the fly-through or the engine crates, a zero-set entry
+  that reads over 0 is C2's case too: a named change of the look gives a new set, anything
+  else is a finding.
+- **`dig` and `chapel` keep their 0.** Each has read 0 against its committed file in eight
+  renders (the six and both checks'). If the third check reads one over 0, this rule runs
+  in the phase, without a return to the architect.
+- **No other tolerance is read again.** The stills whose sets hold zeros beside small pairs
+  (`hall`, `skylight`, `castle`) stand on sets that measured their noise and passed twice.
+
+Rejected: **a floor for every zero set** (0.001, or the smallest tolerance another still
+holds: a number no set of the entry read, written so that checks pass); **the check's render
+joined alone, 0.003 by C2's rounding** (the failed pair read again, with a quarter of
+headroom over one departed state: F4's `walker-walk`, which read three times its set's
+largest pair); **`lamp-cave` marked `unjudged`** (G2 is for a set over its ceiling; this one
+is 79 times under it, and the check works for it); **the level or the cell raised** (2c fixed
+C 8 and L 4 on readings; changing the quantity to pass one entry); **waiting for the stepped
+pre-roll** (G2 rejected it; not in the tree).
+
+### G11. Two items for the close, ruled
+
+- **The window fence as `rust ignore`: accepted.** `svet-world`'s doctest compiles every
+  `rust` fence of the README; the window fence is a span of `minimal_window.rs`, not a whole
+  program, so rustdoc must skip it. It is not left unchecked: `readme_example.rs` holds it
+  byte for byte to the example, which the headless test builds and runs (Phase 6b). GitHub
+  colours by the first word. The edit to `readme_example.rs` beyond the item's file is a
+  recorded deviation, not a finding. Rejected: **`no_run`** (still compiled; a span does not
+  compile); **the span grown to a whole program** (the fence is a 30-line span, Phase 6b); **the first
+  fence run from a copy** (the README is the thing checked).
+- **`apps/flythrough/examples/hero.rs` defaulting `--out` to `docs/images/hero.png`: the
+  backlog.** No edit under `apps/` or `crates/` at this tip: the gate tier ran on this code,
+  and the tolerances stand on these binaries. The default is contained: a file it writes
+  there is an image the manifest neither names nor freezes, which `check-images.mjs` refuses.
+  The entry asks whether the example is kept at all now that the manifest shoots the hero.
+
+### Phase 6d2: `lamp-cave`'s set read again, and the third check (closes Phase 6d)
+- **Owner skill:** dev
+- **Waits on:** this ruling. No person and no other plan.
+- **What:** no source edit and no rebuild (`--no-build` throughout; the log names the release
+  binary's build time, the second check's). Hold 1, one `flock`, Phase 6c's rig: six renders
+  of `lamp-cave` as the entry stands (r8 to r13; r7 is the second check's frame under
+  `live/p6d/check2-frames/`), about 210 s by 6d's 35 s a render; no render starts in a hold
+  600 s old. On the CPU: the 78 pairs of the thirteen, the groups of identical PNGs, each
+  render's largest cell against r1 with its place, and per render the `settled:` line's
+  steps, the first `bake queue:` line's `baked` count and the coarse count at the box. The
+  tolerance by G10. `docs/images/shots.json`: `lamp-cave`'s `tolerance` and `note` (thirteen
+  renders, 78 pairs, the largest pair, "states: twice the largest pair (G10)", the smallest
+  wrong share, that the second check's render refuted the six); `dig`'s and `chapel`'s `note`
+  only ("so 0 stays 0" becomes "0 until a render differs (G10)", with the eight renders). No
+  image changes: the committed file is r1, the common state. Then the third
+  `node scripts/shoot-images.mjs --check --no-build`, after another lane has held the lock
+  since hold 1 or an hour after it. If it reads `dig` or `chapel` over 0, G10 runs here: that
+  render and six more of the entry in one hold, the tolerance, the note, and one more
+  `--check`; at most once per entry. Then the close triggers are filled, the row is added
+  and the resume notes leave the log.
+- **Files touched:** `docs/images/shots.json`, `docs/plans/logs/0093.md`, the plan's
+  `Status:` line and Implementation log (one row; the section stays under its cap).
+- **Done when:** the log holds the table of the thirteen with its groups, each hold's wait,
+  length and load (none over 900 s), and the one line that names `lamp-cave`'s tolerance with
+  its largest pair, the ceiling and the ratio to the smallest wrong share; the last `--check`
+  exits 0 with every judged entry at or under its tolerance; `node scripts/check-images.mjs`
+  exits 0 and `git diff --stat` since Phase 6d's commit names no file under `apps/`,
+  `crates/` or `docs/images/` but `shots.json`; `node --test "scripts/*.test.mjs"`,
+  `check-doc-links.mjs`, `check-plan-size.mjs` and `check-index-rows.mjs` pass. Not run
+  again: the gate tier, clippy, fmt, deny and the doctests, whose results in the log stand
+  for this code (no Rust target reads the manifest; the close review runs the tier itself,
+  G8).
+- **Stop, reported:** a `--check` over a tolerance that is over 0, `lamp-cave`'s new one
+  included (C2's stop: nothing edited, frames and logs to the architect); a pair of the
+  thirteen whose doubled share is over the ceiling is not a stop but G2's `unjudged`; a hold
+  that would pass 900 s; a second round asked of the same entry.
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
