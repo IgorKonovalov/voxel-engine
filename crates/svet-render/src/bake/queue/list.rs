@@ -201,14 +201,7 @@ impl BakeQueue {
             // Its faces were listed with each neighbour the store did not hold read as rock: the
             // neighbours the shadow does not hold full are noted, and the chunk is listed again
             // when one of them is (ADR-0085).
-            let open = (0..6).fold(0u8, |m, f| {
-                let n = ChunkCoord(neighbour(coord, f));
-                if gpu.is_mirrored(n) && !gpu.is_lod(n) {
-                    m
-                } else {
-                    m | 1 << f
-                }
-            });
+            let open = not_held_full(gpu, coord);
             if open != 0 {
                 self.zeroed_open.insert(c, open);
             }
@@ -318,18 +311,30 @@ pub(in crate::bake) fn list_chunk(
     own: Option<&PreparedMasks>,
     held: &Held,
 ) -> (ChunkFaces, bool) {
+    list_chunk_read(world, coord, classes, own, held).0
+}
+
+/// [`list_chunk`] and the neighbours it read absent (neither held nor in the store, so read as
+/// rock), a bit per face: the listing pool's, whose push reads the shadow a step later
+/// ([`BakeQueue::take_listed`]).
+pub(in crate::bake) fn list_chunk_read(
+    world: &World,
+    coord: ChunkCoord,
+    classes: &[u8],
+    own: Option<&PreparedMasks>,
+    held: &Held,
+) -> ((ChunkFaces, bool), u8) {
     {
         let Some(own) = own else {
-            return (
-                list_world_chunk(world, coord, classes).unwrap_or_default(),
-                false,
-            );
+            let (faces, absent) = list_world_chunk_read(world, coord, classes).unwrap_or_default();
+            return ((faces, false), absent);
         };
         let store = world.store();
         let held: [_; 6] = std::array::from_fn(|f| match &held[f] {
             Some(m) => Some(Err(m.clone())),
             None => store.get(ChunkCoord(neighbour(coord, f))).map(Ok),
         });
+        let absent = (0..6).fold(0u8, |m, f| m | u8::from(held[f].is_none()) << f);
         let locks: Vec<_> = held
             .iter()
             .map(|h| match h {
@@ -346,6 +351,19 @@ pub(in crate::bake) fn list_chunk(
                 Err(m) => m.masks.get(slot),
             })
         });
-        (faces, true)
+        ((faces, true), absent)
     }
+}
+
+/// The faces of `coord` whose neighbour `gpu` does not hold full (absent or LOD), a bit per face:
+/// where a ruled record's border waits for an arrival ([`BakeQueue::zeroed_open`]).
+pub(in crate::bake) fn not_held_full(gpu: &Shadow, coord: ChunkCoord) -> u8 {
+    (0..6).fold(0u8, |m, f| {
+        let n = ChunkCoord(neighbour(coord, f));
+        if gpu.is_mirrored(n) && !gpu.is_lod(n) {
+            m
+        } else {
+            m | 1 << f
+        }
+    })
 }

@@ -317,6 +317,16 @@ pub(crate) fn list_faces_by(
 
 /// The faces of `coord` in `world`, whose absent neighbours list nothing across.
 pub fn list_world_chunk(world: &World, coord: ChunkCoord, classes: &[u8]) -> Option<ChunkFaces> {
+    list_world_chunk_read(world, coord, classes).map(|(faces, _)| faces)
+}
+
+/// [`list_world_chunk`] and the neighbours it read absent, a bit per face (`face / 2` the axis,
+/// odd the positive side).
+pub(crate) fn list_world_chunk_read(
+    world: &World,
+    coord: ChunkCoord,
+    classes: &[u8],
+) -> Option<(ChunkFaces, u8)> {
     let store = world.store();
     let chunk = store.get(coord)?;
     let neighbour = |face: usize| {
@@ -333,10 +343,11 @@ pub fn list_world_chunk(world: &World, coord: ChunkCoord, classes: &[u8]) -> Opt
         })
         .collect();
     let refs: [Option<&Chunk>; 6] = std::array::from_fn(|f| locks[f].as_deref());
+    let absent = (0..6).fold(0u8, |m, f| m | u8::from(refs[f].is_none()) << f);
     let c = chunk
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    Some(list_chunk_faces(&c, &refs, classes))
+    Some((list_chunk_faces(&c, &refs, classes), absent))
 }
 
 /// A test of a voxel and its face.
