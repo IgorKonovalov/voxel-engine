@@ -373,7 +373,8 @@ Readings: [`logs/0111.md`](logs/0111.md).
 | 4: the window's tables, and the stop lines read | dev | done; stop lines 1 to 5 read, none fires; deviations: `q-showcase` and `q-outdoor` started at load1 2.31 and 2.87, labelled loaded | committed with this row |
 | 5: the architect's amendment | human | not started | |
 | 6: the remedies (not written) | dev | not written | |
-| 6a: the shadow's notes across a window move are a delta | dev | code and test landed; bars missed: quiet `build` max (10.540, 10.871 against under 8) and `build`-led slow frames (11, 9 against 0); `build` p99 bars met; at the architect; deviations in the log | 1795738b (code), committed with this row (reading) |
+| 6a: the shadow's notes across a window move are a delta | dev | code and test landed; bars missed: quiet `build` max (10.540, 10.871 against under 8) and `build`-led slow frames (11, 9 against 0); `build` p99 bars met; at the architect; deviations in the log | 1795738b (code), fffd2847 (reading) |
+| 6a': the z move's every-column read goes | dev | done; bar missed: quiet F lines' `build` mean (7.118, 6.597 against under 6.0); the other bars met, stop rule not fired; deviations in the log | 0c7d353b (code), committed with this row (reading) |
 | 7: the owner flies the same paths | human | not started | |
 
 ### Notes
