@@ -101,8 +101,9 @@ impl PreRoll {
     /// One step: the mirror's sync submitted in an encoder of its own, then one live-queue
     /// step of [`PreRollConfig::samples`] along `view` (its `samples` is replaced), then the
     /// decision on `work_ms`, the caller's work time spent on the pre-roll before this step.
-    /// A near chunk outside a bounded world (`view.resident` is `None`) that holds no chunk
-    /// counts as settled. A step after the end does nothing and returns the end.
+    /// A near chunk counts as settled by [`Frame::bake_held_for_start`]: a block at the full
+    /// count does, a catch-up due or in a job on it or not. A near chunk outside a bounded world
+    /// (`view.resident` is `None`) that holds no chunk counts as settled. A step after the end does nothing and returns the end.
     #[allow(
         clippy::too_many_arguments,
         reason = "the frame, the mirror, the world and the view the step reads, as the queue's own step takes them"
@@ -148,7 +149,7 @@ impl PreRoll {
             .cfg
             .near
             .iter()
-            .filter(|&&c| frame.bake_settled(c, bounded && world.store().get(c).is_none()))
+            .filter(|&&c| frame.bake_held_for_start(c, bounded && world.store().get(c).is_none()))
             .count();
         let st = frame.bake_queue().map(|q| q.stats()).unwrap_or_default();
         Ok(self.decide(

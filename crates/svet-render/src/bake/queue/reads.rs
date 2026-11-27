@@ -199,6 +199,21 @@ impl QueueRead<'_> {
         (full || self.faceless_now(c) || self.sealed_now(c) || absent) && !busy
     }
 
+    /// Whether `c` counts as holding its light for the start's pre-roll: [`Self::settled`], or
+    /// a block at the full count whose only work is the catch-up it is owed, due or in a job
+    /// ([`BakeQueue::only_catching_up`]). A catch-up opens behind every ready first bake
+    /// (ADR-0070's amendment), so a start that waited for one would wait on the first-bake
+    /// backlog. Under the column wait no block is provisional, and this reads as `settled`.
+    pub fn held_for_start(&self, c: ChunkCoord, absent: bool) -> bool {
+        self.settled(c, absent)
+            || match self.src {
+                Source::Live { queue: q, store } => {
+                    q.only_catching_up(store, c.0, q.lp.chunks().any(|j| j.0 == c.0))
+                }
+                Source::Books(b) => b.catching_up.contains(&c.0),
+            }
+    }
+
     /// Whether `c` has had its first pass: it holds a block (coarse or full), is known to have
     /// no face, or its reach or lights were not ready at its last check.
     pub fn passed(&self, c: ChunkCoord) -> bool {
@@ -235,5 +250,25 @@ impl QueueRead<'_> {
             Source::Books(b) => b.blocked.contains(&c),
         };
         held && !self.inbox.unknown(c)
+    }
+}
+
+impl BakeQueue {
+    /// Whether the only work on `c` is its catch-up: it holds a block at the full count flagged
+    /// provisional and not partial, its catch-up is due or its job (`in_job`) is in the loop,
+    /// and no dig brick, dig job, ring-3 re-bake, partial catch-up or key job is on it. A
+    /// whole-chunk job on such a block that came from the ring-3 set reads as its catch-up: the
+    /// set is left at the job's push.
+    pub(super) fn only_catching_up(&self, store: &Store, c: [i32; 3], in_job: bool) -> bool {
+        self.provisional.contains(&c)
+            && !self.partial.contains(&c)
+            && (self.provisional_due.contains(&c) || in_job)
+            && store.blocks.contains_key(&c)
+            && !self.lesser(store, c)
+            && !self.digs.contains_key(&c)
+            && !self.dig_open.contains_key(&c)
+            && !self.reach.contains(&c)
+            && !self.partial_due.contains(&c)
+            && !self.keys.open.contains(&c)
     }
 }

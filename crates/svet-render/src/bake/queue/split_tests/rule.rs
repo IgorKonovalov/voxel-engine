@@ -48,11 +48,11 @@ pub(super) fn rule_rig(z: i32) -> Rig {
 
 /// The chunk at the top of `C`'s column in [`provisional_rig`], held by the streamer and not
 /// yet mirrored: above the reach box, so `C`'s reach is ready and its column is not final.
-const WAITING: [i32; 3] = [1, 1, 4];
+pub(super) const WAITING: [i32; 3] = [1, 1, 4];
 
 /// [`rule_rig`] five chunks high whose streamer holds every chunk within 8 of the camera, with
 /// [`WAITING`] not mirrored: `C`'s first opening is under a column not final.
-fn provisional_rig() -> Rig {
+pub(super) fn provisional_rig() -> Rig {
     let mut rig = rule_rig(5);
     rig.view.lod_radius = Some(8);
     rig.mirror.absent.insert(WAITING);
@@ -74,7 +74,7 @@ pub(super) fn jobs(rig: &Rig) -> u64 {
     rig.queue.stats.baked - rig.queue.stats.zeroed
 }
 
-fn in_job(rig: &Rig) -> bool {
+pub(super) fn in_job(rig: &Rig) -> bool {
     rig.queue.jobs().contains(&ChunkCoord(C))
 }
 

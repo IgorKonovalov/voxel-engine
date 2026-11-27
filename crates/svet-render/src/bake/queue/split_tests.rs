@@ -981,5 +981,6 @@ fn the_audit_counts_a_block_that_differs_from_the_zero_record() {
 mod lister;
 mod routing;
 mod rule;
+mod start;
 mod stretch;
 mod thread;
