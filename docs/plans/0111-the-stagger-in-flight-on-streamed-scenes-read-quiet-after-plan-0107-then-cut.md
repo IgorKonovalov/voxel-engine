@@ -1,6 +1,6 @@
 # 0111: The stagger in flight on streamed scenes: read quiet after Plan 0107, then cut
 
-> **Status:** in-progress (2026-11-27: Phases 1 and 2 landed; Phase 3, the owner's window runs, next). Was: approved (2026-11-27, owner: "go, recommended": it starts after Plan 0107 merges and does not wait for Plan 0091; he takes Phase 3's window runs in a ten-minute quiet slot; if stop line 1 fires a tester README note is enough). Was: draft (2026-11-27; the owner's go on drafting: "go both"; he approves the draft
+> **Status:** in-progress (2026-11-27: Phases 1 to 4 landed; Phase 5, the architect's amendment, next). Was: approved (2026-11-27, owner: "go, recommended": it starts after Plan 0107 merges and does not wait for Plan 0091; he takes Phase 3's window runs in a ten-minute quiet slot; if stop line 1 fires a tester README note is enough). Was: draft (2026-11-27; the owner's go on drafting: "go both"; he approves the draft
 > before any dev work). Drafted with no interview from the owner's tester report and Plan 0107's
 > Phase 1 reading; the guesses and the questions left are under "Risks & open questions", each
 > with a recommended option.
@@ -367,9 +367,9 @@ Readings: [`logs/0111.md`](logs/0111.md).
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: the `slow frame:` block, and the cave read with it | dev | done; deviations: the block in a new `run/slow_frames.rs` (declared and printed from `run/mod.rs`), `svet-app`'s `lib.rs` and the fly-through's `app.rs` touched, `queue.rs` not; an `events` stage added | 0e317422 |
-| 2: the four paths headless, quiet, then loaded | dev | done; unmet as stated: chunks resident at the path's end (no line prints it; the nearest printed counts given); Hold C runs its own 8-worker cave beside `--workers 4` | committed with this row |
-| 3: the same paths in the tester's window | human | not started | |
-| 4: the window's tables, and the stop lines read | dev | not started | |
+| 2: the four paths headless, quiet, then loaded | dev | done; unmet as stated: chunks resident at the path's end (no line prints it; the nearest printed counts given); Hold C runs its own 8-worker cave beside `--workers 4` | dc1337b6 |
+| 3: the same paths in the tester's window | human | done 2026-11-27 20:12-20:43; folders `live/owner-notes/2026-11-27-0111-p3/{q-cave,q-showcase,q-castle,q-outdoor,l-cave,l-castle,l-outdoor}` (+ `q-cave-try1`, `q-showcase-try1`, a first attempt before the owner's restart); owner: quiet "nope all good", loaded "a bit" more; deviations: launched as the tester's command lines by the runner, not through `svet-tester`; exit codes not recorded | (no commit) |
+| 4: the window's tables, and the stop lines read | dev | done; stop lines 1 to 5 read, none fires; deviations: `q-showcase` and `q-outdoor` started at load1 2.31 and 2.87, labelled loaded | committed with this row |
 | 5: the architect's amendment | human | not started | |
 | 6: the remedies (not written) | dev | not written | |
 | 7: the owner flies the same paths | human | not started | |
