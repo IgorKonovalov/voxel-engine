@@ -70,6 +70,9 @@ pub(crate) struct RunTimes {
     pub(crate) wall_ms: Series,
     pub(crate) cpu_ms: Series,
     pub(crate) stream_ms: Series,
+    /// The streamer's `poll` alone (the finished chunks moved into the world), per streaming
+    /// frame: a part of `stream_ms`.
+    pub(crate) poll_ms: Series,
     pub(crate) gpu_ms: Series,
     /// Frames pushed, and of them those with a GPU time, over the whole run.
     pub(crate) frames: u64,
@@ -92,6 +95,7 @@ impl Default for RunTimes {
             wall_ms: series(),
             cpu_ms: series(),
             stream_ms: series(),
+            poll_ms: series(),
             gpu_ms: series(),
             frames: 0,
             gpu_frames: 0,
@@ -149,8 +153,13 @@ impl RunTimes {
             .sync
             .line()
             .map_or_else(String::new, |l| format!("; {l}"));
+        let poll = if self.poll_ms.values().is_empty() {
+            String::new()
+        } else {
+            format!(" (poll {})", stats(&self.poll_ms))
+        };
         Some(format!(
-            "frames: {} frames; wall {wall}; frame CPU {}; update + poll + sync {}; march GPU {gpu}; blocking reads {blocking}{sync}",
+            "frames: {} frames; wall {wall}; frame CPU {}; update + poll + sync {}{poll}; march GPU {gpu}; blocking reads {blocking}{sync}",
             self.frames,
             stats(&self.cpu_ms),
             stats(&self.stream_ms)
@@ -1009,5 +1018,29 @@ mod tests {
         assert_eq!(per_frame[1..], [0; 99]);
         assert_eq!(hud.text.lines().count(), 13);
         assert_eq!(hud.strip.len(), 100);
+    }
+
+    /// The `frames:` line names `poll`'s p50, p99 and max beside `update + poll + sync` once a
+    /// streaming frame pushed one, and leaves it out of a run that streams nothing.
+    #[test]
+    fn the_frames_line_names_poll_only_when_streaming() {
+        let mut t = RunTimes::default();
+        t.push(4.0, Some(2.0), None);
+        let line = t.line().expect("a frame was pushed");
+        assert!(
+            line.contains("update + poll + sync p50 2.000 ms, p99 2.000 ms, max 2.000 ms; march"),
+            "{line}"
+        );
+        assert!(!line.contains("(poll"), "{line}");
+        for ms in 1..=100 {
+            t.poll_ms.push(f64::from(ms) / 10.0);
+        }
+        let line = t.line().expect("a frame was pushed");
+        assert!(
+            line.contains(
+                "update + poll + sync p50 2.000 ms, p99 2.000 ms, max 2.000 ms (poll p50 5.000 ms, p99 9.900 ms, max 10.000 ms); march"
+            ),
+            "{line}"
+        );
     }
 }

@@ -55,6 +55,7 @@ impl Run {
         let sync_ms = ms_since(ts);
         let cpu = ms_since(t);
         stream.stages_ms = [update_ms, poll_ms, apply_ms, sync_ms];
+        self.hud.run.poll_ms.push(poll_ms);
         stream.tick_ms.push(ms_since(self.start));
         stream.cpu_ms.push(cpu);
         for e in &ev.errors {

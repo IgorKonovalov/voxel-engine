@@ -1,6 +1,6 @@
 # 0107: The mirror's slot image packed on the stream workers
 
-> **Status:** approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
+> **Status:** in-progress (Phase 1 done; Phase 2 next). Approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
 > [the review of 2026-11-26](../reviews/2026-11-26-work-off-the-render-thread.md) on the owner's
 > "all recommended" (its question 1: draft now, Phase 1 the re-read), with no further interview;
 > the guesses and the questions left are under "Risks & open questions", each with a recommended
@@ -491,7 +491,7 @@ The owner: "go on both, all recommended, do not start until these lanes finish".
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the sync's stages re-read, the bake thread on | dev | not started | |
+| 1: the sync's stages re-read, the bake thread on | dev | done; neither the stop line nor the order line fires (loaded); readings in [logs/0107.md](logs/0107.md) | committed with this row |
 | 2: the slot image as a pure function | dev | not started | |
 | 3: the mirror takes an image, behind a setting | dev | not started | |
 | 4: the sizes and the emitters from the image | dev | not started | |
@@ -506,6 +506,10 @@ The owner: "go on both, all recommended, do not start until these lanes finish".
 _(Deviations from the plan, with the commit, stated without justification. Done-whens not
 satisfiable as stated, and what was done instead. Followups noticed and not acted on. One line
 each. Empty is fine.)_
+
+- Phase 1: `poll`'s figure went to the `frames:` exit line (`apps/flythrough/src/run/hud_feed.rs`,
+  `run/frame.rs`), not to `report.rs` / `streaming.rs`; `run.json` does not carry it.
+- Phase 1: both readings were taken loaded (load1 8 to 14, another lane building).
 
 ### Close triggers
 
