@@ -60,6 +60,37 @@ were sized by Plan 0109 Phase 6. Plan 0093, the README rewrite with reproducible
 
 ## Sequence
 
+### From 2026-11-27 (owner: "make sequence for all plans that is appropriate")
+
+Every active plan gets a slot. There are four tracks. The look track takes the GPU lock and the
+owner's windows, so it runs one plan at a time. The other three are mostly headless and run as
+one lane beside it. At most two lanes build at once, and a lane owing a quiet reading gets a
+slot with nothing else building. The numbered list from 2026-11-10 below is the history this
+replaces.
+
+1. **Look and performance (serial, M10):** Plan 0111 (in flight) → Plan 0081 (surface detail;
+   its owner letters first) → Plan 0033's render half → 0034 → 0035 → 0037 → 0036 → Plan 0110
+   (approved 2026-11-27: after M10 and after Plan 0091).
+2. **World briefs beside the look track:** Plan 0033's world brief 3 starts after 0111's quiet
+   runs (Phases 2 and 3) and runs beside 0111's later phases and 0081. Its lane merges main
+   first.
+3. **Tooling (one lane):** Plan 0089 (deterministic simulation testing) → 0091 (frame profiler)
+   → 0092 (WGSL hot reload) → 0090 (pop counter), the owner's order of 2026-11-19. Plan 0090
+   does not hold Plan 0081 (its question 4, recommended "no"). The M10 light plans that land
+   after 0090 pass its ratchet.
+4. **Entities and world (one lane, alternating with tooling when two lanes already build):**
+   Plan 0082 (squash and stretch) → 0085 (variants, a held clip, an entity stamped into the
+   world); Plan 0084 (staged structures) after 0085, or beside it when only one other lane is
+   open.
+5. **The consumer's path, alone:** Plan 0071 renames across the crates, so like Plan 0087 it
+   runs when no other lane is open: in the gap after M10's last plan (0036) closes, before Plan
+   0110. Plan 0073 (the settings menu and file) follows it, beside Plan 0110.
+
+Parked: Plan 0103 (pipeline cache). Small chores (the cave's window `--pre-roll` back to `full`,
+owner 2026-11-27) go between phases on whichever lane is idle.
+
+### From 2026-11-10
+
 The order the active plans run in (owner, 2026-11-10, set at the review of every active plan;
 amended 2026-11-11: Plan 0045 moves ahead of Plan 0058 and the rest of Plan 0044).
 Each starts on main after the one before it closes, unless its line says otherwise.
