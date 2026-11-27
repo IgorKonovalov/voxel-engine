@@ -101,8 +101,9 @@ impl PreRoll {
     /// One step: the mirror's sync submitted in an encoder of its own, then one live-queue
     /// step of [`PreRollConfig::samples`] along `view` (its `samples` is replaced), then the
     /// decision on `work_ms`, the caller's work time spent on the pre-roll before this step.
-    /// A near chunk outside a bounded world (`view.resident` is `None`) that holds no chunk
-    /// counts as settled. A step after the end does nothing and returns the end.
+    /// A near chunk counts as settled by [`Frame::bake_held_for_start`]: a block at the full
+    /// count does, a catch-up due or in a job on it or not. A near chunk outside a bounded world
+    /// (`view.resident` is `None`) that holds no chunk counts as settled. A step after the end does nothing and returns the end.
     #[allow(
         clippy::too_many_arguments,
         reason = "the frame, the mirror, the world and the view the step reads, as the queue's own step takes them"
@@ -148,7 +149,7 @@ impl PreRoll {
             .cfg
             .near
             .iter()
-            .filter(|&&c| frame.bake_settled(c, bounded && world.store().get(c).is_none()))
+            .filter(|&&c| frame.bake_held_for_start(c, bounded && world.store().get(c).is_none()))
             .count();
         let st = frame.bake_queue().map(|q| q.stats()).unwrap_or_default();
         Ok(self.decide(
@@ -309,6 +310,59 @@ mod tests {
             panic!("capped past 120 s of work");
         };
         assert!(s.capped && !s.boxed);
+    }
+
+    /// A box of 0 ms (`--pre-roll near`): a near list of 2 is `Near` until it settles,
+    /// `Coarse` on that step (0 ms past the near chunks' moment is not over the box), and
+    /// `Done` on the next, boxed, with the cover of 4 unpassed as its `coarse_chunks` and
+    /// `steps` the near step plus 1. An empty near list settles at step 1 and ends at step 2
+    /// with `near_baked` 0.
+    #[test]
+    fn a_zero_box_ends_the_pre_roll_the_step_after_the_near_moment() {
+        let mut p = pre_roll(2, 16);
+        p.cfg.box_ms = 0.0;
+        assert_eq!(
+            p.decide(40.0, 0, (0, 10), || unreachable!(), |_| unreachable!()),
+            PreRollState::Near { settled: 0, of: 2 }
+        );
+        assert_eq!(
+            p.decide(80.0, 1, (1, 20), || unreachable!(), |_| unreachable!()),
+            PreRollState::Near { settled: 1, of: 2 }
+        );
+        assert_eq!(
+            p.decide(120.0, 2, (2, 30), || chunks(4), |_| 0),
+            PreRollState::Coarse { passed: 0, of: 4 }
+        );
+        let PreRollState::Done(s) = p.decide(160.0, 2, (3, 40), || unreachable!(), |_| 0) else {
+            panic!("a 0 ms box ends the pre-roll the step after the near chunks' moment");
+        };
+        assert_eq!(
+            s,
+            PreRollSummary {
+                steps: 4,
+                near_ms: 120.0,
+                near_baked: 2,
+                near_samples: 30,
+                total_ms: 160.0,
+                baked: 3,
+                samples: 40,
+                coarse_chunks: 4,
+                boxed: true,
+                capped: false,
+            }
+        );
+
+        let mut p = pre_roll(0, 16);
+        p.cfg.box_ms = 0.0;
+        assert_eq!(
+            p.decide(40.0, 0, (0, 10), || chunks(4), |_| 0),
+            PreRollState::Coarse { passed: 0, of: 4 }
+        );
+        let PreRollState::Done(s) = p.decide(80.0, 0, (1, 20), || unreachable!(), |_| 0) else {
+            panic!("an empty near list with a 0 ms box ends at step 2");
+        };
+        assert_eq!((s.steps, s.near_baked, s.coarse_chunks), (2, 0, 4));
+        assert!(s.boxed && !s.capped);
     }
 
     /// The coarse pass ends the pre-roll once every chunk it covers has passed; with coarse 0

@@ -439,7 +439,7 @@ pub(crate) fn write_queue_banner_row(out: &mut String, args: &Args, words: &str)
     }
     let _ = write!(
         out,
-        ", full-first {}, budget {}, missing light {}, reach {}, digs +{} ms{}, ring 3 {}, bake thread {}; {words} (Tab: the light queue page)",
+        ", full-first {}, budget {}, missing light {}, reach {}, digs +{} ms{}, ring 3 {}, pre-roll {}, bake thread {}; {words} (Tab: the light queue page)",
         FullFirstWords(args.full_first()),
         args.bake.budget,
         args.bake.missing_light.name(),
@@ -447,6 +447,7 @@ pub(crate) fn write_queue_banner_row(out: &mut String, args: &Args, words: &str)
         args.bake.edit_ms,
         StretchWords(args.bake.ring1_stretch, ", "),
         if args.bake.dig_reach { "on" } else { "off" },
+        args.pre_roll().name(),
         if args.bake_thread() { "on" } else { "off" },
     );
 }
@@ -609,6 +610,7 @@ impl Run {
                 self.queue.line_split_p50[1],
             ],
         );
+        let _ = write!(queue, "; pre-roll {}", args.pre_roll().name());
         queue.push_str(if args.bake_thread() {
             "; bake thread on"
         } else {
@@ -725,13 +727,7 @@ impl Run {
         let t = now();
         let h = &mut self.hud;
         h.readout.clear();
-        let _ = write!(
-            h.readout,
-            "fps {:.1}  frame {:.1} ms p99 {:.1}",
-            h.frames.fps(),
-            h.frames.frame_ms_p50(),
-            h.frames.frame_ms_p99()
-        );
+        h.frames.write_readout(&mut h.readout);
         let panel = crate::hud::menu::Panel::of(size[0], size[1]);
         let backdrop = crate::hud::menu::place(
             &h.text,
@@ -795,6 +791,12 @@ impl Run {
         if let Some(p) = &self.player {
             hud::write_path_row(out, p, self.args.tester);
             if self.args.tester {
+                // The tester's one frame row (the stats HUD stays out of reach, ADR-0054):
+                // the wall frame window's fps, median and p99, once a frame is recorded.
+                if self.hud.frames.frames_total() > 0 {
+                    hud::start_row(out);
+                    self.hud.frames.write_readout(out);
+                }
                 if self.help {
                     hud::write_help_panel(out, p, self.modes.lighting.lamp);
                 }

@@ -48,11 +48,11 @@ pub(super) fn rule_rig(z: i32) -> Rig {
 
 /// The chunk at the top of `C`'s column in [`provisional_rig`], held by the streamer and not
 /// yet mirrored: above the reach box, so `C`'s reach is ready and its column is not final.
-const WAITING: [i32; 3] = [1, 1, 4];
+pub(super) const WAITING: [i32; 3] = [1, 1, 4];
 
 /// [`rule_rig`] five chunks high whose streamer holds every chunk within 8 of the camera, with
 /// [`WAITING`] not mirrored: `C`'s first opening is under a column not final.
-fn provisional_rig() -> Rig {
+pub(super) fn provisional_rig() -> Rig {
     let mut rig = rule_rig(5);
     rig.view.lod_radius = Some(8);
     rig.mirror.absent.insert(WAITING);
@@ -74,7 +74,7 @@ pub(super) fn jobs(rig: &Rig) -> u64 {
     rig.queue.stats.baked - rig.queue.stats.zeroed
 }
 
-fn in_job(rig: &Rig) -> bool {
+pub(super) fn in_job(rig: &Rig) -> bool {
     rig.queue.jobs().contains(&ChunkCoord(C))
 }
 
@@ -284,10 +284,31 @@ fn a_ruled_chunk_is_relisted_when_the_rule_stops_holding() {
 
 /// The chunk over `C` in [`partial_rig`]'s window, given a slab of rock at its bottom by
 /// [`border_rig`]: its six neighbours are held from the start.
-const D: [i32; 3] = [1, 1, 2];
+pub(super) const D: [i32; 3] = [1, 1, 2];
 /// `C`'s neighbour across its negative x face: air, so `C`'s slab lists faces toward it once it
 /// is held.
-const N: [i32; 3] = [0, 1, 1];
+pub(super) const N: [i32; 3] = [0, 1, 1];
+
+/// Gives [`D`] in `world` (a [`rock_world`]) the slab of rock at its bottom that `C` has.
+pub(super) fn slab_in_d(world: &World) {
+    let rock = world
+        .material_at([C[0] * 64, C[1] * 64, C[2] * 64])
+        .expect("C's slab is resident");
+    let min = D.map(|v| i64::from(v) * 64);
+    let max = [min[0] + 63, min[1] + 63, min[2] + i64::from(SLAB_TOP) - 1];
+    world
+        .apply(&box_op(min, max, Mode::Fill(rock)))
+        .expect("resident");
+}
+
+/// Takes [`N`] out of `world`'s store: the chunk it held.
+pub(super) fn take_n(world: &World) -> Chunk {
+    let n = world
+        .store()
+        .remove(ChunkCoord(N))
+        .expect("N is in the store");
+    n.read().expect("unpoisoned").clone()
+}
 
 /// `c`'s faces as a listing reads the world now.
 fn faces_of(rig: &mut Rig, c: [i32; 3]) -> usize {
@@ -302,21 +323,8 @@ fn faces_of(rig: &mut Rig, c: [i32; 3]) -> usize {
 /// neither the mirror nor the world's store; the chunk it took out of the store.
 fn border_rig() -> (Rig, Chunk) {
     let mut rig = partial_rig();
-    let rock = rig
-        .world
-        .material_at([C[0] * 64, C[1] * 64, C[2] * 64])
-        .expect("C's slab is resident");
-    let min = D.map(|v| i64::from(v) * 64);
-    let max = [min[0] + 63, min[1] + 63, min[2] + i64::from(SLAB_TOP) - 1];
-    rig.world
-        .apply(&box_op(min, max, Mode::Fill(rock)))
-        .expect("resident");
-    let n = rig
-        .world
-        .store()
-        .remove(ChunkCoord(N))
-        .expect("N is in the store");
-    let n = n.read().expect("unpoisoned").clone();
+    slab_in_d(&rig.world);
+    let n = take_n(&rig.world);
     rig.mirror.absent.insert(N);
     (rig, n)
 }

@@ -287,6 +287,116 @@ fn the_pre_roll_drain_takes_seconds_and_its_banner_names_the_state() {
     assert_eq!(row(Drain::Off, 0.0), "");
 }
 
+/// Plan 0108 Phase 1: `--pre-roll` takes full, near and off, is full headless unless given
+/// (the window's default by source is the test below), refuses a fourth value, and names itself on the banner's queue row beside the bake thread; near and
+/// off refuse `--pre-roll-drain`, full takes it. Near and off box the coarse pass at 0 ms with
+/// `--pre-roll-stepped` too (which then lifts only the cap), full keeps the 5 s box and the
+/// 120 s cap, or neither with the stepped flag.
+#[test]
+fn the_pre_roll_takes_full_near_or_off_and_the_banner_names_it() {
+    use crate::cli::PreRollMode;
+    use crate::run::hud_feed::write_queue_banner_row;
+    use crate::run::loading::pre_roll_limits;
+    let mode = |a: &[&str]| parse_args_from(argv(a)).map(|r| r.pre_roll());
+    assert_eq!(
+        mode(&["--headless", "--source", "outdoor"]),
+        Ok(PreRollMode::Full)
+    );
+    assert_eq!(mode(&["--headless"]), Ok(PreRollMode::Full));
+    for (v, want) in [
+        ("full", PreRollMode::Full),
+        ("near", PreRollMode::Near),
+        ("off", PreRollMode::Off),
+    ] {
+        assert_eq!(
+            mode(&["--source", "outdoor", "--pre-roll", v]),
+            Ok(want),
+            "{v}"
+        );
+        let r = parse_args_from(argv(&["--headless", "--pre-roll", v])).unwrap();
+        let mut row = String::new();
+        write_queue_banner_row(&mut row, &r, "w");
+        assert!(
+            row.contains(&format!(", ring 3 on, pre-roll {v}, bake thread off; w")),
+            "{row}"
+        );
+    }
+    assert!(mode(&["--pre-roll", "coarse"]).is_err());
+    assert!(mode(&["--pre-roll"]).is_err());
+
+    let drain = |v: &str| parse_args_from(argv(&["--pre-roll", v, "--pre-roll-drain", "30"]));
+    assert!(drain("full").is_ok());
+    for v in ["near", "off"] {
+        let Err(e) = drain(v) else {
+            panic!("--pre-roll {v} with --pre-roll-drain is refused");
+        };
+        assert!(
+            e.contains(&format!("--pre-roll {v}")) && e.contains("--pre-roll-drain"),
+            "{e}"
+        );
+    }
+
+    let limits = |a: &[&str]| pre_roll_limits(&parse_args_from(argv(a)).unwrap());
+    assert_eq!(limits(&["--source", "outdoor"]), (0.0, 120_000.0));
+    assert_eq!(limits(&["--source", "showcase"]), (5000.0, 120_000.0));
+    assert_eq!(limits(&["--headless"]), (5000.0, 120_000.0));
+    assert_eq!(
+        limits(&["--headless", "--pre-roll", "near"]),
+        (0.0, 120_000.0)
+    );
+    assert_eq!(
+        limits(&["--headless", "--pre-roll", "off"]),
+        (0.0, 120_000.0)
+    );
+    let stepped = |v: &str| limits(&["--headless", "--pre-roll-stepped", "--pre-roll", v]);
+    assert_eq!(stepped("full"), (f64::INFINITY, f64::INFINITY));
+    assert_eq!(stepped("near"), (0.0, f64::INFINITY));
+    assert_eq!(stepped("off"), (0.0, f64::INFINITY));
+}
+
+/// Plan 0108 Phase 4, the owner's pick: unset, `--pre-roll` is `near` in a window over a
+/// streamed source (`cave`, `outdoor`) and `full` over a bounded one (`level`, `showcase`);
+/// `full` under `--headless` for all four, and `full` with `--pre-roll-drain` in a window. The
+/// banner's queue row names the mode in effect beside the bake thread's. A given value wins
+/// everywhere.
+#[test]
+fn the_pre_roll_defaults_to_near_in_a_window_over_a_streamed_source_only() {
+    use crate::cli::PreRollMode;
+    use crate::run::hud_feed::write_queue_banner_row;
+    let parse = |a: &[&str]| parse_args_from(argv(a)).unwrap();
+    for (source, window) in [
+        ("cave", PreRollMode::Near),
+        ("outdoor", PreRollMode::Near),
+        ("level", PreRollMode::Full),
+        ("showcase", PreRollMode::Full),
+    ] {
+        for (headless, want, thread) in [(false, window, "on"), (true, PreRollMode::Full, "off")] {
+            let mut a = vec!["--source", source];
+            if headless {
+                a.push("--headless");
+            }
+            let r = parse(&a);
+            assert_eq!(r.pre_roll(), want, "{a:?}");
+            let mut row = String::new();
+            write_queue_banner_row(&mut row, &r, "w");
+            assert!(
+                row.contains(&format!(
+                    ", ring 3 on, pre-roll {}, bake thread {thread}; w",
+                    want.name()
+                )),
+                "{a:?}: {row}"
+            );
+            for given in ["full", "near", "off"] {
+                let mut g = a.clone();
+                g.extend(["--pre-roll", given]);
+                assert_eq!(parse(&g).pre_roll().name(), given, "{g:?}");
+            }
+        }
+    }
+    let drained = parse(&["--source", "outdoor", "--pre-roll-drain", "30"]);
+    assert_eq!(drained.pre_roll(), PreRollMode::Full);
+}
+
 /// `--sky-anchor-floor` reaches the auto exposure, 1/8 by default and unnamed; another value is
 /// named `sky anchor floor X` and `off` (0) `sky anchor floor off` with a sky set; out of (0,
 /// 1] it is refused; `--check-args` accepts it.

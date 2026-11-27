@@ -163,7 +163,11 @@ fn headless_run_trace() -> Option<String> {
 /// `RUN_BOUND`, and the panic then prints both of the run's streams: its stdout names the
 /// adapter and each start-up stage it finished, which its stderr's log lines do not.
 fn headless_run(extra: &[&str]) -> Option<(std::process::ExitStatus, String)> {
-    const RUN_BOUND: Duration = Duration::from_secs(120);
+    // A kill guard, not a claim: ten times the slowest child read loaded (43.9 s, the
+    // quitting-while-loading child, lavapipe beside a looping quick tier at load 49 to 68,
+    // the slowest of ten runs of each gate child; Plan 0109 Phase 6a), ratio 10.0. A child's
+    // time under load is mostly pipeline compilation, which no test here claims.
+    const RUN_BOUND: Duration = Duration::from_secs(440);
     // The default look: the teardown trace needs no band slots, and a mirror without them
     // builds no field pass, so the run's start does not wait on a software adapter's initial
     // fill. The live queue's pre-roll at its smallest (`--near 0 --coarse 0`): the camera's

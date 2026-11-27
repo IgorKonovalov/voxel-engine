@@ -17,11 +17,12 @@ use svet_world::{MaterialId, MaterialTable};
 
 use crate::setup::CrispRows;
 
-/// The file the fly-through reads unless `--materials` names another.
+/// The material file in the source tree. A run reads `materials.txt` in
+/// [`crate::assets::root`] unless `--materials` names another: this path in a dev build.
 pub const DEFAULT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/materials.txt");
 
-/// The default file as built in, for a binary run away from its source tree: read when
-/// [`DEFAULT_PATH`] is missing, and then not watched.
+/// The default file as built in, for a binary run away from its source tree: read when the
+/// assets folder holds no `materials.txt`, and then not watched.
 pub const BUILT_IN: &str = include_str!("../assets/materials.txt");
 
 /// The cave's rows, ids 1 to 4.
@@ -126,7 +127,7 @@ impl Selection {
 }
 
 /// Reads the material file: `path` when given (an error if it does not read or parse), else
-/// [`DEFAULT_PATH`], or [`BUILT_IN`] when that is missing. Returns the file and the path to
+/// `materials.txt` in [`crate::assets::root`], or [`BUILT_IN`] when that is missing. Returns the file and the path to
 /// watch (`None` for the built-in copy).
 pub fn load(path: Option<&Path>) -> Result<(MaterialFile, Option<PathBuf>), String> {
     let (text, watched) = match path {
@@ -134,10 +135,13 @@ pub fn load(path: Option<&Path>) -> Result<(MaterialFile, Option<PathBuf>), Stri
             std::fs::read_to_string(p).map_err(|e| format!("--materials {}: {e}", p.display()))?,
             Some(p.to_path_buf()),
         ),
-        None => match std::fs::read_to_string(DEFAULT_PATH) {
-            Ok(t) => (t, Some(PathBuf::from(DEFAULT_PATH))),
-            Err(_) => (BUILT_IN.to_owned(), None),
-        },
+        None => {
+            let default = crate::assets::path("materials.txt");
+            match std::fs::read_to_string(&default) {
+                Ok(t) => (t, Some(default)),
+                Err(_) => (BUILT_IN.to_owned(), None),
+            }
+        }
     };
     let shown = watched.as_ref().map_or_else(
         || "the built-in materials".to_owned(),

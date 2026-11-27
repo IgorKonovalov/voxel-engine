@@ -477,6 +477,14 @@ impl Frame {
         self.bake_queue().is_some_and(|q| q.settled(c, absent))
     }
 
+    /// [`Frame::bake_settled`] as the start's pre-roll reads it: a block at the full count whose
+    /// only work is the catch-up it is owed counts as held
+    /// ([`crate::bake::QueueRead::held_for_start`]). False without the queue.
+    pub fn bake_held_for_start(&self, c: ChunkCoord, absent: bool) -> bool {
+        self.bake_queue()
+            .is_some_and(|q| q.held_for_start(c, absent))
+    }
+
     /// One frame of the live queue, ahead of the encode: the light-sample ranges held out to
     /// `view.hold` (by default the window's far corner plus the light radius), then [`crate::bake::BakeQueue::step`], which
     /// waits on the GPU only without a slice (`view.samples`). `gpu` must already hold this frame's sync, submitted. `None` without

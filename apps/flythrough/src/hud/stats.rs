@@ -131,6 +131,19 @@ impl FrameStats {
         a.iter().chain(b).copied()
     }
 
+    /// Appends the frame readout to `out`: `fps 59.9  frame 16.7 ms p99 18.2`, the window's
+    /// fps, median and p99. The open menu's top row and the tester's banner show it; two
+    /// sorts of the 240-frame window's stack copy, no allocation once `out` has grown.
+    pub fn write_readout(&self, out: &mut String) {
+        let _ = write!(
+            out,
+            "fps {:.1}  frame {:.1} ms p99 {:.1}",
+            self.fps(),
+            self.frame_ms_p50(),
+            self.frame_ms_p99()
+        );
+    }
+
     /// The window's summary.
     pub fn frame_ms(&self) -> FrameMs {
         FrameMs {

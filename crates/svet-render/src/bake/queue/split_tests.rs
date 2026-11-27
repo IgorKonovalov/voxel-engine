@@ -585,7 +585,13 @@ fn an_edit_reads_unsettled_before_the_next_step() {
     let beside = [-1, 0, 0];
     for r in [&mut waits, &mut eager] {
         r.queue.faceless.insert(beside);
-        r.queue.blocked.insert(beside, Default::default());
+        r.queue.blocked.insert(
+            beside,
+            Blocked {
+                at: 0,
+                by: Blocker::Lights,
+            },
+        );
     }
     assert!(waits.read().settled(ChunkCoord(beside), false));
     let (lo, hi) = ([0, 20, 4], [3, 23, 7]);
@@ -976,6 +982,7 @@ fn the_audit_counts_a_block_that_differs_from_the_zero_record() {
 mod lister;
 mod routing;
 mod rule;
+mod start;
 mod stretch;
 mod thread;
 mod whole;

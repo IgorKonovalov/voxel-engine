@@ -464,7 +464,7 @@ many.
 - **No cut of the staging copy** (`stage`, the belt's view drop, about an eighth of
   `upload_record` in the profile). A copy of a chunk's words as one run a bin is a follow-on
   if Phase 5 shows the copy leading.
-- **Nothing for the start-up.** That is [Plan 0108](0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md).
+- **Nothing for the start-up.** That is [Plan 0108](done/0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md).
 - **No frame profiler scopes** (Plan 0091); the sync's stage clocks are enough here.
 
 ## Amended 2026-11-26 (owner)

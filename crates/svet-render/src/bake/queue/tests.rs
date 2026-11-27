@@ -537,7 +537,7 @@ fn a_chunks_count_and_tier_follow_its_band() {
 /// (a record at the near count) re-queues the ring.
 #[test]
 fn a_far_band_chunk_whose_reach_crosses_the_full_radius_bakes_from_the_chunks_resident() {
-    use super::reach::{reach_by, reach_verdict};
+    use super::reach::{reach_verdict, reach_walk};
     let (lr, r) = (4, 16);
     let eye = [0, 0, 0];
     let bands = Bands {
@@ -549,7 +549,7 @@ fn a_far_band_chunk_whose_reach_crosses_the_full_radius_bakes_from_the_chunks_re
     let within = |c: ChunkCoord, r: i32| c.0.iter().map(|&d| d * d).sum::<i32>() <= r * r;
     let verdict = |c: ChunkCoord, r: i32, mode: ReachMode, pending: Option<ChunkCoord>| {
         let mode = mode.for_band(bands.of_chunk(c.0, eye_c) == Band::Near);
-        let reach = reach_by(
+        let (reach, _) = reach_walk(
             c,
             lr,
             |n| Some(n) == pending,

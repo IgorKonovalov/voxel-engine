@@ -410,12 +410,43 @@ pub(super) struct Pipelines {
     layouts: [Option<wgpu::BindGroupLayout>; PASSES.len()],
     /// Each pass's pipeline, built with the frame unless the pass is lazy.
     built: [OnceLock<wgpu::ComputePipeline>; PASSES.len()],
+    /// The threads a start-up build ([`Pipelines::new`], [`Pipelines::prepare_entities`],
+    /// [`Pipelines::prepare_light_arms`]) creates its pipelines on.
+    pub(super) threads: usize,
+    /// Each pipeline a start-up build created, by label, with its wall time in ms, in the
+    /// order of the build's jobs.
+    times: std::sync::Mutex<Vec<(&'static str, f64)>>,
+}
+
+/// The most threads a start-up build takes.
+pub(super) const MAX_BUILD_THREADS: usize = 8;
+
+/// One pipeline of a start-up build.
+#[derive(Clone, Copy)]
+enum Job {
+    /// The hit pass's pipeline, with `ENTITIES` true or false.
+    Hit(HitPipe, bool),
+    /// Pass `p` of [`PASSES`].
+    Pass(usize),
+}
+
+impl Job {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Hit(which, false) => which.label(),
+            Self::Hit(which, true) => which.entity_label(),
+            Self::Pass(p) => PASSES[p].label,
+        }
+    }
 }
 
 impl Pipelines {
-    pub(super) fn new(device: &wgpu::Device) -> Self {
+    /// The layouts and every pipeline but the lazy passes', created on `threads` scoped
+    /// threads (clamped to 1..=[`MAX_BUILD_THREADS`]; 1 builds on the calling thread).
+    pub(super) fn new(device: &wgpu::Device, threads: usize) -> Self {
+        let threads = threads.clamp(1, MAX_BUILD_THREADS);
         let world_layout = world_layout(device);
-        let hit = Marcher::new(device, &world_layout);
+        let hit_layouts = Marcher::layouts(device);
         let layouts = PASSES.each_ref().map(|spec| {
             spec.groups.iter().find_map(|g| match *g {
                 Group::Own(io) => Some(io_layout(device, spec.label, io)),
@@ -423,76 +454,237 @@ impl Pipelines {
                 _ => None,
             })
         });
-        let pipes = Self {
-            world_layout,
-            hit,
-            probe_layout: probe_layout(device),
-            layouts,
-            built: std::array::from_fn(|_| OnceLock::new()),
-        };
-        for (p, spec) in PASSES.iter().enumerate() {
-            if !spec.lazy {
-                pipes.pipeline(device, p);
+        let probe_layout = probe_layout(device);
+        let built: [OnceLock<wgpu::ComputePipeline>; PASSES.len()] =
+            std::array::from_fn(|_| OnceLock::new());
+        let bare: [OnceLock<wgpu::ComputePipeline>; 3] = std::array::from_fn(|_| OnceLock::new());
+        let jobs: Vec<Job> = HitPipe::ALL
+            .into_iter()
+            .map(|which| Job::Hit(which, false))
+            .chain(
+                (0..PASSES.len())
+                    .filter(|&p| !PASSES[p].lazy)
+                    .map(Job::Pass),
+            )
+            .collect();
+        let ms = run_jobs(threads, jobs.len(), |j| match jobs[j] {
+            Job::Hit(which, entities) => {
+                let [out, resume] = &hit_layouts;
+                let pipe =
+                    Marcher::build_one(device, &world_layout, [out, resume], which, entities);
+                let _ = bare[which as usize].set(pipe);
             }
+            Job::Pass(p) => {
+                built[p]
+                    .get_or_init(|| build_pass(device, p, &world_layout, &probe_layout, &layouts));
+            }
+        });
+        let bare = bare.map(|b| b.into_inner().expect("every hit job ran"));
+        Self {
+            world_layout,
+            hit: Marcher::from_parts(hit_layouts, bare),
+            probe_layout,
+            layouts,
+            built,
+            threads,
+            times: std::sync::Mutex::new(labelled(&jobs, &ms)),
         }
-        pipes
     }
 
     /// Builds the hit pass's `ENTITIES`-true set and both light pipelines (`P_LIGHT` and
-    /// `P_LIGHT_BARE`) unless they are built, so no later frame, with entities or without,
-    /// builds a pipeline outside the steps view and the store counters.
+    /// `P_LIGHT_BARE`) unless they are built, on [`Pipelines::threads`] threads, so no later
+    /// frame, with entities or without, builds a pipeline outside the steps view and the
+    /// store counters.
     pub(super) fn prepare_entities(&self, device: &wgpu::Device) {
-        self.hit.prepare_entities(device, &self.world_layout);
-        self.pipeline(device, P_LIGHT);
-        self.pipeline(device, P_LIGHT_BARE);
+        let set: [OnceLock<wgpu::ComputePipeline>; 3] = std::array::from_fn(|_| OnceLock::new());
+        let hits = if self.hit.entities_built() {
+            Vec::new()
+        } else {
+            HitPipe::ALL.map(|which| Job::Hit(which, true)).to_vec()
+        };
+        let jobs: Vec<Job> = hits
+            .into_iter()
+            .chain(self.unbuilt([P_LIGHT, P_LIGHT_BARE]))
+            .collect();
+        let ms = run_jobs(self.threads, jobs.len(), |j| match jobs[j] {
+            Job::Hit(which, entities) => {
+                let layouts = [&self.hit.out_layout, &self.hit.resume_layout];
+                let pipe = Marcher::build_one(device, &self.world_layout, layouts, which, entities);
+                let _ = set[which as usize].set(pipe);
+            }
+            Job::Pass(p) => {
+                self.pipeline(device, p);
+            }
+        });
+        if let [Some(a), Some(b), Some(c)] = set.map(OnceLock::into_inner) {
+            self.hit.set_entities([a, b, c]);
+        }
+        self.note(&jobs, &ms);
     }
 
     /// Builds the light pass's variants with the default-off arms compiled in
-    /// (`P_LIGHT_ARMS` and `P_LIGHT_BARE_ARMS`) unless they are built.
+    /// (`P_LIGHT_ARMS` and `P_LIGHT_BARE_ARMS`) unless they are built, on
+    /// [`Pipelines::threads`] threads.
     pub(super) fn prepare_light_arms(&self, device: &wgpu::Device) {
-        self.pipeline(device, P_LIGHT_ARMS);
-        self.pipeline(device, P_LIGHT_BARE_ARMS);
+        let jobs: Vec<Job> = self.unbuilt([P_LIGHT_ARMS, P_LIGHT_BARE_ARMS]).collect();
+        let ms = run_jobs(self.threads, jobs.len(), |j| {
+            if let Job::Pass(p) = jobs[j] {
+                self.pipeline(device, p);
+            }
+        });
+        self.note(&jobs, &ms);
+    }
+
+    /// The passes of `passes` whose pipelines are not built, as jobs.
+    fn unbuilt<const N: usize>(&self, passes: [usize; N]) -> impl Iterator<Item = Job> + '_ {
+        passes
+            .into_iter()
+            .filter(|&p| self.built[p].get().is_none())
+            .map(Job::Pass)
+    }
+
+    /// Appends the jobs' times to [`Pipelines::times`].
+    fn note(&self, jobs: &[Job], ms: &[f64]) {
+        self.times
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .extend(labelled(jobs, ms));
+    }
+
+    /// Every pipeline the start-up builds have created so far, by label, with its wall time
+    /// in ms, in build order.
+    pub(super) fn build_times(&self) -> Vec<(&'static str, f64)> {
+        self.times
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Pass `p`'s own group layout, or the layout it shares.
     pub(super) fn layout(&self, p: usize) -> &wgpu::BindGroupLayout {
-        let at = PASSES[p]
-            .groups
-            .iter()
-            .find_map(|g| match *g {
-                Group::SharedWith(q) => Some(q),
-                _ => None,
-            })
-            .unwrap_or(p);
-        self.layouts[at]
-            .as_ref()
-            .expect("PASSES gives every pass whose layout is read a group of its own")
+        pass_layout(&self.layouts, p)
     }
 
     /// Pass `p`'s pipeline, built on its first use.
     pub(super) fn pipeline(&self, device: &wgpu::Device, p: usize) -> &wgpu::ComputePipeline {
         self.built[p].get_or_init(|| {
-            let spec = &PASSES[p];
-            let layouts: Vec<Option<&wgpu::BindGroupLayout>> = spec
-                .groups
-                .iter()
-                .map(|g| match g {
-                    Group::World => Some(&self.world_layout),
-                    Group::Empty => None,
-                    Group::Own(_) | Group::OwnAt(_) | Group::SharedWith(_) => Some(self.layout(p)),
-                    Group::Probes => Some(&self.probe_layout),
-                })
-                .collect();
-            compute_pipeline_with(
+            build_pass(
                 device,
-                spec.label,
-                spec.source(),
-                &layouts,
-                spec.entry,
-                spec.constants,
+                p,
+                &self.world_layout,
+                &self.probe_layout,
+                &self.layouts,
             )
         })
     }
+}
+
+/// Each job's label beside its time.
+fn labelled(jobs: &[Job], ms: &[f64]) -> Vec<(&'static str, f64)> {
+    jobs.iter()
+        .map(|j| j.label())
+        .zip(ms.iter().copied())
+        .collect()
+}
+
+/// Pass `p`'s own group layout of `layouts`, or the layout it shares.
+fn pass_layout(
+    layouts: &[Option<wgpu::BindGroupLayout>; PASSES.len()],
+    p: usize,
+) -> &wgpu::BindGroupLayout {
+    let at = PASSES[p]
+        .groups
+        .iter()
+        .find_map(|g| match *g {
+            Group::SharedWith(q) => Some(q),
+            _ => None,
+        })
+        .unwrap_or(p);
+    layouts[at]
+        .as_ref()
+        .expect("PASSES gives every pass whose layout is read a group of its own")
+}
+
+/// Pass `p`'s pipeline over the world's, the probe volume's and the passes' layouts.
+fn build_pass(
+    device: &wgpu::Device,
+    p: usize,
+    world_layout: &wgpu::BindGroupLayout,
+    probe_layout: &wgpu::BindGroupLayout,
+    layouts: &[Option<wgpu::BindGroupLayout>; PASSES.len()],
+) -> wgpu::ComputePipeline {
+    let spec = &PASSES[p];
+    let groups: Vec<Option<&wgpu::BindGroupLayout>> = spec
+        .groups
+        .iter()
+        .map(|g| match g {
+            Group::World => Some(world_layout),
+            Group::Empty => None,
+            Group::Own(_) | Group::OwnAt(_) | Group::SharedWith(_) => Some(pass_layout(layouts, p)),
+            Group::Probes => Some(probe_layout),
+        })
+        .collect();
+    compute_pipeline_with(
+        device,
+        spec.label,
+        spec.source(),
+        &groups,
+        spec.entry,
+        spec.constants,
+    )
+}
+
+/// Runs `job(i)` once for every `i` in `0..count`: in index order on the calling thread when
+/// `threads` is 1 (or there is one job), else on `min(threads, count)` scoped threads, each
+/// taking the next unclaimed index until none is left. Returns each job's wall time in ms, by
+/// index. The threads end with the call; a job's panic resumes on the caller.
+fn run_jobs(threads: usize, count: usize, job: impl Fn(usize) + Sync) -> Vec<f64> {
+    let ms: Vec<OnceLock<f64>> = (0..count).map(|_| OnceLock::new()).collect();
+    let timed = |i: usize| {
+        let t = stopwatch();
+        job(i);
+        let _ = ms[i].set(ms_since(t));
+    };
+    if threads <= 1 || count <= 1 {
+        (0..count).for_each(timed);
+    } else {
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|s| {
+            for w in 0..threads.min(count) {
+                std::thread::Builder::new()
+                    .name(format!("pipelines {w}"))
+                    .spawn_scoped(s, || {
+                        loop {
+                            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if i >= count {
+                                break;
+                            }
+                            timed(i);
+                        }
+                    })
+                    .expect("a pipeline build thread starts");
+            }
+        });
+    }
+    ms.into_iter()
+        .map(|m| m.into_inner().unwrap_or(0.0))
+        .collect()
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a start-up build reports each pipeline's wall time, a reading; nothing branches on it"
+)]
+fn stopwatch() -> std::time::Instant {
+    std::time::Instant::now()
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a start-up build reports each pipeline's wall time, a reading; nothing branches on it"
+)]
+fn ms_since(t: std::time::Instant) -> f64 {
+    t.elapsed().as_secs_f64() * 1e3
 }
 
 impl Frame {

@@ -172,6 +172,8 @@ pub(crate) struct GfxPlan {
     /// The settings at start pick a light pass arm ([`Run::light_arms_at_start`]): the
     /// worker builds the arms' light pipelines too.
     arms: bool,
+    /// `--pipeline-threads`: the threads the start-up pipelines are created on.
+    threads: usize,
 }
 
 /// How long (ms) the first `Esc` waits for the second before the question drops.
@@ -206,7 +208,9 @@ pub(crate) fn build_gfx(
 ) -> Gfx {
     let timer = PassTimer::with_passes(device, queue, FRAME_PASSES.len() as u32);
     let field_timer = MarchTimer::new(device, queue);
-    let mut frame = Frame::with_sizes(device, plan.internal, plan.output);
+    let t = now();
+    let mut frame = Frame::with_build_threads(device, plan.internal, plan.output, plan.threads);
+    println!("{}", start_up_line(&frame, FRAME_SET, 0, ms_since(t)));
     diag(format_args!(
         "frame created, {} B of targets",
         frame.frame_bytes()
@@ -234,7 +238,9 @@ pub(crate) fn build_gfx(
     if entities {
         // A walker may be placed on any frame, so the entity pipelines are built before the
         // first world frame, and the frame that draws the first part builds none.
-        gfx.frame.prepare_entities(device);
+        timed_prepare(&gfx.frame, ENTITY_SET, || {
+            gfx.frame.prepare_entities(device)
+        });
         diag(format_args!("entity pipelines built"));
         gfx.frame.prepare_bake(device);
         diag(format_args!("bake pipeline built"));
@@ -242,7 +248,9 @@ pub(crate) fn build_gfx(
         if plan.arms {
             // The arms picked at start are built here, under the loading stage's bar
             // (`run::loading::ARMS`), not by the first world frame.
-            gfx.frame.prepare_light_arms(device);
+            timed_prepare(&gfx.frame, ARMS_SET, || {
+                gfx.frame.prepare_light_arms(device)
+            });
             diag(format_args!("light pass arms built"));
             built.store(BUILD_UNITS + ARMS_UNITS, Ordering::Relaxed);
         }
@@ -250,6 +258,47 @@ pub(crate) fn build_gfx(
         built.store(BUILD_UNITS, Ordering::Relaxed);
     }
     gfx
+}
+
+/// The start-up builds' names in their `start-up:` lines.
+pub(crate) const FRAME_SET: &str = "the frame's";
+pub(crate) const ENTITY_SET: &str = "the entity set's";
+pub(crate) const ARMS_SET: &str = "the light pass arms'";
+
+/// The `start-up:` line of the build `what` that took `ms` of wall time: the frame's thread
+/// count, then each pipeline it created (the frame's build times from index `from`) with
+/// its own wall time, in build order:
+/// `start-up: pipelines on 4 threads: the frame's 13 in 812 ms (hit 310, hit field 295, ...)`.
+pub(crate) fn start_up_line(frame: &Frame, what: &str, from: usize, ms: f64) -> String {
+    let times = frame.pipeline_build_times();
+    start_up_text(
+        frame.build_threads(),
+        what,
+        &times[from.min(times.len())..],
+        ms,
+    )
+}
+
+/// [`start_up_line`]'s text from the thread count and the build's pipeline times.
+pub(crate) fn start_up_text(threads: usize, what: &str, times: &[(&str, f64)], ms: f64) -> String {
+    let each: Vec<String> = times
+        .iter()
+        .map(|(label, ms)| format!("{label} {ms:.0}"))
+        .collect();
+    format!(
+        "start-up: pipelines on {threads} thread{}: {what} {} in {ms:.0} ms ({})",
+        if threads == 1 { "" } else { "s" },
+        times.len(),
+        each.join(", ")
+    )
+}
+
+/// Runs the start-up build `build` on `frame` and prints its `start-up:` line as `what`.
+pub(crate) fn timed_prepare(frame: &Frame, what: &str, build: impl FnOnce()) {
+    let from = frame.pipeline_build_times().len();
+    let t = now();
+    build();
+    println!("{}", start_up_line(frame, what, from, ms_since(t)));
 }
 
 /// `plan`'s settings on `frame`: the probe spacing, the upscaler (FSR 2's sharpening in its
@@ -395,6 +444,7 @@ impl Run {
             field: self.args.field_surface(),
             focus: (!streamed).then_some(self.spawn),
             arms: self.light_arms_at_start(),
+            threads: self.args.loading.pipeline_threads(),
         }
     }
 
@@ -514,6 +564,11 @@ impl Drop for Run {
         }
         if let Some(line) = self.hud.run.line() {
             println!("{line}");
+        }
+        if self.queue.first_light.take().is_some() {
+            println!(
+                "first frame light: not read (no opening after the pre-roll by the run's end)"
+            );
         }
         self.take_rule_hashes("the run's end", true);
         self.write_report();

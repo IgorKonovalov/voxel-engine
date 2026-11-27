@@ -252,6 +252,18 @@ the fly-through has no notion of a room, so judge a large structure on the outdo
 Only movement, look, the left click's dig, `F1` (a help panel), `T` and `Esc` act. Every other
 key is off, the stats overlay among them.
 
+The banner carries one frame row under the path's rows, once a frame is drawn: `fps 59.9  frame
+16.7 ms p99 18.2`, the wall frame window's fps, median and p99 over the last 240 frames (the
+open menu's readout, from the same window). The banner is drawn on every frame in any mode, so
+the row adds a few glyphs to the overlay pass already there; that pass is inside the wall frame
+times `run.json` reports and outside its GPU figure (the sum of the frame's passes, which
+leaves the overlay out).
+
+A packaged build reads its assets (`materials.txt`, `entities/`, `structures/`) from `assets/`
+beside the executable when that folder exists, as in the tester's archive; a dev build, with no
+such folder beside it under `target/`, reads `apps/flythrough/assets`. `--materials`,
+`--library-dir` and `--structures-dir` override either.
+
 ## Flags
 
 Grouped as `--help` groups them. A default in brackets is the code's.
@@ -399,12 +411,12 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--entities-walk on\|off` | The wander starts, as the menu's `wander` sets it: every placed body wanders, the built-in walkers walk their circle [off] |
 | `--model PATH` | View a `.rig` and the `.vox` it names (the library is `apps/flythrough/assets/entities/<name>/<name>.rig`, [entities.md](entities.md)): it is the library's first entry, selected, so `` ` `` and `--entities N` place it (a rig of the library itself is that entry, not a second one); a saved change to either file reloads its instances only |
 | `--clip NAME` | The `--model` clip to play first [the rig's first] |
-| `--materials PATH` | The material table file [`apps/flythrough/assets/materials.txt`; the built-in copy when that is missing]. Each scene takes its rows by name; while the window is open a saved change of colour, roughness, opacity or emission shows within a second (`materials reloaded`, the emissive chunks re-baked), a row added, removed or renamed or a class changed (`flags`, emitting or not) waits for a restart (`materials: shape changed, restart`), and an error names its line. A `--model` whose `.rig` has no `material` line for a palette entry takes the entry's colour and MagicaVoxel material as a row (`vox #rrggbb ...`, the HUD's `rows +N`) |
+| `--materials PATH` | The material table file [`materials.txt` in the assets folder (`apps/flythrough/assets`, or `assets/` beside a packaged executable); the built-in copy when that is missing]. Each scene takes its rows by name; while the window is open a saved change of colour, roughness, opacity or emission shows within a second (`materials reloaded`, the emissive chunks re-baked), a row added, removed or renamed or a class changed (`flags`, emitting or not) waits for a restart (`materials: shape changed, restart`), and an error names its line. A `--model` whose `.rig` has no `material` line for a palette entry takes the entry's colour and MagicaVoxel material as a row (`vox #rrggbb ...`, the HUD's `rows +N`) |
 | `--vox PATH[@x,y,z][*k]` | Place a MagicaVoxel scene in the streamed cave at the start ([structures](../apps/flythrough/assets/structures/README.md)): its palette as material rows (glass, glow, metal), hidden layers left out, mirrored groups mirrored, `k` world voxels per `.vox` voxel per axis (1 to 4) [1]; its box's minimum corner at `x,y,z`, or 3 m ahead of the spawn, its base 1.6 m below it |
 | `--vox-clear on\|off` | Carve `--vox`'s box, and 1 m on its sides and above, to air first [on] |
 | `--vox-op` | Place `--vox` as logged ops instead of through the cave's source: a stamp of written air over the box (with `--vox-clear on`) and a stamp per placement, submitted on the first tick (a chunk not resident is written when it arrives), so the two paths can be compared |
-| `--structures-dir DIR` | The structures library: every `DIR/<name>/<name>.vox` is a belt item after the entities, then the castle; each file's palette rows join the world's table at the start (`structures: N entries, +R rows`) [`apps/flythrough/assets/structures`] |
-| `--library-dir DIR` | The entities library: every `DIR/<name>/<name>.rig` is an entry, in name order; `--model`'s rig comes first. A missing or empty library gives the built-in walker [`apps/flythrough/assets/entities`] |
+| `--structures-dir DIR` | The structures library: every `DIR/<name>/<name>.vox` is a belt item after the entities, then the castle; each file's palette rows join the world's table at the start (`structures: N entries, +R rows`) [`structures` in the assets folder: `apps/flythrough/assets`, or `assets/` beside a packaged executable] |
+| `--library-dir DIR` | The entities library: every `DIR/<name>/<name>.rig` is an entry, in name order; `--model`'s rig comes first. A missing or empty library gives the built-in walker [`entities` in the assets folder: `apps/flythrough/assets`, or `assets/` beside a packaged executable] |
 | `--fade-reading` | Headless: dig, settle, switch the lamp off and print how the light fades |
 | `--exposure auto\|E` | Adapt like an eye, or a fixed exposure [auto] |
 | `--adaptation eye\|symmetric\|instant` | The auto exposure's preset [eye] |
@@ -421,6 +433,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--coarse N` | The coarse pass's samples a brick direction, 0 to 4096 [256] |
 | `--near R` | Chunks baked in full before the first frame, 0 to 8 [2] |
 | `--pre-roll-drain SECONDS` | From the first drawn frame hold the camera (keys and the menu still act) and bake at 40 ms a frame until the queue has no job and no coarse chunk left for 1.5 s or `SECONDS` pass, 1 to 600; then the budget returns. The banner reads `pre-roll: draining J jobs, C coarse chunks to refine, ... HOLD STILL`, then `pre-roll: landed` or `timed out`; stdout closes with the far lighting pixels' (over 15 m) share whose store record is fresh |
+| `--pre-roll full\|near\|off` | Where the start-up's light pre-roll ends: `full`, the near chunks in full and then the coarse pass for up to 5 s of work; `near`, at the near chunks (the coarse box at 0 ms: the coarse pass runs in the live queue behind the first frame, on the bake thread where it is on); `off`, at once, with no near chunk held (a reading's arm). The live queue after the first frame is the same in all three (`--near` and `--coarse` set it). The banner's and the HUD's queue rows read `pre-roll full`, `near` or `off` beside `bake thread on\|off`; the first opening after the pre-roll prints `first frame light:`, the chunks still waiting (blank/coarse) in the near shell, in view and out. `near` and `off` refuse `--pre-roll-drain`; with `--pre-roll-stepped` they keep their 0 ms box. The rows name the mode in effect, given or by default [`near` in a window over a streamed source (`cave`, `outdoor`); `full` in a window over a bounded one (`level`, `showcase`, a room or a rig), under `--headless`, and with `--pre-roll-drain`; the tester's runs, in a window, take the window's] |
 | `--full-first off\|N` | The queue's full-first radius after the pre-roll [`--near`'s] |
 | `--missing-light black\|neighbour\|parent\|chain` | What a face with no baked value reads, ADR-0053 [chain] |
 | `--reach full\|partial` | Whether a near-band chunk waits for its whole light reach (a mid- or far-band chunk whose reach crosses the full radius bakes from the chunks resident either way, ADR-0080) [full] |
@@ -527,6 +540,7 @@ time from one step's pick-up to the next's, beside the frames' wall over the sam
 | Flag | Does |
 |------|------|
 | `--loading-screen on\|off` | Step the start-up (the entity pipelines, the level's upload or the streamed near residency, the light pre-roll, the field's fill) from the frame loop behind loading frames: a turning voxel cube, a bar that only moves forward, the scene, the stage and its count; the menu's in-process rebuilds (`source`, `trees`, `--switch-at`) load the same way; off runs it all before the first frame [on in a window, off headless] |
+| `--pipeline-threads N` | Create the start-up pipelines (the frame's, the entity set's, the light pass arms') on N scoped threads, 1 to 8, each pipeline once; each build prints `start-up: pipelines on N threads: <build> <count> in <ms> ms (<pipeline> <ms>, ...)` [4 on a machine of 16 or more logical CPUs, else 2; in a window and headless alike] |
 | `--loading-fade MS` | Fade the loading frame out over the first world frames; 0 cuts [250] |
 
 With the screen on, the window's first frame is a still loading frame (the background, the

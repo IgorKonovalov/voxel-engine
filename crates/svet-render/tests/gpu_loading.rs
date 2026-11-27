@@ -270,6 +270,146 @@ fn loading_screen_golden() {
     assert_eq!(differing, 0, "loading_screen.png: {differing} bytes differ");
 }
 
+/// The pre-roll's rig: a rock floor below voxel z 16 over 6 x 6 x 2 chunks, mirrored whole with
+/// the light radius 1 chunk, the live queue under a uniform sky with a coarse pass of 16 beyond
+/// the near radius 1, 64 samples a brick direction.
+fn pre_roll_rig(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> (svet_world::World, svet_render::GpuWorld, svet_render::Frame) {
+    use svet_render::{Frame, GpuWorld, MirrorConfig, Window, sky::Sky};
+    use svet_world::{AIR, ChunkExtent, FnSource, Material, MaterialTable, World};
+    let table: MaterialTable = [Material::named("rock")].into_iter().collect();
+    let extent = ChunkExtent::new([0, 0, 0], [6, 6, 2]);
+    let world = World::generate(
+        extent,
+        &FnSource(|p: [i32; 3]| if p[2] < 16 { 1 } else { AIR }),
+        &table,
+    );
+    let mut gpu = GpuWorld::with_config(
+        device,
+        MirrorConfig {
+            light_radius: 1,
+            ..MirrorConfig::new(Window::Fixed(extent))
+        },
+    );
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    gpu.sync(&world, queue, &mut enc).expect("the mirror fits");
+    queue.submit([enc.finish()]);
+    let mut frame = Frame::new(device, 64, 36);
+    frame.set_sky(Some(Sky {
+        altitude_zero_z: 16.0,
+        ..Sky::uniform(1.0)
+    }));
+    let settings = svet_render::BakeSettings {
+        brick_samples: 64,
+        round: 64,
+        ..Default::default()
+    };
+    frame.start_bake_queue(queue, &gpu, settings, 1.0e9);
+    frame.set_bake_coarse(16, 1);
+    (world, gpu, frame)
+}
+
+/// A pre-roll with the coarse box at 0 ms (`--pre-roll near`, and `off` with `near` empty) on
+/// [`pre_roll_rig`], stepped until it ends or 400 steps, each step after a device wait and with
+/// the step's index as its work time (no clock). Returns the step at the near chunks' moment
+/// (the first state past `Near`), the full chunks mirrored then, and the end's summary.
+fn boxed_at_zero(
+    near: Vec<svet_world::ChunkCoord>,
+) -> Option<(u32, usize, svet_render::PreRollSummary)> {
+    use svet_render::{PreRoll, PreRollConfig, PreRollState, QueueView};
+    let (device, queue) = svet_render::test_support::any_device(32 << 20, wgpu::Features::empty())?;
+    let (world, mut gpu, mut frame) = pre_roll_rig(&device, &queue);
+    let mut pre = PreRoll::new(PreRollConfig {
+        near,
+        coarse: 16,
+        box_ms: 0.0,
+        cap_ms: f64::INFINITY,
+        samples: 4096,
+    });
+    let view = QueueView {
+        eye: [128.0, 128.0, 40.0],
+        forward: [0.0, 1.0, 0.0],
+        resident: None,
+        samples: None,
+        interval_s: 0.0,
+        hold: None,
+        half_angle: 1.0,
+        frustum: None,
+        full_radius: None,
+        lod_radius: None,
+        focal_px: None,
+    };
+    let mut near_at = None;
+    for step in 1..=400u32 {
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("device poll");
+        let state = pre
+            .step(
+                &mut frame,
+                &device,
+                &queue,
+                &mut gpu,
+                &world,
+                &view,
+                f64::from(step),
+            )
+            .expect("the pre-roll's step");
+        if near_at.is_none() && !matches!(state, PreRollState::Near { .. }) {
+            near_at = Some((step, gpu.full_chunks().count()));
+        }
+        if let PreRollState::Done(s) = state {
+            let (at, full) = near_at.expect("the near chunks' moment came first");
+            println!(
+                "near chunks' moment at step {at} of {}, {full} full chunks: {s:?}",
+                s.steps
+            );
+            for &c in &pre.config().near {
+                assert!(frame.bake_held_for_start(c, false), "{c:?} holds its light");
+            }
+            return Some((at, full, s));
+        }
+    }
+    panic!("the pre-roll boxed at 0 ms did not end in 400 steps");
+}
+
+/// Plan 0108 Phase 1: a pre-roll whose coarse box is 0 ms ends at the step after its near
+/// chunks' moment (on this rig the coarse pass has not covered its chunks by then), every near
+/// chunk then holding its light, boxed, its coarse pass's cover the full chunks mirrored at
+/// that moment (the rig's 72; the summary's `coarse_chunks` counts that cover, not the chunks
+/// it baked); with no near chunk it is past its near stage at its first step and ends at its
+/// second. The work time is the step's index: counts and states only.
+#[test]
+fn a_pre_roll_boxed_at_zero_ends_at_the_near_chunks() {
+    use svet_world::ChunkCoord;
+    let near: Vec<ChunkCoord> = (0..2)
+        .flat_map(|z| (1..3).flat_map(move |y| (1..3).map(move |x| ChunkCoord([x, y, z]))))
+        .collect();
+    let Some((at, full, s)) = boxed_at_zero(near) else {
+        return;
+    };
+    assert_eq!(
+        full, 72,
+        "the full chunks mirrored at the near chunks' moment"
+    );
+    assert_eq!(
+        s.steps,
+        at + 1,
+        "the end against the near chunks' moment at step {at}"
+    );
+    assert_eq!((s.near_ms, s.coarse_chunks), (f64::from(at), full));
+    assert!(s.boxed && !s.capped, "{s:?}");
+
+    let Some((at, full, s)) = boxed_at_zero(Vec::new()) else {
+        return;
+    };
+    assert_eq!((at, full, s.steps), (1, 72, 2), "{s:?}");
+    assert_eq!((s.near_ms, s.near_baked, s.coarse_chunks), (1.0, 0, 72));
+    assert!(s.boxed && !s.capped, "{s:?}");
+}
+
 /// Readings, run by hand: `--run-ignored only -E 'test(=reading::loading_pass_gpu_time)'`.
 mod reading {
     use super::*;

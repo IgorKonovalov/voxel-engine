@@ -87,6 +87,11 @@ jobs:
           cat system.json
           grep -q '"name"' system.json
           ./flythrough --check-args --tester --path cave
+          # The checkout's assets moved away, the binary finds the archive's beside it: the
+          # entities library lists the spider, which only the assets folder holds.
+          mv "$GITHUB_WORKSPACE/apps/flythrough/assets" "$RUNNER_TEMP/source-assets"
+          ./flythrough --library | tee library.txt
+          grep -q '^spider ' library.txt
           echo "glibc floor: $(objdump -T svet-tester flythrough | grep -o 'GLIBC_[0-9][0-9.]*' | sort -uV | tail -n 1)"
           grep -n "glibc" README-TESTER.txt
 
@@ -133,6 +138,10 @@ jobs:
           ./svet-tester.exe --system-json system.json > /dev/null
           cat system.json
           ./flythrough.exe --check-args --tester --path cave
+          # As on Linux: the checkout's assets moved away, the archive's beside the binary.
+          mv "$GITHUB_WORKSPACE/apps/flythrough/assets" "$RUNNER_TEMP/source-assets"
+          ./flythrough.exe --library | tee library.txt
+          grep -q '^spider ' library.txt
       - uses: actions/upload-artifact@v4
         with:
           name: svet-tester-windows-x86_64

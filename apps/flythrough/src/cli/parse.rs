@@ -163,6 +163,7 @@ impl Args {
                 slots: svet_render::THREAD_SLOTS,
                 read_missing: false,
                 pre_roll_drain: None,
+                pre_roll: None,
             },
             loading: LoadingArgs::default(),
             argv: Vec::new(),
@@ -291,6 +292,16 @@ fn settle(args: &mut Args, given: &Given) -> Result<(), String> {
     check_path(args, given.path_mode)?;
     args.still.check(args.headless, args.frames)?;
     args.loading.check(args.headless)?;
+    if let Some(m) = args.bake.pre_roll
+        && m != super::PreRollMode::Full
+        && args.bake.pre_roll_drain.is_some()
+    {
+        return Err(format!(
+            "--pre-roll {} ends the pre-roll sooner and --pre-roll-drain holds the camera to bake \
+             longer after it; they pull opposite ways, pick one",
+            m.name()
+        ));
+    }
     Ok(())
 }
 
