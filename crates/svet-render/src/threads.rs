@@ -8,7 +8,7 @@ use std::fmt;
 /// The busy threads a run starts on a machine of `logical` CPUs ([`ThreadPlan::for_logical`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ThreadPlan {
-    /// The logical CPUs the plan fills.
+    /// The logical CPUs the threads fill.
     pub logical: usize,
     /// The stream workers: the chosen count, or half the logical CPUs and at least 1. Half is a
     /// proxy for the physical cores on an SMT machine: workers on both siblings of a core
@@ -23,7 +23,7 @@ pub struct ThreadPlan {
 const FIXED: usize = 2;
 
 impl ThreadPlan {
-    /// The plan on `logical` CPUs with `workers` stream workers chosen (`None`: the default).
+    /// The threads on `logical` CPUs with `workers` stream workers chosen (`None`: the default).
     pub fn for_logical(logical: usize, workers: Option<usize>) -> Self {
         let workers = workers.unwrap_or((logical / 2).max(1));
         let listers = logical.saturating_sub(workers).saturating_sub(FIXED).max(1);
@@ -34,7 +34,7 @@ impl ThreadPlan {
         }
     }
 
-    /// The plan on this machine's logical CPUs ([`logical_cpus`]).
+    /// The threads on this machine's logical CPUs ([`logical_cpus`]).
     pub fn here(workers: Option<usize>) -> Self {
         Self::for_logical(logical_cpus(), workers)
     }
@@ -44,7 +44,7 @@ impl ThreadPlan {
         self.workers + self.listers + FIXED
     }
 
-    /// By how many busy threads the plan runs over the logical CPUs (0: it fits).
+    /// By how many busy threads the sum runs over the logical CPUs (0: it fits).
     pub fn over(&self) -> usize {
         self.total().saturating_sub(self.logical)
     }
