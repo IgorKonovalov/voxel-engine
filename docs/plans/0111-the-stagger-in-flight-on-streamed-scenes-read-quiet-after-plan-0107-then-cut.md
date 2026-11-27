@@ -886,3 +886,117 @@ says "against 6a's tip" it means the tip it stacks on (6a', or 6a'' if run).
    mirror's notes for the bake's shadow" entry grows a line) and let Phase 7's window say
    whether the F frame still shows. **The lane waits for the morning on this one:** new code
    in `gpu_world/lights.rs` is outside 6a's approval.
+
+## Amended 2026-11-27 (architect, 6a''s reading)
+
+Read from the Phase 6a' section of [logs/0111.md](logs/0111.md) and the tree at `0c7d353b`
+(`crates/svet-render/src/gpu_world/mod.rs` `sync_into`, `window.rs` `reconcile_window` and
+`StageClock`, `stage.rs` `flush_table` and `write_table_run`, `columns.rs` `flush`,
+`apps/flythrough/src/run/slow_frames.rs`). No run was made for this reading.
+
+### The ruling: 6a' is done at `0c7d353b`; its missed bar is restated, not re-run
+
+Three of the four quiet bars are met, and the two that carried the mechanism's claim are met
+with room: `build` max 10.569 / 10.503 to 7.746 / 7.871 against 8, and the build-led slow
+frames (`build` 8 ms or more) 11 / 10 to 0 / 0. The loaded bars are met (indicative: Plan 0033's
+lane built beside the hold; the loaded tip's `full residency after` of 82 s and its 149 s run
+are that box, not the code, and 6b's Hold C re-reads the tip loaded). The stop rule did not
+fire. **The missed bar (the F lines' `build` mean under 6.0 ms; 7.118 / 6.597) was mis-set,
+and the error is the architect's.** It reads the mean over the F lines that survive among the
+64 slowest frames, a tail statistic: as the F frames leave the slow set (12 / 9 to 4 / 3), the
+survivors are the frames whose every stage ran long, and their mean rises toward the
+population's maximum as their count falls. The figure the bar was set from (the x and y moves'
+notes at 5.0 to 5.3 ms, from 6a's attribution rig) is a population figure over every move, and
+the population's bound is what `build` max reads: under 8 ms, met. A bar read over survivors
+cannot be met by removing frames from the set; it is not a reading of the mechanism and it is
+dropped here. **No code and no run is owed on 6a'.** 6a'' keeps the same error in its own bars;
+restated below.
+
+### What the seven remaining F lines hold, read from the code
+
+`build` 4.9 to 7.9 ms: the changed chunks' `chunk_note` (600 to 1 300, three hash lookups
+each), their columns' `column_lowest` (400 to 610 at about 2 us), and `light_notes` (1.0 to
+3.2 ms, inside every F frame since a move drops lights). That is 6a''s territory (the light
+notes) and the parked `slot_lowest` (the columns); 6a' adds nothing to either.
+
+`copy` 4.8 to 9.5 ms, each line's largest stage, with **0 bricks**. The `Copy` lap of `sync_into`
+holds, on a frame that uploads nothing: `flush_table` (the leaving slab's cleared table entries
+in runs, entries closer than `TABLE_GAP` sharing a run, each run a belt write), `flush_records`,
+`ColumnMap::flush` (one `write_texture` a tile for every dirty column and **every tile slot
+that now names another column**: on a one-chunk move in x or y that is a strip of the map's
+side in tiles, about 51), and `belt.finish`. **This is the window move's own cost, O(the
+window's face), not the slab's upload, and `--sync-ms` does not reach it:** the time budget
+stops selection and whole-chunk uploads; the table clears and the column tiles are written
+after it whatever it reads. Phase 5's F signature already carried `copy` 3.5 to 9 with 0
+bricks; no remedy phase owns it yet. The `slow frame:` line prints neither `SyncStats::writes`
+nor `column_tiles`, so which of the four is the cost is a guess until counted; the call
+count (tens of microseconds a wgpu write, as 6e says) is the likelier cost than the bytes.
+
+### 6b runs next, on `0c7d353b`, tonight
+
+6b stands as written (its fields do not read `build`) with **one field added to its rows, no
+code:** per run, the copy-led slow lines split by `0 bricks` (the window move's `copy`) against
+bricks above 0 (the slab's), since the time budget can move only the second. Its three holds
+project from 6a''s runs at about 87 s a quiet cave run (Hold A about 12 minutes, Hold B about
+4, Hold C about 4 with its lead), each under the 20-minute line on its own; the holds take the
+lock one at a time and wait for load1 at most 2 outside it, as 6a' did. 6c reads 6b as
+written, with the 0-brick copy-led lines left out of its flip rule.
+
+**6d's bar is restated:** "slow frames whose largest stage is `alloc`, `size` or `copy` 0 in
+both runs" counts a copy-led frame only with bricks above 0; a copy-led line with 0 bricks is
+listed and is 6h's.
+
+### 6a''s bars, restated (the phase still awaits the owner's go, question 2 above)
+
+The F lines' `build` mean under 3.0 ms goes, for the reason above. In its place: the
+attribution rig (`live/p6a-instrument.py`, the stop rule's instrument) run once on 6a''s tip,
+quiet, reads `light_notes` under 0.2 ms on every non-whole frame (a delta over the changed
+chunks only; 1.0 to 3.2 ms today on 377 of 4 260 frames); `build` max under 7.0 ms (6a' 7.746
+/ 7.871; the smallest `light_notes` reading is 1.0, so by arithmetic the max falls at least that
+far, and a miss says the move frame's notes grew elsewhere); `build` p99 under 3.0 ms and the
+loaded `build` p99 under 5.0 ms stay as written.
+
+#### Phase 6h: the window move's `copy`, counted, then coalesced (awaits the owner's go, question 3)
+- **Owner skill:** dev
+- **What:** 6e's shape. First the count: the `slow frame:` line's sync part gains `writes` and
+  `tiles` (`SyncStats::writes` and `column_tiles`, two numbers the sync already keeps, no new
+  timer), and one quiet headless cave run reads them for its F lines. Then, if a copy-led F
+  line holds tens of tiles or table runs: `ColumnMap::flush` writes the tiles of one contiguous
+  strip of slots as one `write_texture` of the strip's region (a strip that wraps the texture's
+  edge is two), gathering the texels into a `Vec` kept across frames; and `flush_table` is
+  left as it is unless the count puts the cost there (its runs already merge within
+  `TABLE_GAP`). If the count reads low (under 20 writes and tiles together in every copy-led F
+  line), the cost is per byte or in `belt.finish`, and the phase stops at the reading for the
+  architect.
+- **Files touched:** `crates/svet-render/src/gpu_world/columns.rs`, `gpu_world/stage.rs` (only
+  if the count names the table), `apps/flythrough/src/run/slow_frames.rs`, `docs/flythrough.md`,
+  `docs/plans/logs/0111.md`.
+- **Done when:** A CPU test on the column map with a recording writer: a window move by one
+  chunk in x marks the strip's slots and the flush writes them as one region (two when the
+  strip wraps), every texel equal to the per-tile writes' (the oracle: the flush as it is
+  today, kept in the test); a move in y likewise; a lone dirty column writes one tile. The
+  quiet headless cave, two runs alternated against the tip it stacks on: copy-led slow lines
+  with 0 bricks 0 in both runs (6a' tip 6 / 5), `over_33ms` not higher than the base's in
+  either run, `full residency after` within 10 % of the base's.
+- **Expected cut (a guess):** the quiet cave's last 3 to 4 F frames leave the slow set; under
+  load every F frame is 3 to 8 ms shorter.
+- **Stop rule:** the count reads under 20 in every copy-led F line: stop at the reading. A
+  hold projected past 20 minutes is not started.
+- **Beside the lanes:** yes for `stage.rs` and `slow_frames.rs`; `columns.rs` is named by Plan
+  0033's level tiles brief, so 6h's flush change waits for that brief's merge or runs in its
+  lane's order (the count half does not touch it).
+
+### The order now
+
+6a' done. 6b tonight on `0c7d353b`; 6c (the architect) on its rows; 6d; then 6a'' and 6h in
+either order if the owner says go to them (6a'' first: `gpu_world/lights.rs` is no brief's);
+6e; 6f after Plan 0033's streamer brief. Where a later phase says "against 6a's tip" it means
+the tip it stacks on. The window's figures stay Phase 7's.
+
+### Owner questions (new; each with the recommended option first)
+
+3. **Phase 6h (the window move's `copy`: the count, then the strip's tiles as one write)?**
+   Recommended: the count half now (two numbers on a line that exists, the shape of 6e's first
+   half) and the cut half on its reading. Alternative: park it in the backlog ("The mirror's
+   notes for the bake's shadow" grows a line) until Phase 7's window says whether the F frame
+   still shows; quiet it is 7 lines of 162 and 156, and the loaded box is where it bites.
