@@ -154,6 +154,7 @@ impl Rig {
             key_step: queue.key_step,
             landing_fade: queue.landing_fade,
             dig_store_hold: queue.dig_store_hold,
+            dig_estimate: queue.dig_estimate,
             landed_word: queue.landed_word,
             far_normal: queue.far_normal,
         };
