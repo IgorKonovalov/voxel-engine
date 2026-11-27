@@ -1,6 +1,6 @@
 # 0109: A blocked chunk is checked again when its blocker clears: the start on a streamed world
 
-> **Status:** in-progress (2026-11-26, owner's go): Phase 1 and 1b done, Phases 2 and 2b read. Ruled 2026-11-27 (Rulings 5 to 8): a catch-up waits behind every ready first bake with no bound, so none lands in view; the pre-roll holds for one by a race. Next: Phase 2c (a reading), 2d (the pre-roll waits for a block), 3a, 3b; the owner question is restated at "Phase 4, restated".
+> **Status:** in-progress (2026-11-26, owner's go): Phase 1 and 1b done, Phases 2, 2b and 2c read. Ruled 2026-11-27 (Rulings 5 to 8): a catch-up waits behind every ready first bake with no bound, so none lands in view; the pre-roll holds for one by a race. Phase 2c read 0 cells changed at both spawns (rows to the architect before 2e or Phase 4). Next: 2d (the pre-roll waits for a block), 3a, 3b; the owner question is restated at "Phase 4, restated".
 > **Created:** 2026-11-26
 > **Milestone:** none (a fix in the start-up path; follows Plan 0099, `docs/roadmap.md` M9's bake thread)
 > **Related ADRs:** [ADR-0059](../adrs/0059-loading-runs-as-time-sliced-steps-on-the-apps-frame-loop-behind-an-engine-loading-frame.md) (the pre-roll and its start-up budgets; not changed unless the owner picks the bound, and then by a new ADR, see Phase 5), ADR-0070's amendment (the column rule; not changed), ADR-0046 (the reach rule; not changed)
@@ -316,6 +316,7 @@ struct Blocked { at: u64, by: Blocker }
 | 1 | dev | done (Rulings 1 to 4): stopped at `f082adb4` on the moved pin of `an_opening_without_a_mirror_event_rebuilds_nothing`; Phase 1b re-pins it to `[2, 3, 1, 4, 0, 5, 6, 7]` and removes `Default` from `Blocker` and `Blocked`; `split_tests/routing.rs` also spells its mark ([log](logs/0109.md)) | `f082adb4`, `b59dc1ef` |
 | 2 | dev | read, nothing changed: 15 runs (lavapipe switch 2 before + 2 after, RTX switch 5, default start 3 a adapter), 17.96 min under the lock, no arm dropped; the camera chunk not final within the 600-frame cap in 14 of 15, no catch-up landing after frame 0 ([log](logs/0109.md)) | the commit adding this row |
 | 2b | dev | read, nothing changed: RTX, thread off and on (`--frames 15000` for the same wall after frame 0); 0 of 359 and 0 of 223 openings after frame 0 reached class 1, every one with class 0 ready; 0 catch-ups opened; count (3) 0 on every pre-roll step, no near stage ran long; 4.4 min under the lock ([log](logs/0109.md)) | the commit adding this row |
+| 2c | dev | read, nothing changed: RTX, six `--frames 3` runs; the control 0 cells apart at both spawns; provisional against final 0 of 94 chunks (7699 cells) at the default spawn and 0 of 95 (8610) at `--spawn inside`; first frame wait on 54.3 to 66.0 s, off 27.0 and 20.5 s; 4.75 min under the lock ([log](logs/0109.md)) | the commit adding this row |
 
 ### Notes
 
