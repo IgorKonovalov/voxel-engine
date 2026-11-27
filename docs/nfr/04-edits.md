@@ -289,3 +289,46 @@ on, 16 table rows, depth 3; each run its own hold of the exclusive perf lock, wa
   read 43.9 against 45.0, 19.5 against 31.8, about 170 against 230 and 95 against 127 on the
   RTX; RENOIR 47.6 against 42.5, 27.7 against 34.4. The frames around a dig while in view waits:
   wall p50 8.3 to 8.5 ms on, 20.5 to 22.0 off (RTX).
+
+**The held estimate at depth (Plan 0105, ADR-0082's `depth`; Phases 4c to 7d, 2026-11-26 and
+27).** RTX 3080 Laptop (Vulkan, NVIDIA 615.78.08), the forest of seed 1 at 15:00, floor profile,
+radius 5, `dig_depth::reading::dig_depth` and Phase 7c2's two asserting readings on optimised
+`gpu_outdoor` test builds; every hold its own exclusive perf lock; every figure **loaded**
+(1-minute load over 2), so indicative. Every row in `docs/plans/logs/0105.md`.
+
+- *The D+0 step* (the bake step on the dig's frame, `stages.total_ms`, lockstep), Phase 5's
+  after build (`live/bin/p5b`, the tree of `d7cf21c4` plus Phase 5), load1 2.96 to 3.72 at the run's
+  start: `down` 2.33 to 2.86 ms over 1 to 7 m against 2.25 to 3.12 before the phase; `wide` 5 m
+  (the whole dig, its held block placed at the edit) 4.29 ms on the re-read against 3.37 before
+  (a first read of 25.01 ms at load1 7.74 at the lock did not repeat). Phase 7c2 at `1e56404b`,
+  load1 33 to 68: `down` 6.75 / 20.21 / 12.14 / 15.80 / 30.25 ms at 1 / 2 / 3 / 5 / 7 m.
+- *The held estimate's time* (`held_ns`, D-1 to D+60): 0.25 to 0.74 ms at every site and depth
+  of Phase 5's after build and its re-read (the 7.76 ms of the loaded first `wide` read did not
+  repeat), under the stop lines Phase 4c proposed (2 ms median, 5 ms any one dig); Phase 7c2, load1
+  33 to 68: 0.51 to 0.94 ms.
+- *The 1 m miss, accepted.* B2's under clause (the held 1 m shaft no darker than 4 levels under
+  the settled frame at D+0) reads -4.53 (Phase 4c), -4.55 (Phase 5) and -4.563 / -4.558 (Phase
+  7c2's two holds) at `down` lockstep, a miss by 0.53 to 0.56 level; the bake thread -4.55 to
+  -4.56; `wide` 1 m -2.19 passes. The owner took it to his window (Phase 6, session 6): the dark
+  start "is not visible at all", `depth` the default. Phase 7c2 asserts it as a ratchet,
+  `DOWN_1M_UNDER` 5.0 levels, by name on the RTX alone.
+- *The dig frame's wait, before and after the plan's fixes* (no new run; the bursts' bake-thread
+  runs, four dig frames each, and the owner's session 9): the `frames: bake dig call:` p50 / p99
+  and the `bake thread dig wait:` line's `step_rest` p50, per run. The *before* is the old
+  binary's, session 6's (`live/bin/p6/flythrough`, `7b1725c2`); the *after* `live/bin/p7b3/flythrough`
+  (`e1060437`, the source of this tip). Phase 7b3c's burst, both binaries alternated in one hold
+  (load1 3.0 to 10.7, loaded): before 29.9 / 38.6, 39.7 / 55.3, 43.4 / 44.4, 28.6 / 38.5 ms
+  (`step_rest` 3.6, 6.9, 5.8, 4.8); after 35.7 / 36.6, 38.6 / 50.4, 33.8 / 53.9, 34.8 / 59.3 ms
+  (`step_rest` 5.1, 5.4, 14.6, 19.4). Phase 7b2's burst against 7b's binary (`526bee74`, before
+  F4; load1 0.74 to 8.1): before 20.7 / 24.2, 24.3 / 34.3, 25.4 / 30.4, 25.3 / 41.0 ms (`step_rest`
+  2.8, 3.8, 3.2, 4.3); 7b's 25.9 / 41.6, 30.3 / 50.9, 29.9 / 37.6, 39.1 / 48.0 ms (`step_rest` 5.0,
+  15.0, 10.1, 5.6). Session 9 (windowed, the owner's flights, not the same digs; load1 0.18 and
+  1.88 at the launches): before, in view waits 10 dig frames 9.5 / 21.5 ms (`step_rest` 3.0),
+  after 67 frames 9.1 / 16.6 (3.3); after, in view waits 29 frames 15.6 / 47.4 (6.0), after 69
+  frames 18.8 / 45.1 (7.4). On every source the present binary's dig frame waits longer, by about
+  0 to 10 ms at the p50 on the bursts and about 6 to 10 ms in session 9; on holds of four dig
+  frames, loaded, the difference is not resolved from the spread, and it is not bounded (a
+  reading; the backlog entry on `depth`'s slight extra flash carries it).
+- *The temporal pass* (`dig_line::reading::dig_timeline`, sequence B, waiting, three rounds
+  back to back, load1 1.65 to 1.93, quiet): +0.007 ms mean over the dig frames from `6dfc0b1a`
+  to `e1060437` (F4 and its mark), +0.002 to +0.004 ms before the first dig.
