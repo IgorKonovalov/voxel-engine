@@ -150,6 +150,10 @@ impl BakeQueue {
                 },
             };
             self.fades.remove(&c);
+            if had.is_none() {
+                // A whole dig's first block: its summary is stale until the job's block lands.
+                store.held_whole.insert(c);
+            }
             store.put(coord, at, block);
             self.listed.insert(c, faces);
         }

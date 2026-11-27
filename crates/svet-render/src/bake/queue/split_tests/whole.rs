@@ -209,6 +209,118 @@ fn brick_record(block: &[u32], slot: usize) -> Option<&[u32]> {
     })
 }
 
+/// `block`'s summary record's flags: whether it holds [`VIS_BAKED`] and whether [`SKY_STALE`].
+fn summary_flags(block: &[u32]) -> (bool, bool) {
+    let w = block[SUMMARY_AT as usize + VIS_WORD + 1];
+    (w & VIS_BAKED != 0, w & SKY_STALE != 0)
+}
+
+/// Plan 0105 Phase 7a4a, step 1: under `Depth` the provisional block of a whole dig answers no
+/// sky from its summary until its job lands. On the ground rig (faces, no block), one box: after
+/// the edit the chunk's summary holds no fresh sky (no [`VIS_BAKED`], or [`SKY_STALE`]); it still
+/// holds none after a second box in the same chunk and after a [`Store::show`] of the block; a
+/// brick the first box (dilated by one voxel) does not touch reads [`record_visibility`] `None`
+/// in six directions; once the chunk's job lands, its summary is fresh.
+#[test]
+fn a_whole_digs_block_answers_no_sky_outside_its_bricks() {
+    let mut rig = ground_rig(true);
+    let whole = rig.queue.stats.digs_whole;
+    let [lo, hi] = carve_box(&mut rig, [24, 24, 4], [40, 40, 8]);
+    rig.step();
+    assert_eq!(rig.queue.stats.digs_whole, whole + 1, "the dig is whole");
+    let block = rig
+        .store
+        .block_words(ChunkCoord(GROUND))
+        .expect("depth: GROUND holds a block at the edit")
+        .to_vec();
+    let fresh = |b: &[u32]| {
+        let (baked, stale) = summary_flags(b);
+        baked && !stale
+    };
+    assert!(
+        !fresh(&block),
+        "after the edit: the summary (VIS_BAKED, SKY_STALE) {:?}",
+        summary_flags(&block)
+    );
+    // A listed brick the dilated box does not touch: no visibility in any direction.
+    let classes = rig.queue.classes(rig.world.materials());
+    let faces = rig.queue.list(&rig.world, ChunkCoord(GROUND), &classes).0;
+    let mut untouched = 0;
+    for (slot, _) in &faces.bricks {
+        let b = brick_of_slot(usize::from(*slot));
+        if (0..3).all(|k| b[k] * 8 + 7 >= lo[k] - 1 && b[k] * 8 <= hi[k] + 1) {
+            continue;
+        }
+        untouched += 1;
+        let r = brick_record(&block, usize::from(*slot)).expect("a listed brick's record");
+        let vis: Vec<_> = (0..6).map(|f| record_visibility(r, f)).collect();
+        assert!(
+            vis.iter().all(Option::is_none),
+            "untouched brick {slot}: {vis:?}"
+        );
+    }
+    assert!(
+        untouched > 0,
+        "the chunk lists bricks the box does not touch"
+    );
+    let first_held = block;
+
+    // A second box in the same chunk, away from the first.
+    carve_box(&mut rig, [48, 48, 4], [56, 56, 8]);
+    rig.step();
+    let block = rig
+        .store
+        .block_words(ChunkCoord(GROUND))
+        .expect("GROUND's block after the second box")
+        .to_vec();
+    assert!(
+        !fresh(&block),
+        "after a second box: the summary {:?}",
+        summary_flags(&block)
+    );
+
+    // A show of the block rewrites its summary in the words it shows.
+    let (first, _) = rig.store.blocks[&GROUND];
+    let mut shown = block.clone();
+    rig.store.show(ChunkCoord(GROUND), first, &mut shown);
+    assert!(
+        !fresh(&shown),
+        "after a show: the summary {:?}",
+        summary_flags(&shown)
+    );
+
+    // The job lands: the summary is made from baked cells.
+    let refaded = rig.queue.stats.landings[LANDED_REFADED];
+    rig.half.hold = false;
+    rig.until("GROUND's job lands", |r| {
+        r.queue.stats.landings[LANDED_REFADED] > refaded
+    });
+    let landed = rig
+        .store
+        .block_words(ChunkCoord(GROUND))
+        .expect("GROUND's landed block")
+        .to_vec();
+    // The rig's render half echoes no sky bake, so the landed cells hold no VIS_BAKED: the
+    // landed summary is its cells' own, not stale; and a show of words whose cells hold baked
+    // visibilities, none stale (the first box's held block), now writes a fresh summary.
+    let made = crate::bake::summary::block_summary(&landed, record_words(rig.queue.settings.cell))
+        .unwrap_or_default();
+    let at = SUMMARY_AT as usize + VIS_WORD;
+    assert_eq!(
+        landed[at..at + 2],
+        made[VIS_WORD..VIS_WORD + 2],
+        "after the landing: the summary is the landed cells' ({:?})",
+        summary_flags(&landed)
+    );
+    let mut shown = first_held;
+    rig.store.show(ChunkCoord(GROUND), first, &mut shown);
+    assert!(
+        fresh(&shown),
+        "after the landing, a show of baked cells: the summary {:?}",
+        summary_flags(&shown)
+    );
+}
+
 /// Plan 0105 Phase 7a2, step 1: under `Depth` a held record moves only the dig's faces.
 /// (1) A box cut at one place into ground the queue never baked (faces, no block, a whole
 /// dig): in each brick the box dilated by one voxel touches, a direction with a face outside
