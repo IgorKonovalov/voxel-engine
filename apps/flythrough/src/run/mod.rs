@@ -442,7 +442,7 @@ impl Run {
             field: self.args.field_surface(),
             focus: (!streamed).then_some(self.spawn),
             arms: self.light_arms_at_start(),
-            threads: self.args.loading.pipeline_threads,
+            threads: self.args.loading.pipeline_threads(),
         }
     }
 

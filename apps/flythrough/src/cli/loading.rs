@@ -24,9 +24,10 @@ pub(crate) struct LoadingArgs {
     /// `--pre-roll-stepped`: the pre-roll waits on the device before each step and has no
     /// box and no cap, so its outcome does not depend on the machine's pace. Headless only.
     pub(crate) pre_roll_stepped: bool,
-    /// `--pipeline-threads N`: the start-up build creates its pipelines on `N` scoped threads
-    /// (`svet_render::Frame::with_build_threads`), 1 to [`MAX_PIPELINE_THREADS`].
-    pub(crate) pipeline_threads: usize,
+    /// `--pipeline-threads N` as given: the start-up build creates its pipelines on `N` scoped
+    /// threads (`svet_render::Frame::with_build_threads`), 1 to [`MAX_PIPELINE_THREADS`];
+    /// `None` unset, which [`LoadingArgs::pipeline_threads`] resolves by the machine.
+    pub(crate) pipeline_threads: Option<usize>,
 }
 
 /// The most threads `--pipeline-threads` takes (the engine's start-up build's cap).
@@ -40,7 +41,7 @@ impl Default for LoadingArgs {
             fade_ms: LOADING_FADE_MS,
             quit_at: None,
             pre_roll_stepped: false,
-            pipeline_threads: 1,
+            pipeline_threads: None,
         }
     }
 }
@@ -49,6 +50,14 @@ impl LoadingArgs {
     /// Whether start-up steps behind loading frames: as given, else in a window only.
     pub(crate) fn screen_on(&self, headless: bool) -> bool {
         self.screen.unwrap_or(!headless)
+    }
+
+    /// The start-up build's thread count: `--pipeline-threads` where given, else
+    /// [`default_pipeline_threads`] of this machine's logical CPUs.
+    pub(crate) fn pipeline_threads(&self) -> usize {
+        self.pipeline_threads.unwrap_or_else(|| {
+            default_pipeline_threads(std::thread::available_parallelism().map_or(1, usize::from))
+        })
     }
 
     /// `--pre-roll-stepped` holds the start-up for the device at every pre-roll step, a
@@ -63,6 +72,15 @@ impl LoadingArgs {
         }
         Ok(())
     }
+}
+
+/// `--pipeline-threads`' default on a machine of `logical` CPUs: 2, the bake's listing pool on
+/// eight (its listers are idle while the start-up builds, so the floor's thread sum holds), or
+/// 4 on 16 and more. The drivers compile in parallel: on the RTX 3080 Laptop and the RENOIR
+/// (16 logical CPUs) 4 threads cut the cold pipeline span by 43 % and 38 % against 1, and read
+/// faster than 2 on both (Plan 0108 Phase 3's readings).
+pub(crate) fn default_pipeline_threads(logical: usize) -> usize {
+    if logical >= 16 { 4 } else { 2 }
 }
 
 /// The help's Loading and Diagnostics sections.
@@ -94,12 +112,12 @@ pub(crate) fn loading_flags() -> Vec<Flag<Parsing>> {
         Flag::value(
             &["--pipeline-threads"],
             "N",
-            "create the start-up pipelines (the frame's, the entity set's, the light pass arms') on N threads, 1 to 8 [1]",
+            "create the start-up pipelines (the frame's, the entity set's, the light pass arms') on N threads, 1 to 8 [4 on 16 or more logical CPUs, else 2]",
             |p: &mut Parsing, v| {
-                p.args.loading.pipeline_threads = v.parse_if(
+                p.args.loading.pipeline_threads = Some(v.parse_if(
                     |n: &usize| (1..=MAX_PIPELINE_THREADS).contains(n),
                     "a thread count from 1 to 8",
-                )?;
+                )?);
                 Ok(())
             },
         ),
@@ -188,15 +206,31 @@ mod tests {
         assert!(parse_args_from(argv(&["--load-slice", "inf"])).is_err());
     }
 
-    /// `--pipeline-threads` takes 1 to 8 and defaults to 1; 0, 9 and a word are refused. The
-    /// `start-up:` line names the count (`1 thread`, `4 threads`), the build, its pipelines
-    /// with their times in build order, and its wall time.
+    /// `--pipeline-threads` takes 1 to 8; unset it is 2 below 16 logical CPUs and 4 from 16 on,
+    /// in a window and headless alike; 0, 9 and a word are refused. The `start-up:` line names
+    /// the count (`1 thread`, `4 threads`), the build, its pipelines with their times in build
+    /// order, and its wall time.
     #[test]
     fn the_pipeline_threads_take_one_to_eight_and_the_start_up_line_names_them() {
-        let threads = |a: &[&str]| parse_args_from(argv(a)).map(|r| r.loading.pipeline_threads);
-        assert_eq!(threads(&[]), Ok(1));
+        use super::default_pipeline_threads;
+        let threads = |a: &[&str]| parse_args_from(argv(a)).map(|r| r.loading.pipeline_threads());
+        for (logical, want) in [(1, 2), (2, 2), (8, 2), (12, 2), (15, 2), (16, 4), (32, 4)] {
+            assert_eq!(
+                default_pipeline_threads(logical),
+                want,
+                "{logical} logical CPUs"
+            );
+        }
+        let machine =
+            default_pipeline_threads(std::thread::available_parallelism().map_or(1, usize::from));
+        assert_eq!(threads(&[]), Ok(machine));
+        assert_eq!(threads(&["--headless"]), Ok(machine));
         for n in 1..=8 {
             assert_eq!(threads(&["--pipeline-threads", &n.to_string()]), Ok(n));
+            assert_eq!(
+                threads(&["--headless", "--pipeline-threads", &n.to_string()]),
+                Ok(n)
+            );
         }
         for bad in ["0", "9", "four", "-1"] {
             let Err(e) = threads(&["--pipeline-threads", bad]) else {

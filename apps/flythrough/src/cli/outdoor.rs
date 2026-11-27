@@ -351,10 +351,10 @@ pub(super) fn with_drain_flags(mut flags: Vec<Flag<Parsing>>) -> Vec<Flag<Parsin
     flags.push(Flag::value(
         &["--pre-roll"],
         "full|near|off",
-        "where the start-up's light pre-roll ends: full, the near chunks in full and then the coarse pass for up to 5 s; near, at the near chunks (the coarse pass runs in the live queue behind the first frame); off, at once, no near chunk held (a reading's arm); the live queue after the first frame is the same in all three; near and off refuse --pre-roll-drain [full]",
+        "where the start-up's light pre-roll ends: full, the near chunks in full and then the coarse pass for up to 5 s; near, at the near chunks (the coarse pass runs in the live queue behind the first frame); off, at once, no near chunk held (a reading's arm); the live queue after the first frame is the same in all three; near and off refuse --pre-roll-drain [near in a window over the cave or the outdoor hills; full over a bounded scene, under --headless and with --pre-roll-drain]",
         |p: &mut Parsing, v| {
             p.args.bake.pre_roll =
-                v.named(super::PreRollMode::from_name, "full, near or off")?;
+                Some(v.named(super::PreRollMode::from_name, "full, near or off")?);
             Ok(())
         },
     ));

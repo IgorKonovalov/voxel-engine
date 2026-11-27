@@ -170,3 +170,54 @@ copy of the binary at `127e7672`; the 1-minute load at the lock.
 The forest test before the shared settle (Plan 0104 Phase 0, six arms at 1920x1080) read 771 s
 on the RTX and 12 538 s on lavapipe. Its bar on lavapipe is 600 s. The other test was not read
 on lavapipe in Phase 0b.
+
+## Time to the first frame and the in-view wait after it, by the pre-roll's default (Plan 0108 Phase 4, 2026-11-27)
+
+The defaults since Plan 0108 Phase 4 (the owner's pick at that plan's Phase 2): in a window the
+light pre-roll ends at the near chunks (`--pre-roll near`) over a streamed source (`cave`,
+`outdoor`) and runs in full (`full`, the near chunks and then the coarse pass in its 5 s box)
+over a bounded one (`level`, `showcase`); `--headless` keeps `full`. `--pipeline-threads`
+defaults to 4 on 16 or more logical CPUs, else 2 (the cold figures below).
+
+**Warm, headless** (release, pipelines warm, `--bake-thread on`, the tree at Plan 0108 Phase 4
+before its commit on `e6bba08b`, one start an arm, `--pre-roll` given so the headless run takes
+the window's arm; dev host, Ryzen 9 5900HS, 16 logical CPUs; exclusive perf lock, 1-minute load
+3.0 to 9.2: **loaded**, indicative). RTX: `--adapter RTX` (Floor, 1280 x 720), 4000 frames.
+RENOIR (Radeon iGPU, RADV): `--adapter RENOIR --profile portable --render 1280x720`, 1000
+frames. "In view lit" is the first `bake queue:` line (once a second) whose `bake queue view:`
+line reads no in-view chunk without a block, minus `first frame after`; it read the same as
+"in view final" (no blank and no coarse block in view) in every run that landed.
+
+| adapter | scene | arm | first frame after ms | pre-roll steps, ms of steps | in view lit after the first frame | from the start |
+|---|---|---|---|---|---|---|
+| RTX 3080 Laptop | forest (`--source outdoor --spawn forest`) | `full` | 6336 | 277, 5678 | 4.9 s | 11.2 s |
+| RTX 3080 Laptop | forest | `near` (the window's default) | 1246 | 61, 695 | 6.6 s | 7.8 s |
+| RTX 3080 Laptop | cave (`--source cave`) | `full` | 8749 | 305, 8260 | 10.3 s | 19.0 s |
+| RTX 3080 Laptop | cave | `near` (the window's default) | 4479 | 205, 3980 | 14.5 s | 19.0 s |
+| RENOIR | forest | `full` | 6566 | 178, 5918 | 6.7 s | 13.3 s |
+| RENOIR | forest | `near` (the window's default) | 1417 | 25, 886 | 10.1 s | 11.5 s |
+| RENOIR | cave | `full` | 9499 | 197, 8905 | not by the run's end (28.1 s from the start: 721 in view without a block) | |
+| RENOIR | cave | `near` (the window's default) | 4461 | 103, 3929 | not by the run's end (23.0 s: 1237 in view without a block) | |
+
+Plan 0108 Phase 1's medians of three (the same host, loaded, `--frames 8`): forest `full`
+6430 ms RTX and 6639 RENOIR, `near` 1445 and 1560; the showcase's hall (bounded, `full` stays
+its window default) 1646 and 3505. Raw logs: `live/p4/` and `live/p1/` in the plan-0108 lane's
+worktree (untracked); readings in `docs/plans/logs/0108.md`, Phases 1 and 4.
+
+**Warm, in a window** (Plan 0108 Phase 2, the owner's sitting, 2026-11-27, release `e6721462`,
+the owner moving; `docs/plans/logs/0108.md`, Phase 2): RTX forest `full` 8980 ms (the warm-up
+9018), `near` 1882; the tunnel (`--spawn inside`) `near` 3924; the hall `near` 1514 RTX and 3683
+RENOIR. The window's `full` start came about 2.5 s after the headless figure with the same
+pre-roll (not attributed).
+
+**Cold** (Plan 0108 Phase 3, release, `--headless --source outdoor --frames 3`, `full`, each
+start on an emptied driver cache in a scratch directory, loaded; `docs/plans/logs/0108.md`,
+Phase 3): first frame after, means of two, at `--pipeline-threads` 1 / 2 / 4: RTX 58 836 /
+40 196 / 37 308 ms; RENOIR 16 886 / 13 455 / 12 425 ms. The pipeline span 49.0 / 31.0 / 28.0 s
+(RTX) and 8.4 / 6.3 / 5.1 s (RENOIR).
+
+**Against the 3 s proposal** (`../nfr.md` section 7, left a proposal): the window's warm default
+reads under 3 s on the forest on both adapters headless (1.2 and 1.4 s) and in the window on the
+RTX (1.9 s), and on the hall on the RTX (1.6 s headless); it reads over it on the cave (4.5 s on
+both adapters headless), the tunnel (3.9 s, window), the hall on the RENOIR (3.5 s headless) and
+every cold start (12.4 to 37.3 s at the default thread count).

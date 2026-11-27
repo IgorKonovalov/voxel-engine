@@ -516,6 +516,16 @@ Every reading against these budgets, with its machine and commit, is in
 ## 7. Startup and build
 
 - Time to first frame in `apps/flythrough` under 3 s on the dev reference (proposal).
+  **Reading (Plan 0108 Phase 4, 2026-11-27, the window's default pre-roll by source and the
+  pipelines on 4 threads, release, loaded; the table, the in-view wait after the first frame and
+  the cold starts in [the readings file](nfr/07-startup-and-build.md#time-to-the-first-frame-and-the-in-view-wait-after-it-by-the-pre-rolls-default-plan-0108-phase-4-2026-11-27)):**
+  warm, headless, the window's arm: forest (`near`) 1246 ms RTX 3080 Laptop and 1417 ms RENOIR,
+  the in view lit 6.6 and 10.1 s after it (against `full`: 6336 and 6566 ms, then 4.9 and
+  6.7 s); cave (`near`) 4479 and 4461 ms, in view lit 14.5 s after it on the RTX (`full`: 8749
+  ms, 10.3 s), not by 23 s on the RENOIR in either arm. In a window, the owner's sitting: forest
+  `near` 1882 ms, `full` 8980 ms (RTX). Cold, `full`, 4 threads: 37.3 s RTX, 12.4 s RENOIR
+  (58.8 and 16.9 s on 1). The 3 s stays a proposal: met by the forest's and the hall's warm
+  default on the RTX, missed by the cave, the RENOIR's hall and every cold start.
   **Reading (Plan 0001, 112cfa0, level-size bounded cave seed 1, 3200 chunks, RTX 3080 Laptop
   GPU, Ryzen 9 5900HS, Hyprland):** 2226 to 2301 ms cold (dGPU suspended before launch),
   1063 to 1187 ms warm; device creation dominates cold start (1838 to 1903 ms), the mirror

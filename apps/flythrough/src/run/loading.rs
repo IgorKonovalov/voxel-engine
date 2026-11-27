@@ -56,7 +56,7 @@ pub(crate) fn pre_roll_limits(args: &Args) -> (f64, f64) {
     } else {
         (COARSE_PRE_ROLL_MS, PRE_ROLL_CAP_MS)
     };
-    match args.bake.pre_roll {
+    match args.pre_roll() {
         PreRollMode::Full => (box_ms, cap_ms),
         PreRollMode::Near | PreRollMode::Off => (0.0, cap_ms),
     }
@@ -731,7 +731,7 @@ impl Run {
                 .map(|v| (v / 64.0).floor() as i32),
         );
         let r = self.args.bake.near;
-        let mode = self.args.bake.pre_roll;
+        let mode = self.args.pre_roll();
         let mut near: Vec<ChunkCoord> = (-r..=r)
             .flat_map(|z| {
                 (-r..=r).flat_map(move |y| {

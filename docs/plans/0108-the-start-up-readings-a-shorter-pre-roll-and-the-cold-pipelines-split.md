@@ -1,6 +1,6 @@
 # 0108: The start-up readings: a shorter pre-roll, and the cold pipelines split
 
-> **Status:** in-progress (Phases 1 and 3 landed 2026-11-27; Phase 2, the owner's look, next; Phase 4 after it). Approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
+> **Status:** in-progress (Phases 1 to 4 done 2026-11-27: the owner picked `near` where the world is streamed, `full` in bounded scenes; awaits the close review). Approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
 > [the review of 2026-11-26](../reviews/2026-11-26-work-off-the-render-thread.md) on the owner's
 > "all recommended" (its question 2: the pre-roll reading now as a chore beside Plan 0093, the
 > cold-pipeline split before the next tester archive), with no further interview; the guesses
@@ -435,9 +435,9 @@ Readings: [`logs/0108.md`](logs/0108.md).
 | phase | owner | state | commit |
 |---|---|---|---|
 | 1: `--pre-roll`, and what the first frames show | dev | done; stop not met (forest: `near` about 5 s sooner on both adapters) | e6721462 |
-| 2: the owner looks at the start (skipped if 1 stops) | human | not started | |
-| 3: the cold pipelines on 1, 2 and 4 threads | dev | done, before Phase 2; line not met (N = 4 cuts the cold span 43 % RTX, 38 % RENOIR); stand-in N = 2 sooner | committed with this row |
-| 4: the picks written down | dev | not started | |
+| 2: the owner looks at the start (skipped if 1 stops) | human | done 2026-11-27 (session 8, joint with Plan 0109 Phase 4): outdoors "near", the hall "b"; Ruling 4's row (b) `near`, hall (b) ([log](logs/0108.md)) | no commit (his words land with Phase 4) |
+| 3: the cold pipelines on 1, 2 and 4 threads | dev | done, before Phase 2; line not met (N = 4 cuts the cold span 43 % RTX, 38 % RENOIR); stand-in N = 2 sooner | 984477bf |
+| 4: the picks written down | dev | done: `--pre-roll` unset is `near` in a window over `cave` and `outdoor`, `full` over a bounded source, under `--headless` and with `--pre-roll-drain`; `--pipeline-threads` unset 4 on 16+ logical CPUs, else 2; the fix brief's CPU twin; nfr section 7 lines | committed with this row |
 
 ### Notes
 
@@ -454,6 +454,9 @@ each. Empty is fine.)_
 - Phase 3: `gpu_frame`'s test builds the frame's start-up set only, not the entity set (with it, 11.9 s on lavapipe); it asserts 12 listed pipelines of the 13 a frame creates (the exposure pass's is built beside the table).
 - Phase 3: files beyond the list: `frame/marcher.rs` (one hit pipeline a job), `frame/mod.rs` (`Frame::with_build_threads`, `build_threads`, `pipeline_build_times`). The exposure, sky, FSR 2 and bake pipelines are not split.
 - Phase 3: the line reads `pipelines on 1 thread` at 1. One more start an adapter than written: `N` = 1 under `taskset -c 0-7`, beside the stand-in's `N` = 2.
+- Phase 4: files beyond the list: `cli/tests/outdoor.rs`, `run/hud_feed.rs`, `run/mod.rs`, `crates/svet-render/src/bake/pre_roll.rs` (the fix brief), Plan 0109's log and row.
+- Phase 4: `--pre-roll-drain` in a window over a streamed source resolves the default to `full` (not named by the restated phase).
+- Phase 4: the in-view wait read once an arm, not three; the RENOIR's cave did not land in its run in either arm. The gate tier at the tip not run.
 
 ### Close triggers
 

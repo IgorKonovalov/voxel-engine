@@ -647,8 +647,9 @@ pub struct BakeArgs {
     /// `SECONDS` have passed, then the budget returns to `budget` (a testbed lever for a look at
     /// a view whose far light is baked).
     pub(crate) pre_roll_drain: Option<f64>,
-    /// `--pre-roll full|near|off`: where the start-up's light pre-roll ends ([`PreRollMode`]).
-    pub(crate) pre_roll: PreRollMode,
+    /// `--pre-roll full|near|off` as given ([`PreRollMode`]); `None` unset, which
+    /// [`Args::pre_roll`] resolves by the run's mode and source.
+    pub(crate) pre_roll: Option<PreRollMode>,
 }
 
 /// `--pre-roll`: where the start-up's light pre-roll ends. `Full` bakes the near chunks and
@@ -680,6 +681,20 @@ impl PreRollMode {
             Self::Near => "near",
             Self::Off => "off",
         }
+    }
+}
+
+/// `--pre-roll`'s default: `Near` in a window over a streamed world (the cave, the outdoor
+/// hills), where the coarse pass then runs behind the first frame; `Full` in a window over a
+/// bounded one (the level, the showcase, a room or a rig), where an unbaked surface shows
+/// black; `Full` under `--headless`, so the goldens and the headless readings start as they
+/// did; and `Full` with `--pre-roll-drain`, which holds the camera to bake longer and refuses
+/// a shorter pre-roll. The owner's pick of 2026-11-27 (Plan 0108 Phase 2).
+pub(crate) fn default_pre_roll(headless: bool, mode: RunMode, drain: bool) -> PreRollMode {
+    if !headless && !drain && mode.streams() {
+        PreRollMode::Near
+    } else {
+        PreRollMode::Full
     }
 }
 
@@ -885,6 +900,14 @@ impl Args {
     /// (ADR-0083: a window defaults to the thread).
     pub(crate) fn bake_thread(&self) -> bool {
         self.bake.thread.unwrap_or(!self.headless)
+    }
+
+    /// Where the start-up's light pre-roll ends: `--pre-roll` where given, else
+    /// [`default_pre_roll`] for the run.
+    pub(crate) fn pre_roll(&self) -> PreRollMode {
+        self.bake.pre_roll.unwrap_or_else(|| {
+            default_pre_roll(self.headless, self.mode, self.bake.pre_roll_drain.is_some())
+        })
     }
 
     /// The auto exposure of `--adaptation`, `--adapt` and `--metering`, with the outdoor
