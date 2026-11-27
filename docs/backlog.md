@@ -1216,6 +1216,13 @@ Taken 2026-11-13 by [Plan 0074](plans/done/0074-the-syncs-light-stages-placement
 
 ## Tooling and process
 
+### A script test needs `target/` to exist (2026-11-27)
+
+`scripts/shoot-images.test.mjs`, "the CLI prints a candidate's commands...", makes its temporary
+directory inside `target/`, which exists only after a cargo build. CI builds first, so it passes
+there; in a fresh checkout the test fails. Found by the Windows path fix on 2026-11-27. Owed: the
+test makes its directory under the system's temporary folder, or creates `target/` itself.
+
 ### A harness chore after Plan 0098's windows: rehearsed windows, live settings, live banners
 
 Raised 2026-11-23 (owner: "go" on the harness list after windows W2 and W3). Three windows
