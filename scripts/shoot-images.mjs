@@ -8,7 +8,9 @@
 //                                 [--candidates] [--no-build]
 //
 // An entry's `source` is `flythrough` (the testbed binary with the entry's `flags`, plus
-// `--seed`, `--still-at` and `--still-dir`; a loop's `still_at` is a frame range `A..B`) or
+// `--seed`, `--still-at` and `--still-dir`; a loop's `still_at` is a frame range `A..B`, or
+// `A..B/S` for every S-th frame of it, so a loop at `fps` 20 of every third headless frame
+// plays at the 60 Hz the fly-through steps a headless frame by) or
 // `clip` (the fly-through's `clip` example with the entry's `flags`, plus `--fps` and
 // `--out-dir`). The frames land under target/shots/<id>/. Every command is derived from the
 // entry by `commandsOf`, so `--print` and the shoot cannot disagree. `--check` renders and
@@ -115,7 +117,7 @@ export function validate(manifest) {
     if (!(Number.isInteger(e.cap_bytes) && e.cap_bytes > 0)) errors.push(`${id}: cap_bytes is not a positive integer`);
     if (e.source === "flythrough") {
       if (e.kind === "still" && !Number.isInteger(e.still_at)) errors.push(`${id}: a still's still_at is one frame`);
-      if (e.kind === "loop" && !/^\d+\.\.\d+$/.test(String(e.still_at))) errors.push(`${id}: a loop's still_at is A..B`);
+      if (e.kind === "loop" && !RANGE.test(String(e.still_at))) errors.push(`${id}: a loop's still_at is A..B or A..B/S`);
       if (!e.flags?.includes("--headless")) errors.push(`${id}: a flythrough entry runs --headless`);
       if (!e.flags?.includes("--settled-start")) errors.push(`${id}: a flythrough entry runs --settled-start`);
     }
@@ -141,7 +143,7 @@ function validateCandidates(id, e) {
     if (!Array.isArray(cand) && cand.still_at !== undefined) {
       if (e.source !== "flythrough") errors.push(`${id}: candidate ${n}: still_at is a flythrough entry's`);
       else if (e.kind === "still" && !Number.isInteger(cand.still_at)) errors.push(`${id}: candidate ${n}: a still's still_at is one frame`);
-      else if (e.kind === "loop" && !/^\d+\.\.\d+$/.test(String(cand.still_at))) errors.push(`${id}: candidate ${n}: a loop's still_at is A..B`);
+      else if (e.kind === "loop" && !RANGE.test(String(cand.still_at))) errors.push(`${id}: candidate ${n}: a loop's still_at is A..B or A..B/S`);
     }
   });
   return errors;
@@ -181,8 +183,9 @@ export function candidateOf(entry, n) {
   delete c.candidates;
   if (!Array.isArray(cand) && cand.still_at !== undefined) c.still_at = cand.still_at;
   if (c.kind === "loop" && c.source === "flythrough") {
-    const [a, b] = String(c.still_at).split("..").map(Number);
-    c.still_at = `${a}..${Math.min(b, a + CANDIDATE_LOOP_S * c.fps - 1)}`;
+    const { a, b, s } = rangeOf(c.still_at);
+    const cut = `${a}..${Math.min(b, a + (CANDIDATE_LOOP_S * c.fps - 1) * s)}`;
+    c.still_at = s === 1 ? cut : `${cut}/${s}`;
   }
   return c;
 }
@@ -205,12 +208,23 @@ export function candidateCommands(id, entry, n, wrapOpts = {}) {
   return { dir, tilePng: `${dir}.png`, clear: cmds.clear, render: cmds.render, bare: cmds.bare, tile, encode, entry: c };
 }
 
-/** The frames a flythrough entry writes: its one still, or every frame of its range. */
+/** A loop's `still_at`: `A..B`, or `A..B/S` with a step `S` of 1 or more. */
+const RANGE = /^\d+\.\.\d+(\/[1-9]\d*)?$/;
+
+/** A loop's `still_at` as its first and last frame and its step (1 for `A..B`). */
+export function rangeOf(stillAt) {
+  const [range, step] = String(stillAt).split("/");
+  const [a, b] = range.split("..").map(Number);
+  return { a, b, s: step === undefined ? 1 : Number(step) };
+}
+
+/** The frames a flythrough entry writes: its one still, or every S-th frame of its range from
+ * A (every frame for `A..B`). */
 export function framesOf(entry) {
   if (entry.kind === "still") return [entry.still_at];
-  const [a, b] = String(entry.still_at).split("..").map(Number);
+  const { a, b, s } = rangeOf(entry.still_at);
   if (!(b >= a)) throw new Error(`still_at ${entry.still_at}: B is before A`);
-  return Array.from({ length: b - a + 1 }, (_, i) => a + i);
+  return Array.from({ length: Math.floor((b - a) / s) + 1 }, (_, i) => a + i * s);
 }
 
 /** The memory-capped scope with a timeout, inside the GPU lock unless `lock` is null (a batch

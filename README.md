@@ -218,9 +218,9 @@ cargo run --release -p flythrough -- --source outdoor --trees forest --spawn for
 
 The models we ship and how to make one: [the entities guide](docs/entities.md).
 
-![A black voxel spider with purple markings wandering over a dark floor among glowing cyan, pink and green crystals, seen from above](docs/images/walkers.webp)
+![A black voxel spider with purple markings standing on a dark floor among glowing cyan, pink, blue and green crystals, seen from above; it turns on the spot and its legs shift](docs/images/walkers.webp)
 
-<sub>One spider wandering among the lit crystals of the showcase hall.</sub>
+<sub>One spider standing among the lit crystals of the showcase hall, turning on its legs (one second of motion, slowed to a third).</sub>
 
 Try it:
 

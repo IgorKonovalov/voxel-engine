@@ -146,7 +146,7 @@
       "tolerance": null,
       "cap_bytes": 700000,
       "fallback": "gif",
-      "shows": "One spider wandering among the lit crystals of the showcase (Entities)",
+      "shows": "One spider standing and turning on its legs among the lit crystals of the showcase (Entities)",
       "candidates": [
         ["--shot", "hall"],
         ["--shot", "chasm"],

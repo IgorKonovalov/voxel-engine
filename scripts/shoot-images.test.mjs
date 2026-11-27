@@ -91,16 +91,23 @@ test("validate names a missing field, a bad range and a flag the script adds", (
   assert.deepEqual(validate(bad), [
     "still: no `tolerance`",
     "still: tolerance is not a fraction in 0..1",
-    "loop-a: a loop's still_at is A..B",
+    "loop-a: a loop's still_at is A..B or A..B/S",
     "loop-a: a flythrough entry runs --settled-start",
     "spin: flags name --out-dir, which the script adds",
     "spin: file still.webp is also still's",
   ]);
 });
 
-test("framesOf is the one still or the whole range", () => {
+test("framesOf is the one still, the whole range or every S-th frame of it", () => {
   assert.deepEqual(framesOf(FIXTURE.shots.still), [7]);
   assert.deepEqual(framesOf(FIXTURE.shots["loop-a"]), [3, 4, 5]);
+  assert.deepEqual(framesOf({ ...FIXTURE.shots["loop-a"], still_at: "3..12/3" }), [3, 6, 9, 12]);
+  assert.deepEqual(framesOf({ ...FIXTURE.shots["loop-a"], still_at: "3..13/3" }), [3, 6, 9, 12]);
+  for (const bad of ["3..12/0", "3..12/", "3../3"]) {
+    assert.deepEqual(validate({ shots: { l: { ...FIXTURE.shots["loop-a"], file: "l.webp", still_at: bad } } }),
+      ["l: a loop's still_at is A..B or A..B/S"], bad);
+  }
+  assert.deepEqual(validate({ shots: { l: { ...FIXTURE.shots["loop-a"], file: "l.webp", still_at: "3..12/3" } } }), []);
 });
 
 test("--print gives the clear, the locked render and the encode, copy-pasteable", () => {
@@ -173,6 +180,7 @@ test("candidateOf merges a candidate's flags and still_at; a loop's frames are c
   const loop = { ...FIXTURE.shots["loop-a"], still_at: "36..96", fps: 20, candidates: [[], []] };
   assert.equal(candidateOf(loop, 1).still_at, "36..75");
   assert.equal(candidateOf({ ...loop, still_at: "3..5" }, 2).still_at, "3..5");
+  assert.equal(candidateOf({ ...loop, still_at: "36..996/3" }, 1).still_at, "36..153/3");
 });
 
 test("--print ID --candidate N prints the commands that make that tile alone", () => {
