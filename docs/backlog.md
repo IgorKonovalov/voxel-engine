@@ -17,6 +17,10 @@ Rules:
 
 ## Next up
 
+### A wandering spider turns on the spot and does not travel (2026-11-27)
+
+Found by the chore that tried to re-shoot the README's `walkers` image (`chore-readme-walkers-hud`, release binaries of `1febec75`, RTX 3080 Laptop, headless, showcase). With the wander on, the library spider changes heading but stays in one place for 900 to 1200 frames (15 to 20 s) after about its first second: at the crystals pose, on the hall floor, at 330,384 (where it climbs a wall and stays there) and at 560,300, alone and as three spiders. The built-in walker on its fixed circle does walk. Unread: whether the mover refuses the step (the look-ahead probe, the surface mover's climb), the wander picks targets it cannot reach, or the gait's stride is near zero. Stills: `live/report/walkers-spider-sheet-every30.png` and `walkers-spider-three-spots.png` in that chore's worktree (untracked). **What it takes:** an architect's reading of the wander and the surface mover at one of those poses, a headless count of distance travelled per second as the test, then the fix. The README's `walkers` loop waits on it.
+
 ### The exposure is too bright at the beginning of a dug tunnel (owner, 2026-11-27)
 
 The owner, during the dig session of 2026-11-27 (forest at 15:00, floor profile, bake thread on,
