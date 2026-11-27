@@ -543,6 +543,9 @@ fn outdoor_forest_sunset_golden() {
     let camera = bare.camera();
     let mut frame = bare.frame(at([17, 45]), |l| l);
     bare.settle(&mut frame, &camera, 64);
+    // The device waited before the read: every slot the frames copied has mapped, so the
+    // readout is the newest of them on every run, not the one a non-blocking poll found.
+    let _ = bare.device.poll(wgpu::PollType::wait_indefinitely());
     let exposure = frame
         .exposure_readout(&bare.device)
         .expect("the exposure read back")
