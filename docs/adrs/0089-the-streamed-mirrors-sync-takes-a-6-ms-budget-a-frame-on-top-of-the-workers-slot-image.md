@@ -76,7 +76,8 @@ s and 15 s unchanged in every arm.
   before, since the slab lands nearest first over 3 to 6 frames. Not read on screen yet (Plan
   0111 Phase 7).
 - Under a loaded box the residency read +19.9 % later on one unalternated pair whose two runs
-  were not at one load; a reading, re-read by 6d with the loads matched.
+  were not at one load; 6d re-read it at matched starts (load1 34.2 and 35.9): +30.0 %, and
+  +15.7 % on its unmatched pair. A reading, not a bar (Plan 0111, Phase 5's answer 2).
 - Two defaults change at once; the fly-through's and the tester's rows and goldens that name
   them move, and the identity test ADR-0056 owed (a promotion and a demotion with an image held)
   lands with the flip.

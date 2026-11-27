@@ -1151,3 +1151,95 @@ settings, and the revert is one commit. 6d proceeds; the owner's morning word ma
    Recommended: accept the fill as the condition's measure; a run long enough to reach the
    stand-in's full residency would be about 90 s an arm, four runs, and reads a tail the owner
    does not wait for. Alternative: run it (about 8 minutes under the lock) before the flip.
+
+## Amended 2026-11-28 (architect, 6d's stop rule)
+
+Read from the Phase 6d section of [logs/0111.md](logs/0111.md) and the runs' own `log.txt` under
+`live/p6d/A/` (outside the repo), the rig `live/p6d-run.sh`, `git diff --stat 0c7d353b fa3fe4a8
+-- '*.wgsl'`, `run/loading.rs` (the `entity pipelines built` mark) and the start-up notes of
+[Plan 0103](0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md)'s and
+[Plan 0108](done/0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md)'s
+logs. No run was made for this ruling. The owner's standing answer (Phase 5, question 4) lets
+the picks follow the written rule; the ruling is shown here and question 4 below carries it.
+
+### The stop fired on a cold driver cache, not on the budget
+
+**What A/tip1's own lines say.** Its `start-up:` rows read `the frame's 12 in 3973 ms` against
+the base's 62 (`hit field` 3525, `temporal` 3906) and `the entity set's 5 in 23249 ms` against
+44 (`light` 23227, `light (no entities)` 20856); its `loading:` line reads `building the
+pipelines 23248.8` against 43.8. That is the NVIDIA driver compiling every pipeline: Plan
+0108's Phase 3 read the two `light` pipelines at 37 s of a 49 s cold start on this RTX, and
+Plan 0103's log read the whole span 35.5 to 36.7 s cold against 0.36 to 0.54 warm. A/tip2 and
+C/tip3 read 62 and 46 ms, warm, as every base run did. The 28.3 s between the arms is all before
+`near residency done` (30008 against 2035 ms, +27.97 s), where no sync budget acts
+(`enter_pre_roll` restores `args.sync_time` after the sliced start). The pre-roll's own span,
+`pre-roll done` minus `near residency done`, reads 11017 against 10661 ms (+3.3 %), and of
+that its `lighting the near chunks` step read 918.1 ms against 75.0, a bake pipeline compiled
+at first use (Plan 0103's log: one pre-roll step 1253 ms cold against 50); the span without
+that step is under the base's.
+
+**Why the tip was cold and the base warm.** No `.wgsl` differs between `0c7d353b` and
+`fa3fe4a8` (the diff is empty), so the driver's disk cache keys on the application binary, not
+on the shader text: `live/p6d/flythrough-tip` was a new file at a new path and A/tip1 its first
+launch, while `live/p6a/flythrough-tip-0c7d353b` had run every 6a' and 6b hold. Plan 0108's
+owner protocol already stated the fact ("a new binary's first window pays the cold pipelines";
+its readings took one uncounted warm-up launch per binary). The rig ran with the owner's real
+caches (`p6d-run.sh` sets no cache variable), so the first launch paid once and the later ones
+read warm, which is what A/tip2 and C/tip3 show.
+
+**The residency clause's reading of record is therefore the warm pairs:** A pair 2 +3.6 %
+(13014 against 12564 ms) and C +7.4 % (13580 against 12641), both under the 10 % bar, beside
+6b's +5.5 % and +4.7 % on the same arm. Against the base mean of 12634 ms the tip reads +3.0 %
+and +7.5 %. The fill at 5 s and 15 s is equal in every quiet run; every other quiet bar met in
+all three tip runs (sync-led with bricks 0 / 0 / 0; `over_33ms` 0.092, 0.087, 0.069; sync p99
+7.9 ms; slowest 10.4 ms); the loaded `over_33ms` 0.144 and 0.188 against a bar of 0.5. The
+loaded residency (+15.7 %, +30.0 % at matched starts) is logged as the rule says, not a bar;
+ADR-0089's Consequences line on it is refreshed with these figures.
+
+### Ruling: the flip is restored tonight; no re-read
+
+**A dev reverts `055a6148` by a new commit** (`git revert`, the tree back to `fa3fe4a8`'s
+code: `--sync-ms` 6, `--mirror-pack workers`, `Packing` and `MirrorConfig::new` `Workers`, the
+tests that name the defaults back to the pair; the identity test and the banner's `mirror sync`
+row are already in both trees). Then the quick tier over the changed crates, `--profile gpu
+--binaries gpu_mirror_image,gpu_settings_rows` under the perf lock (about 30 s; no quiet hold),
+`--clippy`, fmt. The 6d row of the Implementation log gains the restore's commit and the
+reading of record above. No further hold: three warm quiet pairs on this arm (6b's two and
+6d's pair 2 and C) and pair 1's own pre-roll span read one figure, and a fourth under the lock
+(about 6 minutes) would answer nothing the rule asks. The restored tree is a new binary again:
+its first launch anywhere (the tester, the owner's window) pays the cold pipelines once, a fact
+of every new binary on this host and nothing of the flip.
+
+**Why not (b), a re-read on a warm pair first:** the written rule wanted two quiet runs under
+10 %, and 6d already holds two (pair 2 and C), taken alternated against the base under the
+same lock and load; pair 1 is discarded as a cold launch, not as an outlier. **Why not (c),
+keep off:** no reading supports it; the stop rule's clause was written against the budget's
+residency cost, which read +3 to +9 % in every warm run, on the span and on the mark.
+
+### The rule, reworded (6d's record, and 6e, 6f and every later hold of this plan)
+
+- **One discarded warm-up launch per binary before its first counted run in a hold:** the
+  hold's own command line with `--frames 120`, so the start-up's pipelines and the pre-roll's
+  first-use compiles are warm (about 25 s a binary; Plan 0108's protocol). Its lines are kept
+  under the hold's folder, marked `warm-up`, and enter no table.
+- **A counted run that is cold is repeated, never counted:** cold is a `loading:` line whose
+  `building the pipelines` is over ten times the other arm's, or an `entity pipelines built`
+  mark later than the other arm's by more than 1 s. The log names the discarded run and why.
+- **The residency clause reads the pre-roll's span,** `pre-roll done` minus `near residency
+  done` from the run's `diag:` lines, which is the stretch the budget acts on; `full residency
+  after` and `first frame after` stay logged beside it. The bar and the stop rule (6d: later by
+  more than 10 % in either quiet run) are read on the span. For 6d's record, from the six runs'
+  lines: pair 1 11017 against 10661 ms (+3.3 %, with the cold bake step inside), pair 2 10959
+  against 10564 (+3.7 %), C 11533 against 10593 (+8.9 %); the dev copies these three rows into
+  the log with the restore.
+- 6e's and 6f's holds carry the first two rules as written; neither has a residency clause.
+
+### Owner question 4, restated (recommended option first)
+
+4. **The pair as the default (`--sync-ms 6 --mirror-pack workers`), at +4 to +7 % on the quiet
+   full residency (0.5 to 0.9 s on 12.6; four warm pairs over 6b and 6d) for a tenth of the
+   frames over 33 ms?** Recommended: yes, as picked and restored. 6d's stop rule fired once, on
+   the tip binary's first launch compiling every pipeline cold (28 s before the pre-roll; above);
+   the architect ruled it an artefact and restored the flip by a new commit. Alternative:
+   `workers` alone (a quarter of the frames, residency -2 %, 17 to 23 `alloc`-led frames stay;
+   its loaded run was not taken, about 4 minutes).
