@@ -4,7 +4,7 @@
 > before any dev work). Drafted with no interview from the owner's tester report and Plan 0107's
 > Phase 1 reading; the guesses and the questions left are under "Risks & open questions", each
 > with a recommended option.
-> **Lane order:** starts after [Plan 0107](0107-the-mirrors-slot-image-packed-on-the-stream-workers.md)
+> **Lane order:** starts after [Plan 0107](done/0107-the-mirrors-slot-image-packed-on-the-stream-workers.md)
 > merges, so it measures only what that plan leaves.
 > **Created:** 2026-11-27
 > **Milestone:** cross-cutting: the streaming lines of `docs/nfr.md` sections 2 and 5 (M10's

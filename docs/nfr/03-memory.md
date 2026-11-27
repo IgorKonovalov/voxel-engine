@@ -421,3 +421,16 @@ and 22 938 088 B over 7 153 at Portable (r_full 12); the hills at noon 48 686 47
 21 332 456 B. That is 2 851 to 3 207 B a shell (arithmetic), CPU memory, about 1.2 % of
 section 3's 4 GB line for the world in RAM. The verdict costs a worker 29.6 to 39.3 us a
 chunk in the mean. Not checked: whether the resident chunks' figure above counts the map.
+
+**The mirror's slot images held between a worker and the sync (Plan 0107 Phase 5, ADR-0056,
+2026-11-27, release at `103e6715`, Ryzen 9 5900HS; only under `--mirror-pack workers`).** The
+hook's cap is 67 108 864 B (`DEFAULT_IMAGE_CAP_BYTES`). Peak held, chunks refused by the cap:
+the RTX cave bench 67 108 288 and 67 108 608 B, 904 and 821 (2.0 and 1.9 % of the chunks); the
+RENOIR's cave 67 108 736 B, 738 (3.3 %); the forest glide 25.4 to 26.6 MB, none; the eight-CPU
+stand-in's cave 38 216 448 B and fresh forest 16 262 144 B, none. Held at the run's end: 0 in
+every run. An image is 6 to 18 us of a worker's time in the mean; the bench of Phase 2
+(`apps/flythrough/benches/slot_image.rs`, loaded) read 6 784 B held for a near-solid chunk
+and 35 520 to 35 776 B for a cave surface chunk and a forest canopy chunk. Process peak RSS (`VmHWM`) `inline` /
+`workers`: RTX cave 1651 and 1633 / 1671 and 1706 MB, forest 1319 and 1414 / 1304 and 1313,
+RENOIR cave 830 / 771, stand-in cave 1711 / 1635, stand-in fresh forest 1167 / 1342 (one run
+an arm). Under the default (`inline`) no image is made and nothing is held.

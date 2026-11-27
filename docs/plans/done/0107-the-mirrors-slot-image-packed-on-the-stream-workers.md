@@ -1,7 +1,7 @@
 # 0107: The mirror's slot image packed on the stream workers
 
-> **Status:** implemented, awaits the fresh close review (Phases 1-5 and 7 done; Phase 5's no-gain stop fired and `inline` stays the default; Phase 6 routed to Plan 0111, Phase 8 skipped, Phase 9 cut to the tip, per the amendment of 2026-11-27). Approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
-> [the review of 2026-11-26](../reviews/2026-11-26-work-off-the-render-thread.md) on the owner's
+> **Status:** done (closed 2026-11-27, v0.83.0): clean in a fresh review session, no blocker and no major. The slot image is built and byte-identical by test, and it stays a setting, off: `--mirror-pack workers` cuts the sync's p99 by 10 to 15 % against a 20 % bar (Phase 5's no-gain stop), `alloc` still leads the tail, so `inline` is the default. Phases 1 to 5 and 7 ran; Phase 6 is routed to Plan 0111, Phase 8 skipped, Phase 9 cut to the tip (the amendment of 2026-11-27). The thread counts are in one place (`ThreadPlan`). What it left is the backlog's "Plan 0107's leftovers". Approved (owner, 2026-11-26: "go on both, all recommended, do not start until these lanes finish"; see "Amended 2026-11-26 (owner)"). Drafted from
+> [the review of 2026-11-26](../../reviews/2026-11-26-work-off-the-render-thread.md) on the owner's
 > "all recommended" (its question 1: draft now, Phase 1 the re-read), with no further interview;
 > the guesses and the questions left are under "Risks & open questions", each with a recommended
 > option. **Lane order:** the lane starts after Plans 0101 and 0105 merge (Phase 3 edits
@@ -9,13 +9,13 @@
 > change and may run beside them.
 > **Created:** 2026-11-26
 > **Milestone:** cross-cutting: the streaming line of `docs/nfr.md` sections 2 and 5 (M10's
-> performance work in [`docs/roadmap.md`](../roadmap.md) is the nearest home)
-> **Related ADRs:** [ADR-0056](../adrs/0056-the-mirrors-slot-image-is-packed-on-the-stream-workers-and-the-render-thread-only-allocates-and-copies.md)
+> performance work in [`docs/roadmap.md`](../../roadmap.md) is the nearest home)
+> **Related ADRs:** [ADR-0056](../../adrs/0056-the-mirrors-slot-image-is-packed-on-the-stream-workers-and-the-render-thread-only-allocates-and-copies.md)
 > (accepted; this plan builds it, and it takes a dated Outcome note at the close),
-> [ADR-0017](../adrs/0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md)
+> [ADR-0017](../../adrs/0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md)
 > (one owner of the mirror's allocation and deferral rules, on the render thread; the
-> `ChunkPrep` hook), [ADR-0022](../adrs/0022-mirror-uploads-through-a-staging-belt-and-copy-commands.md)
-> (the staging belt), [ADR-0083](../adrs/0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md)
+> `ChunkPrep` hook), [ADR-0022](../../adrs/0022-mirror-uploads-through-a-staging-belt-and-copy-commands.md)
+> (the staging belt), [ADR-0083](../../adrs/0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md)
 > (the bake thread, whose readers now share the chunk locks). No new ADR: the one choice inside
 > ADR-0056 that this plan makes (how a stale image is told) is in "Decision".
 
@@ -40,12 +40,12 @@ CPUs, RTX 3080 Laptop; "RENOIR" is its AMD iGPU):
 - `update + poll + sync` p99 reads 15.7 to 23.7 ms in motion against the 16.6 ms line
   (`docs/nfr.md` sections 2 and 5, Plans 0074 and 0088, both adapters). At rest it is 0.03 to
   0.09 ms p50: the cost exists only while chunks arrive.
-- The tester's cave bench, RTX host, [Plan 0096](done/0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md):
+- The tester's cave bench, RTX host, [Plan 0096](0096-the-bake-queues-drain-tiers-a-drain-slice-the-step-and-the-slow-adapters-light-pass.md):
   at its Phase 7 `alloc` p99 9.4 ms of a sync p99 of 19.4; at its close (quiet) `alloc` p99
   6.42 ms against a line of 3.0, sync p99 12.5, `update + poll + sync` p99 14.82. `size` p99
   2.9 to 3.0 ms beside it. The forest at leaf fill 128 read a sync p99 of 7.28 to 7.46 ms
   against 6.
-- The profile of `alloc` ([logs/0096.md](logs/0096.md), Phase 7; samples of the main thread
+- The profile of `alloc` ([logs/0096.md](../logs/0096.md), Phase 7; samples of the main thread
   under `upload_record`, 3 502 in all): the brick loop's own body 1 274, `upload_brick`'s own
   471, `fill_slot` 463, `stage` 473, `stage_record` 218, `PoolAlloc::alloc` 54. "No single
   item holds a third": the cost is the per-brick path as a whole, about 9.5 µs a brick at
@@ -464,7 +464,7 @@ many.
 - **No cut of the staging copy** (`stage`, the belt's view drop, about an eighth of
   `upload_record` in the profile). A copy of a chunk's words as one run a bin is a follow-on
   if Phase 5 shows the copy leading.
-- **Nothing for the start-up.** That is [Plan 0108](done/0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md).
+- **Nothing for the start-up.** That is [Plan 0108](0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md).
 - **No frame profiler scopes** (Plan 0091); the sync's stage clocks are enough here.
 
 ## Amended 2026-11-26 (owner)
@@ -482,7 +482,7 @@ The owner: "go on both, all recommended, do not start until these lanes finish".
 
 ## Amended 2026-11-27 (architect, after Phase 5's stop)
 
-Read from the rows of [logs/0107.md](logs/0107.md) (Phases 1 and 5) and the tree at
+Read from the rows of [logs/0107.md](../logs/0107.md) (Phases 1 and 5) and the tree at
 `103e6715`. No run was made for this reading.
 
 ### The ruling
@@ -491,7 +491,7 @@ Read from the rows of [logs/0107.md](logs/0107.md) (Phases 1 and 5) and the tree
 the default, as the stop pre-wrote; an arm that costs nothing when off stays). **Phase 7 runs,
 then the tip, then the close review.** Phases 6 and 8 and Phase 9's default flip do not run.
 The `alloc` finding and Phase 6's `light place` go to
-[Plan 0111](0111-the-stagger-in-flight-on-streamed-scenes-read-quiet-after-plan-0107-then-cut.md),
+[Plan 0111](../0111-the-stagger-in-flight-on-streamed-scenes-read-quiet-after-plan-0107-then-cut.md),
 which measures before it picks (the last section here is its note).
 
 This differs from the pre-written stop in one point: it said "Phases 6 and 7 still run", and
@@ -666,7 +666,7 @@ the default.
 
 | phase | owner | state | commit |
 |---|---|---|---|
-| 1: the sync's stages re-read, the bake thread on | dev | done; neither the stop line nor the order line fires (loaded); readings in [logs/0107.md](logs/0107.md) | dd905d22 |
+| 1: the sync's stages re-read, the bake thread on | dev | done; neither the stop line nor the order line fires (loaded); readings in [logs/0107.md](../logs/0107.md) | dd905d22 |
 | 2: the slot image as a pure function | dev | done; bench read loaded | 6afbb90c |
 | 3: the mirror takes an image, behind a setting | dev | done; gpu readings loaded | 68513d6e |
 | (merge of main v0.82.0, no conflicts) | dev | done | 344ec173 |
@@ -758,7 +758,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   `alloc` p99 <= 3.0 ms missed in both arms (7.34 / 7.72 inline, 7.01 / 7.14 workers);
   `update + poll + sync` p99 <= 16.6 ms met in both (15.914 / 16.316, 13.896 / 14.304);
   forest leaf 128 sync p99 <= 6 ms missed (11.334 / 9.181). Held images: peak 67 108 736 B of
-  the 67 108 864 cap (RENOIR). Rows in [logs/0107.md](logs/0107.md), Phase 5.
+  the 67 108 864 cap (RENOIR). Rows in [logs/0107.md](../logs/0107.md), Phase 5.
 - **Gate at the tip:** `scripts/build-guests.sh`; `cargo nextest run --workspace --profile gate
   --no-fail-fast` at `3608a1b7`, perf lock, load1 3.64 / 3.64 / 3.22: 1506 run, 1505 passed,
   1 failed (`gpu_hud_golden::hud_golden_over_the_carved_view_is_pixel_exact`), 252 skipped,
@@ -768,6 +768,24 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   46 of 46. The tier not re-run on the final tree.
 - **Outstanding `human` phases:** none (Phase 8 skipped by the amendment).
 
+## Close review (architect, 2026-11-27, a fresh session)
+
+Clean: no blocker, no major. Read: the plan's diff against main `81f38aa5` (`crates/svet-render/src/gpu_world/{image,slot,window,lights,mod}.rs`, `bake/faces.rs`, `bake/queue/{lister,message,mod}.rs`, `frame/{bake_thread,baked}.rs`, `threads.rs`, `settings.rs`, `lib.rs`; the fly-through's `setup.rs`, `streaming.rs`, `run/{frame,hud_feed,keys,mod}.rs`, `run/loading/pre_roll.rs`, `hud/modes.rs`, `toggles.rs`, the flag table), every test the plan names, the readings log's Phase 5 rows, the amendment of 2026-11-27.
+
+- **The tests defend their done-whens.** `an_image_holds_the_inline_paths_words_sizes_and_emitters` compares, over 64 seeded chunks, each brick's words with `fill_slot`'s padded to its bin, its bin with `bin_of(slot_units)`, the counts and bytes with `need_of`, the emitter lists with `scan_emitters`, and asserts every class, uniform kind, translucent brick and emitter place occurred. `the_mirror_is_byte_identical_whichever_thread_packed` reads back the four pool shards, the records, the table and the light-sample buffer of both arms at two focuses (the second reuses freed slots) and asserts them equal, with the live and allocated bytes; the `Workers` arm's `images_used` equals its records, its `sized_chunks`, `light_bricks` and `packed_bricks` are 0, the hook's held bytes end at 0. The three refusal tests assert the bytes equal and the reason's counter exactly; the deferral test compares each of three syncs' (error, written, deferred, pending) on one page and on eight. The cap test asserts made, refused, held and peak at a cap of one image. `the_thread_plan_fills_the_floor_exactly` asserts the four cases and both old formulas over 1 to 64.
+- **`svet-world` is untouched but for one doc line** (`stream/workers.rs`): the hook, the image, its clock and its atomics are `svet-render`'s. No new thread, no dependency. The world is not written by the renderer: the image is read-only data applied under the chunk's write lock at one point, the upload.
+- **Off costs nothing that a reading could see, by the code.** Under `Inline` the hook's `make` is one atomic load; the workers' result gains one `Arc` and an empty `Mutex`; the render thread takes each result's lock once at `apply_events`; `prune_images` returns on an empty map; selection and the backstop look a coordinate up in an empty map. The packing functions moved, not changed (`gpu_mirror_alloc` and every golden but the HUD's unmoved). One thing does change in both arms: below.
+- **Phase 4's deviation is allowed and is a change of the default path.** `select` reads the material flags when no row is written yet, so a mirror's first selection sizes under the table's flags; it has to, for an image's key and counts to be comparable at the first sync. Before, the first sync's sizes left a translucent brick's extra unit out and the upload's backstop caught it. More exact, bytes unchanged, no golden moved, and no test asserts it: a backlog line and a changelog line, not a finding to fix here.
+- **The HUD golden's re-bless stands.** `old.png` is main's, `new.png` the committed one; the new image holds the row `mirror pack inline` under `clear box on`, every row below moved one line down, and the diff's pixels lie in the HUD from that row down, the carved view outside it equal. The test stays pixel-exact.
+- **Phase 3's test source.** `Rich` is test-local, by reach (the cave source is the fly-through's). It holds every packed class, both uniform kinds and emitters, which the done-when asked of the world; what it does not exercise is a LOD ring (`r_lod` equals `r_full`), so no promotion or demotion with an image held. Accepted with the setting off; owed before a flip (the backlog).
+- **Phase 1's print** is in the `frames:` exit line with a unit test; `run.json` carries neither `poll` nor Phase 5's two lines. The done-when asked for the figures in the log, which holds them. Accepted; Plan 0111 adds the fields if its tables need them.
+- **Phase 5's readings** name machine, adapter, commit, lock and load, quiet at ask and hold. The stop was read the right way round (14.4 and 15.1 % under 20 on both RTX scenes) and the amendment's ruling follows from the rows. The first-frame mark moved after them feeds no figure the ruling uses. The stand-in's worse run is one run an arm with nothing shipping that could pay it: a backlog line and the first condition of a flip is enough.
+- **The cap.** The peak never passes it (the check is on the sum after the add, undone when over); in the cave it is reached, 1.9 to 3.3 % refused, which pack inline.
+- **Phase 7** changes no default (asserted) and prints on bounded scenes too, naming workers that do not run there; `mirror pack` likewise shows in the HUD of a bounded scene where it does nothing. Both are a backlog line.
+- **File sizes.** `bake/held.rs` and `temporal.wgsl` at 1197 are not this plan's (untouched). This plan's largest: `gpu_world/mod.rs` 1131, `run/frame.rs` 1116, `run/hud_feed.rs` 1052, `cli/tests.rs` 1184 (its new tests went to `cli/tests/`). The gate passes.
+- **The gate, run here on `c3f71262`** (the final tree before the close's docs; `scripts/build-guests.sh` first, the binaries built before the lock, 12 build jobs in a 16 GiB scope, the only lane building): 1506 run, 1506 passed, 252 skipped, 923.5 s under the exclusive perf lock, load1 3.41 at ask and at hold (waited down from the build's 14), 3.64 at the end; no timeout, no re-run; the five `gpu_mirror_image` tests 1.0 to 2.8 s. Under the 19 min line. The tests `test-times.mjs` names over the 10 s line are none of this plan's. Also exit 0, on the tree with the version bump: clippy `--workspace --all-targets -D warnings`, `cargo fmt --all --check`, `cargo deny check`, the doctests (11), the script tests (46) and the hook tests (88), every `scripts/check-*.mjs` and the index self-test. No soak or full tier.
+
 ## Followups
 
-_(Empty at the draft.)_
+- `docs/backlog.md`: "Plan 0107's leftovers" (the three flip conditions, the stand-in run, the LOD ring in the identity test, the first selection's flags, the row on bounded scenes, the README's `hud` still, `run.json`, the cap, Phase 6).
+- [Plan 0111](../0111-the-stagger-in-flight-on-streamed-scenes-read-quiet-after-plan-0107-then-cut.md) takes `alloc` and `light place`, and proposes the flip if its tables carry it.
