@@ -1,6 +1,6 @@
 # 0111: The stagger in flight on streamed scenes: read quiet after Plan 0107, then cut
 
-> **Status:** in-progress (2026-11-27: Phases 1 to 4 landed; Phase 5, the architect's amendment, next). Was: approved (2026-11-27, owner: "go, recommended": it starts after Plan 0107 merges and does not wait for Plan 0091; he takes Phase 3's window runs in a ten-minute quiet slot; if stop line 1 fires a tester README note is enough). Was: draft (2026-11-27; the owner's go on drafting: "go both"; he approves the draft
+> **Status:** in-progress (2026-11-27: Phases 1 to 5 landed; the owner answered Phase 5's questions, all recommended; 6a next). Was: approved (2026-11-27, owner: "go, recommended": it starts after Plan 0107 merges and does not wait for Plan 0091; he takes Phase 3's window runs in a ten-minute quiet slot; if stop line 1 fires a tester README note is enough). Was: draft (2026-11-27; the owner's go on drafting: "go both"; he approves the draft
 > before any dev work). Drafted with no interview from the owner's tester report and Plan 0107's
 > Phase 1 reading; the guesses and the questions left are under "Risks & open questions", each
 > with a recommended option.
@@ -353,6 +353,7 @@ slow frame: 539 at 11.2 s, wall 108.4 ms: acquire 0.1, update 0.3, poll 2.1 (41 
 - Read Windows or the RENOIR in Phases 1 to 4.
 - Build a profiler (Plan 0091), or change `run.json`'s schema.
 
+
 ## Implementation log
 
 > Written by `dev`: one row per phase as its commit lands, then the close block. **The phases
@@ -704,3 +705,12 @@ merged tree first (the plan's risk, unchanged).
 4. **A default flip in 6c on the rule written there, or every flip asked of you?**
    Recommended: the rule, with the picks shown to you before 6d starts (the phase is yours to
    approve). Alternative: each flip its own question.
+
+## Amended 2026-11-27 (owner, the Phase 5 questions)
+
+"All recommended" (owner, 2026-11-27), so the recommended option of each question of the section "Amended 2026-11-27 (architect, Phase 5)" stands:
+
+1. **Order and scope:** 6a, then 6b to 6d, then 6e, then 6f, one dev brief each.
+2. **Under a loaded box:** readings only. 6g goes to the backlog unless the loaded re-runs after 6a to 6f still show `update`-led frames.
+3. **The castle's focus jump:** 6f in this plan. It does not run beside Plan 0033's streamer brief.
+4. **Default flips at 6c:** by the written rule, the picks shown to the owner before 6d.
