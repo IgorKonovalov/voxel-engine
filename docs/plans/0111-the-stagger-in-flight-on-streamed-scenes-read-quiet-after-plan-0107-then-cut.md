@@ -384,10 +384,13 @@ Readings: [`logs/0111.md`](logs/0111.md).
 | 6a'': the light notes as a delta | dev | done; bars met: quiet `build` p99 1.652 / 1.658 (under 3.0), max 2.240 / 2.325 (under 7.0), `over_33ms` 0 / 0 (base 1 / 0), loaded `build` p99 2.204 (under 5.0), `light_notes` max 0.061 ms on 4 871 non-whole frames (under 0.2); deviations in the log (files outside the list, `Option<LightNote>` for a chunk with no lights, the light key removed, `then` carries the columns a move left) | 59007eec (code), 2baf2f97 (reading) |
 | 6h: the count half (`writes` and `tiles` on the `slow frame:` line) | dev | count half done; the quiet cave on `0ba10948` printed no slow frame (`over_33ms` 0, `over_100ms` 0, 4260 frames), so no copy-led F line holds a count; cut half not started; deviations in the log (the HUD golden re-blessed for 6d's `mirror pack workers` row) | 0ba10948 (code), 133ef732 (golden), committed with this row (reading) |
 | 7: the owner flies the same paths | human | done 2026-11-28 08:26-08:42 on `1829ac16` (`live/bin7`, warmed); owner: "gone mostly"; `--apply-mib 4` "seems to load a bit slower for light" (2 MiB stays); benchmarks `over_33ms` / `over_100ms`: cave 0 / 0, showcase 0 / 0, castle 2 / 0, outdoor 0 / 0; deviations: the tester's 1280 x 720 against Phase 3's 2560 x 1440, load1 at run 1's start only | (no code; log 51cacdac, 7b04010f) |
+| fix pass: close review Major 1 (the pre-roll's near stage under the 6 ms budget) | dev | done; the pre-roll syncs unbudgeted, `--sync-ms` back at its end; switched near-stage frames 2743 to 10, the switched test 105.6 to 16.3 s (loaded); readings in the log | committed with this row |
 
 ### Notes
 
-_(Empty.)_
+- Close review Major 1 (the 6 ms sync budget starved the streamed pre-roll's near stage):
+  fixed in the commit carrying the fix-pass row (the pre-roll syncs unbudgeted, the run's budget
+  back at its end).
 
 ### Close triggers
 

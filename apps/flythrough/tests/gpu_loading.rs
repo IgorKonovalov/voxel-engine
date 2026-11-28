@@ -266,6 +266,12 @@ fn a_benchmark_warms_up_from_the_first_world_frame() {
     assert_eq!(on.0 + on.1, 129.0, "world frames only");
 }
 
+/// The most loading frames the switched outdoor run's near-chunk light stage may take after
+/// the switch splash: 4 times the 10 read on lavapipe (2026-11-28) at the pre-roll's
+/// unbudgeted sync (main before the 6 ms default and the tip at `--sync-ms 0` alike); the
+/// pre-roll syncing under the frame's 6 ms budget took 2743.
+const NEAR_FRAMES_AFTER_SWITCH: usize = 40;
+
 /// The showcase headless on lavapipe at 64 x 36 with the screen on and a 0.05 ms slice (one
 /// start-up step a loading frame, so every stage with a step is named by a loading frame,
 /// whatever the machine's pace), the pre-roll's near ring at 0 and no coarse pass, switched
@@ -276,7 +282,10 @@ fn a_benchmark_warms_up_from_the_first_world_frame() {
 /// loading frames (at least 3, the bar never moving back) step its stages, the near chunks'
 /// light among them, the last reading `done 1`, and only then is the new run's frame 0
 /// submitted; the switch's line names both sources, and the run ends at `--frames 3` (the
-/// showcase's frame 0 and the switched run's 2).
+/// showcase's frame 0 and the switched run's 2). The near chunks' light takes at most
+/// [`NEAR_FRAMES_AFTER_SWITCH`] of those loading frames, a count and not a clock, and the
+/// mirror holds the run's 6 ms sync budget (the `--sync-ms` default, ADR-0089) again before
+/// the switched run's first world frame.
 #[test]
 fn a_source_switch_shows_the_loading_frames_before_the_new_world() {
     let out = Command::new(env!("CARGO_BIN_EXE_flythrough"))
@@ -349,6 +358,23 @@ fn a_source_switch_shows_the_loading_frames_before_the_new_world() {
     for w in between.windows(2) {
         assert!(w[1].1 >= w[0].1, "the bar moved back: {w:?}");
     }
+    let near = stages
+        .iter()
+        .filter(|&&s| s == "lighting the near chunks")
+        .count();
+    assert!(
+        near <= NEAR_FRAMES_AFTER_SWITCH,
+        "{near} loading frames of the near chunks' light after the switch, over {NEAR_FRAMES_AFTER_SWITCH}"
+    );
+    let budget = lines[splash..next_world]
+        .iter()
+        .find_map(|l| l.split_once("diag: sync budget after the pre-roll: "))
+        .map(|(_, r)| r.rsplit_once(" at ").map_or(r, |(a, _)| a));
+    assert_eq!(
+        budget,
+        Some("6 ms"),
+        "the run's `--sync-ms` default back before the switched run's first world frame"
+    );
     assert_eq!(
         between.last().map(|(s, f)| (s.as_str(), *f)),
         Some(("done", 1.0)),

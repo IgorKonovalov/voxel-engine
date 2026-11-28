@@ -18,13 +18,11 @@ impl Run {
     /// Starts the pre-roll: the live queue started on an empty store with the run's settings,
     /// and the near chunks around the start camera listed.
     pub(super) fn enter_pre_roll(&mut self, gpu: &Gpu, gfx: &mut Gfx, l: &mut Loading) -> Stage {
-        // The run's own sync budget back: the streamed mirror's `--sync-ms`, none on the
-        // level's, so the pre-roll streams as the unsliced start does.
-        gfx.mirror.set_sync_budget_time(if self.stream.is_some() {
-            self.args.sync_time
-        } else {
-            None
-        });
+        // The pre-roll's syncs take no time budget: the loading screen is not frame-paced, and
+        // the near chunks' light waits on the mirror filling around them, which a frame's
+        // budget (`--sync-ms`) spreads over hundreds of steps on a CPU-bound adapter. The run's
+        // own budget comes back where the pre-roll ends ([`Run::restore_sync_budget`]).
+        gfx.mirror.set_sync_budget_time(None);
         // The pre-roll's bakes read the sky and the canopy's style as the frame loop sets them,
         // so a pre-rolled block holds its sky visibility and a column's finality marks it.
         crate::run::frame::set_sky_and_styles(
@@ -211,6 +209,7 @@ impl Run {
                 Stage::PreRoll(p)
             }
             PreRollState::Done(s) => {
+                self.restore_sync_budget(mirror);
                 self.end_pre_roll(frame, &p, &s);
                 l.progress.enter(COARSE);
                 l.progress.next();
@@ -222,6 +221,23 @@ impl Run {
                 }
             }
         }
+    }
+
+    /// The run's own sync budget back on `mirror`, from the next sync on: the streamed
+    /// mirror's `--sync-ms` (ADR-0089), none on the level's. The stages after the pre-roll
+    /// (the settle, the world frames) sync under it.
+    pub(super) fn restore_sync_budget(&self, mirror: &mut svet_render::GpuWorld) {
+        mirror.set_sync_budget_time(if self.stream.is_some() {
+            self.args.sync_time
+        } else {
+            None
+        });
+        diag(format_args!(
+            "sync budget after the pre-roll: {}",
+            mirror
+                .sync_budget_time()
+                .map_or("none".to_owned(), |d| format!("{} ms", d.as_millis()))
+        ));
     }
 
     /// Prints the pre-roll's lines and hands the live queue its full-first radius.
