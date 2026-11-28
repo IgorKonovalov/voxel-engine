@@ -56,9 +56,9 @@ struct Mirror {
     lod: ChunkSet,
     /// Columns whose lowest top is not `lowest`.
     tops: std::collections::HashMap<[i32; 2], i32>,
-    /// The chunks with lights and their state; `light_gen` moves with every change of them.
+    /// The chunks with lights and their state, and the chunks whose state changed.
     lights: Vec<([i32; 3], LightNote)>,
-    light_gen: u64,
+    light_changed: Vec<ChunkCoord>,
 }
 
 impl MirrorRead for Mirror {
@@ -92,8 +92,8 @@ impl MirrorRead for Mirror {
     fn column_lowest(&self, x: i32, y: i32) -> i32 {
         self.tops.get(&[x, y]).copied().unwrap_or(self.lowest)
     }
-    fn light_key(&self) -> (u64, u64) {
-        (self.light_gen, 0)
+    fn light_note(&self, c: ChunkCoord) -> Option<LightNote> {
+        self.lights.iter().find(|(k, _)| *k == c.0).map(|(_, l)| *l)
     }
     fn light_notes(&self) -> Vec<([i32; 3], LightNote)> {
         self.lights.clone()
@@ -191,7 +191,7 @@ struct Rig {
     world: World,
     mirror: Mirror,
     shadow: Shadow,
-    seen: (Option<ChunkExtent>, Option<(u64, u64)>),
+    seen: Option<ChunkExtent>,
     queue: BakeQueue,
     store: Store,
     half: Half,
@@ -252,7 +252,7 @@ impl Rig {
             lod: ChunkSet::default(),
             tops: Default::default(),
             lights: Vec::new(),
-            light_gen: 0,
+            light_changed: Vec::new(),
         };
         store.start_queue(mirror.window(), settings.cell);
         let _ = store.take_direct();
@@ -272,7 +272,7 @@ impl Rig {
             world: world_of(size),
             mirror,
             shadow: Shadow::default(),
-            seen: (None, None),
+            seen: None,
             queue,
             store,
             half,
@@ -293,10 +293,15 @@ impl Rig {
     /// counted by the mailbox until a list made from it is applied.
     fn message(&mut self) -> FrameMessage {
         let changed = std::mem::take(&mut self.mirror.changed);
-        let (window, key) = &mut self.seen;
-        let first = window.is_none();
-        let n = notes(&self.mirror, (!first).then_some(changed), *window, key);
-        *window = n.window;
+        let light_changed = std::mem::take(&mut self.mirror.light_changed);
+        let first = self.seen.is_none();
+        let n = notes(
+            &self.mirror,
+            (!first).then_some(changed),
+            (!first).then_some(light_changed),
+            self.seen,
+        );
+        self.seen = n.window;
         self.half.frame += 1;
         let resident = self.view.streamed.then(|| {
             let full: std::collections::HashSet<ChunkCoord> = self

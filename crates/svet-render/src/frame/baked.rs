@@ -76,10 +76,9 @@ pub(super) struct BakeLink {
     /// The live queue's submits as the render half holds them: readback buffers, the loop's
     /// timer, the submits in flight.
     pub(super) issuer: crate::bake::Issuer,
-    /// The bake half's shadow of the mirror, and the window and light key of its last notes
-    /// (ADR-0083).
+    /// The bake half's shadow of the mirror, and the window of its last notes (ADR-0083).
     pub(super) shadow: crate::bake::Shadow,
-    pub(super) shadow_seen: (Option<svet_world::ChunkExtent>, Option<(u64, u64)>),
+    pub(super) shadow_seen: Option<svet_world::ChunkExtent>,
     /// The live queue's world group and the buffers it binds ([`Frame::queue_world_bind`]).
     pub(super) world_bind: Option<(Vec<wgpu::Buffer>, wgpu::BindGroup)>,
     /// The live queue's knobs, kept while no queue runs and handed to the next one.
@@ -165,7 +164,7 @@ impl BakeLink {
             lists: crate::bake::Lists::default(),
             issuer: crate::bake::Issuer::timed(),
             shadow: crate::bake::Shadow::default(),
-            shadow_seen: (None, None),
+            shadow_seen: None,
             world_bind: None,
             knobs: crate::settings::BakeKnobs::default(),
             count_store: false,
@@ -573,9 +572,9 @@ impl Frame {
         }
         // The frame's message to the bake half, one owned value: the view, the mirror's changes
         // and its state for them, the sky and key, the settings, and the mailbox's arrivals.
-        let (last_window, last_key) = &mut self.baked.shadow_seen;
-        let notes = crate::bake::notes(&*gpu, gpu.take_changes(), *last_window, last_key);
-        *last_window = notes.window;
+        let (changed, light_changed) = (gpu.take_changes(), gpu.take_light_changes());
+        let notes = crate::bake::notes(&*gpu, changed, light_changed, self.baked.shadow_seen);
+        self.baked.shadow_seen = notes.window;
         let lighting = &self.state.lighting;
         let settings = crate::bake::StepSettings {
             column_wait: lighting.column_wait,

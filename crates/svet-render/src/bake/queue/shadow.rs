@@ -5,10 +5,12 @@
 //! list names, with its state now (held full, LOD-only, waiting to upload); the column of each
 //! such chunk inside the window with its lowest top (a window move, in z too, is no different:
 //! the column map holds the window's sheets only, dropped in the sync that moves the window,
-//! which notes each dropped chunk); and, when a light range, a chunk's light membership or a
-//! dirty mark changed ([`MirrorRead::light_key`]), every chunk with lights with whether it holds
-//! an exposed emitter and whether its range is current. The shadow answers the same questions
-//! the mirror does ([`Shadow::is_mirrored`] and its neighbours) from those notes.
+//! which notes each dropped chunk); and each chunk the mirror's light change list names
+//! ([`GpuWorld::take_light_changes`]: every site that changes a chunk's light membership, lists,
+//! range or dirty mark notes it) with whether it holds lights, an exposed emitter and a current
+//! range. The shadow answers the same questions the mirror does ([`Shadow::is_mirrored`] and
+//! its neighbours) from those notes. An untracked list (the first frame, an overflow) reads the
+//! whole, of the chunks or of the lights alone.
 
 use super::*;
 use crate::gpu_world::{boxes_within, column_is_final};
@@ -29,10 +31,16 @@ pub(crate) struct ChunkNote {
     pub(crate) pending: bool,
 }
 
+/// Light notes by chunk, each once; `None` for a chunk that holds no lights.
+pub(crate) type LightDelta = Vec<([i32; 3], Option<LightNote>)>;
+
 /// One frame's notes, render half to bake half.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ShadowNotes {
     pub(crate) window: Option<ChunkExtent>,
+    /// The window of the notes before these (the render half's last), whose columns these
+    /// notes' move left; merged notes ([`ShadowNotes::then`]) carry those columns themselves.
+    pub(crate) from_window: Option<ChunkExtent>,
     pub(crate) light_radius: i32,
     /// Every chunk the mirror's change list named, each once, with its state now; `None` when
     /// the list went untracked (the first frame, an overflow): `whole` holds every chunk then.
@@ -44,8 +52,12 @@ pub(crate) struct ShadowNotes {
     /// dropped (and its chunk noted) in the sync that moves the window, so a column's lowest top
     /// changes only with a sheet set or removed, and each of those notes its chunk.
     pub(crate) columns: Vec<([i32; 2], i32)>,
-    /// Every chunk with lights and its state, when any light state changed; `None` unchanged.
-    pub(crate) lights: Option<Vec<([i32; 3], LightNote)>>,
+    /// The chunks whose light note changed, each once, with the note now (`None`: the chunk
+    /// holds no lights); every chunk with lights when `lights_whole`. `None` when no light
+    /// note changed.
+    pub(crate) lights: Option<LightDelta>,
+    /// `lights` holds every chunk with lights and replaces the shadow's.
+    pub(crate) lights_whole: bool,
     /// The notes replace the shadow's whole state.
     pub(crate) whole: bool,
 }
@@ -66,17 +78,47 @@ impl ShadowNotes {
             }
             _ => None,
         };
+        // The columns a window move of these notes or of the newer ones left were dropped from
+        // the mirror's column map with their chunks, and no note names them: they read empty,
+        // so a later window of the merge that holds them again (a move out and back while the
+        // bake half stalled) answers what the mirror does, unless a newer note names them.
+        for (a, b) in [(self.from_window, self.window), (self.window, newer.window)] {
+            if let (Some(a), Some(b)) = (a, b)
+                && a != b
+            {
+                newest(&mut self.columns, columns_left(a, b));
+            }
+        }
+        self.from_window = newer.window;
         self.window = newer.window;
         self.light_radius = newer.light_radius;
         // Each chunk's and column's newest state, once: a stalled bake half's inbox stays within
         // the chunks and columns sent.
         newest(&mut self.chunks, newer.chunks);
         newest(&mut self.columns, newer.columns);
-        if newer.lights.is_some() {
-            self.lights = newer.lights;
+        if let Some(b) = newer.lights {
+            match &mut self.lights {
+                // A whole list stays whole with the newer notes in it: the shadow clears, then
+                // takes each note, a `None` removing.
+                Some(a) if !newer.lights_whole => newest(a, b),
+                have => {
+                    *have = Some(b);
+                    self.lights_whole = newer.lights_whole;
+                }
+            }
         }
         self
     }
+}
+
+/// The columns of window `a` outside window `b`, each read empty.
+fn columns_left(a: ChunkExtent, b: ChunkExtent) -> Vec<([i32; 2], i32)> {
+    let inside = |k: &[i32; 2]| (0..2).all(|i| k[i] >= b.min.0[i] && k[i] < b.max.0[i]);
+    (a.min.0[1]..a.max.0[1])
+        .flat_map(|y| (a.min.0[0]..a.max.0[0]).map(move |x| [x, y]))
+        .filter(|k| !inside(k))
+        .map(|k| (k, crate::gpu_world::COLUMN_NONE))
+        .collect()
 }
 
 /// `newer`'s entries into `have`: a key already there takes the newer value in its place, a new
@@ -104,28 +146,26 @@ pub(crate) trait MirrorRead {
     /// Every chunk the mirror holds a record of or waits to upload.
     fn chunks(&self) -> Vec<ChunkCoord>;
     fn column_lowest(&self, cx: i32, cy: i32) -> i32;
-    /// A key that changes whenever a light range, a chunk's light membership or a dirty mark
-    /// does.
-    fn light_key(&self) -> (u64, u64);
+    /// `c`'s light note; `None` when it holds no lights.
+    fn light_note(&self, c: ChunkCoord) -> Option<LightNote>;
+    /// Every chunk with lights and its note.
     fn light_notes(&self) -> Vec<([i32; 3], LightNote)>;
 }
 
 /// The render half's reading of the mirror for this frame's message. `changed` is the mirror's
-/// change list (`None` untracked); `last_key` the light key of the last notes, updated.
+/// change list and `light_changed` its light change list (`None` untracked).
 pub(crate) fn notes(
     m: &impl MirrorRead,
     changed: Option<Vec<ChunkCoord>>,
+    light_changed: Option<Vec<ChunkCoord>>,
     last_window: Option<ChunkExtent>,
-    last_key: &mut Option<(u64, u64)>,
 ) -> ShadowNotes {
     let window = m.window();
     // A window move is a delta like any other frame's: the mirror notes every chunk it drops
     // and queues, so the change list names what the move touched. Only an untracked list (the
     // first frame, an overflow) or no notes sent yet reads the whole mirror.
     let whole = changed.is_none() || last_window.is_none();
-    let key = m.light_key();
-    let lights = (whole || *last_key != Some(key)).then(|| m.light_notes());
-    *last_key = Some(key);
+    let (lights, lights_whole) = light_part(m, whole, light_changed);
     let all_columns = || {
         let size = window.size();
         let mut cols = Vec::new();
@@ -164,12 +204,46 @@ pub(crate) fn notes(
     };
     ShadowNotes {
         window: Some(window),
+        from_window: last_window,
         light_radius: m.light_radius(),
         changed,
         chunks,
         columns,
         lights,
+        lights_whole,
         whole,
+    }
+}
+
+/// The light half of a frame's notes: the notes of the chunks `light_changed` names, each once
+/// (`None` when it names none), or every chunk with lights when the notes are `whole` or the
+/// list went untracked; and whether they are the whole.
+fn light_part(
+    m: &impl MirrorRead,
+    whole: bool,
+    light_changed: Option<Vec<ChunkCoord>>,
+) -> (Option<LightDelta>, bool) {
+    match light_changed {
+        Some(mut ch) if !whole => {
+            if ch.is_empty() {
+                return (None, false);
+            }
+            ch.sort_unstable_by_key(|c| c.0);
+            ch.dedup();
+            (
+                Some(ch.into_iter().map(|c| (c.0, m.light_note(c))).collect()),
+                false,
+            )
+        }
+        _ => (
+            Some(
+                m.light_notes()
+                    .into_iter()
+                    .map(|(c, l)| (c, Some(l)))
+                    .collect(),
+            ),
+            true,
+        ),
     }
 }
 
@@ -182,7 +256,7 @@ pub(crate) struct Shadow {
     mirrored: usize,
     pending: usize,
     columns: std::collections::HashMap<[i32; 2], i32>,
-    lights: Vec<([i32; 3], LightNote)>,
+    lights: ChunkMap<LightNote>,
 }
 
 impl Shadow {
@@ -220,8 +294,21 @@ impl Shadow {
         for (k, v) in n.columns.iter().filter(|(k, _)| inside(k)) {
             self.columns.insert(*k, *v);
         }
-        if let Some(l) = &n.lights {
-            self.lights.clone_from(l);
+        self.take_lights(n);
+    }
+
+    fn take_lights(&mut self, n: &ShadowNotes) {
+        let Some(l) = &n.lights else {
+            return;
+        };
+        if n.lights_whole {
+            self.lights.clear();
+        }
+        for (c, note) in l {
+            match note {
+                Some(note) => self.lights.insert(*c, *note),
+                None => self.lights.remove(c),
+            };
         }
     }
 
@@ -308,6 +395,93 @@ impl Shadow {
     }
 }
 
+/// A shadow of a mirror's lights fed its light change list's deltas, checked against one fed
+/// the whole light notes: a test's view of what the bake half reads. [`LightNotesProbe::take`]
+/// takes the mirror's light changes, so nothing else (a frame's bake) may read that mirror.
+#[doc(hidden)]
+#[derive(Debug, Default)]
+pub struct LightNotesProbe {
+    shadow: Shadow,
+}
+
+impl LightNotesProbe {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Takes `gpu`'s light changes into the shadow, as a frame's notes do: the chunks the delta
+    /// named, or `None` when the list was untracked and the whole was read.
+    pub fn take(&mut self, gpu: &mut GpuWorld) -> Option<usize> {
+        let changed = gpu.take_light_changes();
+        let (lights, lights_whole) = light_part(&*gpu, false, changed);
+        let named = (!lights_whole).then(|| lights.as_ref().map_or(0, Vec::len));
+        self.shadow.take_lights(&ShadowNotes {
+            lights,
+            lights_whole,
+            ..ShadowNotes::default()
+        });
+        named
+    }
+
+    /// Every disagreement over the chunks of `at` at each reach of `reaches`: the shadow's
+    /// `emitters_near` and `lights_ready_near` against a shadow fed `gpu`'s whole light notes,
+    /// and against `gpu`'s own `emitters_near` and `lights_ready_near_uncached`.
+    pub fn mismatches(&self, gpu: &GpuWorld, at: ChunkExtent, reaches: &[i32]) -> Vec<String> {
+        let mut whole = Shadow::default();
+        let (lights, lights_whole) = light_part(gpu, true, None);
+        whole.take_lights(&ShadowNotes {
+            lights,
+            lights_whole,
+            ..ShadowNotes::default()
+        });
+        let mut out = Vec::new();
+        if whole.lights != self.shadow.lights {
+            out.push(format!(
+                "the held notes: {} against the whole's {}",
+                self.shadow.lights.len(),
+                whole.lights.len()
+            ));
+        }
+        for x in at.min.0[0]..at.max.0[0] {
+            for y in at.min.0[1]..at.max.0[1] {
+                for z in at.min.0[2]..at.max.0[2] {
+                    let c = ChunkCoord([x, y, z]);
+                    for &r in reaches {
+                        let near = self.shadow.emitters_near(c, r);
+                        let ready = self.shadow.lights_ready_near(c, r);
+                        let want = [
+                            (whole.emitters_near(c, r), whole.lights_ready_near(c, r)),
+                            (
+                                gpu.emitters_near(c, r),
+                                gpu.lights_ready_near_uncached(c, r),
+                            ),
+                        ];
+                        for (by, w) in ["whole", "mirror"].iter().zip(want) {
+                            if (near, ready) != w {
+                                out.push(format!(
+                                    "{:?} at {r}: emitters near, ready {:?} against the {by}'s {w:?}",
+                                    c.0,
+                                    (near, ready)
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The chunks with lights the shadow holds.
+    pub fn len(&self) -> usize {
+        self.shadow.lights.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.shadow.lights.is_empty()
+    }
+}
+
 impl MirrorRead for GpuWorld {
     fn window(&self) -> ChunkExtent {
         GpuWorld::window(self)
@@ -333,8 +507,8 @@ impl MirrorRead for GpuWorld {
         GpuWorld::column_lowest(self, cx, cy)
     }
 
-    fn light_key(&self) -> (u64, u64) {
-        GpuWorld::light_key(self)
+    fn light_note(&self, c: ChunkCoord) -> Option<LightNote> {
+        GpuWorld::light_note(self, c)
     }
 
     fn light_notes(&self) -> Vec<([i32; 3], LightNote)> {
@@ -347,14 +521,15 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    /// A mirror model: chunk states, a top a chunk, lights, and the change list a mirror keeps.
+    /// A mirror model: chunk states, a top a chunk, lights, and the two change lists a mirror
+    /// keeps.
     #[derive(Default)]
     struct Model {
         window: Option<ChunkExtent>,
         chunks: BTreeMap<[i32; 3], (ChunkNote, i32)>,
         lights: BTreeMap<[i32; 3], LightNote>,
-        light_key: (u64, u64),
         changed: Vec<ChunkCoord>,
+        light_changed: Vec<ChunkCoord>,
     }
 
     impl MirrorRead for Model {
@@ -380,8 +555,8 @@ mod tests {
                 .min()
                 .unwrap_or(crate::gpu_world::COLUMN_NONE)
         }
-        fn light_key(&self) -> (u64, u64) {
-            self.light_key
+        fn light_note(&self, c: ChunkCoord) -> Option<LightNote> {
+            self.lights.get(&c.0).copied()
         }
         fn light_notes(&self) -> Vec<([i32; 3], LightNote)> {
             self.lights.iter().map(|(c, l)| (*c, *l)).collect()
@@ -404,11 +579,15 @@ mod tests {
         ChunkExtent::new(min, [min[0] + 8, min[1] + 8, min[2] + 4])
     }
 
-    /// Done when (3) of Plan 0099 Phase 2, as amended: over a recorded sequence of 2 000 mirror
-    /// changes (arrivals, LOD swaps, evictions, window moves, uploads queued and done, light
-    /// ranges written, moved and dropped, digs that lower a column's top), the shadow's
-    /// held-full, LOD-only, pending, column-final, lowest-top, emitters-near and lights-ready
-    /// answers equal the mirror's after every message.
+    /// Done when (3) of Plan 0099 Phase 2, as amended, and of Plan 0111 Phase 6a'': over a
+    /// recorded sequence of 2 000 mirror changes (arrivals, LOD swaps, evictions, window moves,
+    /// uploads queued and done, digs that lower a column's top; light ranges written or moved,
+    /// dirtied or evicted, dropped, and lists emptied, each sent as a delta of the chunks the
+    /// light change list names), the shadow's held-full, LOD-only, pending, column-final,
+    /// lowest-top, emitters-near and lights-ready answers equal the mirror's after every
+    /// message. Every ninth message is three frames' notes merged by `then` (a stalled bake
+    /// half), and every thirteenth frame's light list is untracked (an overflow: the lights
+    /// read whole while the chunks stay a delta).
     #[test]
     fn the_shadow_membership_answers_as_the_mirror_does() {
         let mut rng = Lcg(0x0099);
@@ -417,92 +596,139 @@ mod tests {
             ..Model::default()
         };
         let mut shadow = Shadow::default();
-        let (mut last_window, mut last_key) = (None, None);
+        let mut last_window = None;
         let mut changes = 0usize;
-        let mut kinds = [0usize; 8];
-        let mut frame = 0u64;
+        let mut kinds = [0usize; 10];
+        let (mut frame, mut messages) = (0u64, 0u64);
+        let (mut deltas, mut light_wholes, mut stalls) = (0usize, 0usize, 0usize);
         while changes < 2_000 {
-            frame += 1;
-            for _ in 0..1 + rng.next(12) {
-                let w = m.window();
-                let c = [0, 1, 2].map(|k| w.min.0[k] + rng.next(w.size()[k] as u64) as i32);
-                let kind = rng.next(8) as usize;
-                kinds[kind] += 1;
-                changes += 1;
-                let s = m.chunks.entry(c).or_insert((ChunkNote::default(), 0));
-                match kind {
-                    // An arrival: queued, then (another frame) uploaded full.
-                    0 => s.0.pending = true,
-                    1 => {
-                        s.0 = ChunkNote {
-                            mirrored: true,
-                            lod: false,
-                            pending: false,
-                        };
-                        s.1 = 64 * c[2] + rng.next(64) as i32;
+            messages += 1;
+            let stall = if messages % 9 == 4 { 3 } else { 1 };
+            stalls += usize::from(stall > 1);
+            let mut inbox: Option<ShadowNotes> = None;
+            for _ in 0..stall {
+                frame += 1;
+                for _ in 0..1 + rng.next(12) {
+                    let w = m.window();
+                    let c = [0, 1, 2].map(|k| w.min.0[k] + rng.next(w.size()[k] as u64) as i32);
+                    let kind = rng.next(10) as usize;
+                    kinds[kind] += 1;
+                    changes += 1;
+                    if (5..9).contains(&kind) {
+                        light_change(&mut m, &mut rng, c, kind);
+                        m.light_changed.push(ChunkCoord(c));
+                        continue;
                     }
-                    // A LOD swap.
-                    2 => s.0.lod = !s.0.lod && s.0.mirrored,
-                    // An eviction.
-                    3 => {
+                    let s = m.chunks.entry(c).or_insert((ChunkNote::default(), 0));
+                    match kind {
+                        // An arrival: queued, then (another frame) uploaded full.
+                        0 => s.0.pending = true,
+                        1 => {
+                            s.0 = ChunkNote {
+                                mirrored: true,
+                                lod: false,
+                                pending: false,
+                            };
+                            s.1 = 64 * c[2] + rng.next(64) as i32;
+                        }
+                        // A LOD swap.
+                        2 => s.0.lod = !s.0.lod && s.0.mirrored,
+                        // An eviction: its lights go with it.
+                        3 => {
+                            m.chunks.remove(&c);
+                            if m.lights.remove(&c).is_some() {
+                                m.light_changed.push(ChunkCoord(c));
+                            }
+                        }
+                        // A dig: the chunk re-uploads with a lower top.
+                        4 => {
+                            s.0.pending = !s.0.pending;
+                            s.1 -= 1 + rng.next(8) as i32;
+                        }
+                        // A window move: everything outside drops, lights too.
+                        _ => {
+                            let o = [0, 1, 2].map(|_| rng.next(3) as i32 - 1);
+                            let nw = extent([0, 1, 2].map(|k| w.min.0[k] + o[k]));
+                            m.window = Some(nw);
+                            let size = nw.size();
+                            let inside = |c: &[i32; 3]| {
+                                (0..3).all(|k| (0..size[k]).contains(&(c[k] - nw.min.0[k])))
+                            };
+                            // The mirror notes every chunk a move drops.
+                            let gone: Vec<[i32; 3]> =
+                                m.chunks.keys().filter(|c| !inside(c)).copied().collect();
+                            m.changed.extend(gone.iter().map(|c| ChunkCoord(*c)));
+                            m.chunks.retain(|c, _| inside(c));
+                            let dark: Vec<[i32; 3]> =
+                                m.lights.keys().filter(|c| !inside(c)).copied().collect();
+                            m.light_changed.extend(dark.iter().map(|c| ChunkCoord(*c)));
+                            m.lights.retain(|c, _| inside(c));
+                            continue;
+                        }
+                    }
+                    if m.chunks
+                        .get(&c)
+                        .is_some_and(|s| s.0 == ChunkNote::default())
+                    {
                         m.chunks.remove(&c);
-                        if m.lights.remove(&c).is_some() {
-                            m.light_key.0 += 1;
-                        }
                     }
-                    // A dig: the chunk re-uploads with a lower top.
-                    4 => {
-                        s.0.pending = !s.0.pending;
-                        s.1 -= 1 + rng.next(8) as i32;
-                    }
-                    // A light range written, moved (dirty) or dropped.
-                    5 | 6 => {
-                        let l = m.lights.entry(c).or_default();
-                        l.emitter = rng.next(2) == 0;
-                        l.current = kind == 5;
-                        m.light_key.1 += 1;
-                        m.changed.push(ChunkCoord(c));
-                        continue;
-                    }
-                    // A window move: everything outside drops.
-                    _ => {
-                        let o = [0, 1, 2].map(|_| rng.next(3) as i32 - 1);
-                        let nw = extent([0, 1, 2].map(|k| w.min.0[k] + o[k]));
-                        m.window = Some(nw);
-                        let size = nw.size();
-                        let inside = |c: &[i32; 3]| {
-                            (0..3).all(|k| (0..size[k]).contains(&(c[k] - nw.min.0[k])))
-                        };
-                        // The mirror notes every chunk a move drops.
-                        let gone: Vec<[i32; 3]> =
-                            m.chunks.keys().filter(|c| !inside(c)).copied().collect();
-                        m.changed.extend(gone.iter().map(|c| ChunkCoord(*c)));
-                        m.chunks.retain(|c, _| inside(c));
-                        let before = m.lights.len();
-                        m.lights.retain(|c, _| inside(c));
-                        if m.lights.len() != before {
-                            m.light_key.0 += 1;
-                        }
-                        continue;
-                    }
+                    m.changed.push(ChunkCoord(c));
                 }
-                if m.chunks
-                    .get(&c)
-                    .is_some_and(|s| s.0 == ChunkNote::default())
-                {
-                    m.chunks.remove(&c);
-                }
-                m.changed.push(ChunkCoord(c));
+                // The first frame's lists are untracked, as the mirror's are.
+                let changed = std::mem::take(&mut m.changed);
+                let light_changed = std::mem::take(&mut m.light_changed);
+                let tracked = frame > 1 && frame % 13 != 0;
+                let n = notes(
+                    &m,
+                    (frame > 1).then_some(changed),
+                    tracked.then_some(light_changed),
+                    last_window,
+                );
+                deltas += usize::from(n.lights.is_some() && !n.lights_whole);
+                light_wholes += usize::from(frame > 1 && n.lights_whole && !n.whole);
+                last_window = n.window;
+                inbox = Some(match inbox {
+                    None => n,
+                    Some(a) => a.then(n),
+                });
             }
-            // The first frame's list is untracked, as the mirror's is.
-            let changed = (frame > 1).then(|| std::mem::take(&mut m.changed));
-            m.changed.clear();
-            let n = notes(&m, changed, last_window, &mut last_key);
-            last_window = n.window;
-            shadow.take(&n);
+            shadow.take(&inbox.expect("a frame's notes"));
             check(&m, &shadow, frame);
         }
         assert!(kinds.iter().all(|&k| k > 100), "every kind ran: {kinds:?}");
+        assert!(
+            deltas > 100 && light_wholes > 10 && stalls > 20,
+            "light deltas {deltas}, untracked {light_wholes}, stalls {stalls}"
+        );
+    }
+
+    /// One light change of the model's chunk `c`: 5 a range written or moved, 6 dirtied or
+    /// evicted, 7 the lights dropped, 8 the lists emptied (held, no emitter, not current: a
+    /// note equal to the default that still counts as not ready).
+    fn light_change(m: &mut Model, rng: &mut Lcg, c: [i32; 3], kind: usize) {
+        match kind {
+            5 => {
+                let l = m.lights.entry(c).or_default();
+                l.emitter = rng.next(4) != 0;
+                l.current = true;
+            }
+            6 => {
+                let emitter = rng.next(2) == 0;
+                m.lights
+                    .entry(c)
+                    .or_insert(LightNote {
+                        emitter,
+                        current: false,
+                    })
+                    .current = false;
+            }
+            7 => {
+                m.lights.remove(&c);
+            }
+            _ => {
+                m.lights.insert(c, LightNote::default());
+            }
+        }
     }
 
     /// Done when of Plan 0111 Phases 6a and 6a': over a model mirror of a 16 x 16 x 8 window
@@ -557,9 +783,9 @@ mod tests {
             }
         }
         assert!(m.chunks.len() > 1_500, "{} chunks", m.chunks.len());
-        let (mut last_window, mut last_key) = (None, None);
+        let mut last_window = None;
         let mut shadow = Shadow::default();
-        let first = notes(&m, None, last_window, &mut last_key);
+        let first = notes(&m, None, None, last_window);
         assert!(first.whole, "the first frame's notes read the whole mirror");
         last_window = first.window;
         shadow.take(&first);
@@ -625,7 +851,7 @@ mod tests {
                 let changed = std::mem::take(&mut m.changed);
                 let named: std::collections::HashSet<[i32; 3]> =
                     changed.iter().map(|c| c.0).collect();
-                let n = notes(&m, Some(changed), last_window, &mut last_key);
+                let n = notes(&m, Some(changed), Some(Vec::new()), last_window);
                 let at_name = format!("{name} {frame}");
                 assert!(!n.whole, "{at_name}: a delta");
                 assert!(n.chunks.len() <= named.len(), "{at_name}: chunks");
@@ -664,7 +890,7 @@ mod tests {
     /// `s` answers as a shadow fed whole notes of `m` does, for every chunk and column of `at`.
     fn same_as_whole(m: &Model, s: &Shadow, at: ChunkExtent, name: &str) {
         let mut oracle = Shadow::default();
-        oracle.take(&notes(m, None, None, &mut None));
+        oracle.take(&notes(m, None, None, None));
         assert_eq!(
             s.mirrored_chunks(),
             oracle.mirrored_chunks(),

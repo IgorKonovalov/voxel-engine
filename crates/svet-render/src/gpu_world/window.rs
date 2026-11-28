@@ -201,6 +201,32 @@ pub(super) struct Changes {
     pub(super) list: Vec<ChunkCoord>,
 }
 
+impl Changes {
+    /// Notes `c` once a reader took the changes, giving the list up past [`CHANGES_MAX`].
+    pub(super) fn push(&mut self, c: ChunkCoord) {
+        if self.on && !self.overflow {
+            if self.list.len() >= CHANGES_MAX {
+                self.overflow = true;
+                self.list = Vec::new();
+            } else {
+                self.list.push(c);
+            }
+        }
+    }
+
+    /// The chunks noted since the last call, possibly repeated; `None` at the first call and
+    /// after an overflow. Tracking is on from the first call.
+    pub(super) fn take(&mut self) -> Option<Vec<ChunkCoord>> {
+        let out = (self.on && !self.overflow).then(|| std::mem::take(&mut self.list));
+        *self = Changes {
+            on: true,
+            overflow: false,
+            list: Vec::new(),
+        };
+        out
+    }
+}
+
 /// The chunks held (`held(c)`) that leave the window when it moves from `old` to `new`. Every
 /// held chunk lies in `old`. When the slab `old - new` has no more chunks than the `count`
 /// held, it is looked up chunk by chunk; otherwise the held chunks (`keys`, possibly with
@@ -282,19 +308,11 @@ impl GpuWorld {
     /// Notes that `c`'s mirror state changed (mirrored, dropped, its tier, queued or uploaded),
     /// once a reader takes the changes.
     pub(super) fn note_change(&self, c: ChunkCoord) {
-        let mut ch = self
-            .window
+        self.window
             .changes
             .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if ch.on && !ch.overflow {
-            if ch.list.len() >= CHANGES_MAX {
-                ch.overflow = true;
-                ch.list = Vec::new();
-            } else {
-                ch.list.push(c);
-            }
-        }
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(c);
     }
 
     /// The chunks whose mirror state changed since the last call: mirrored, dropped, turned
@@ -302,18 +320,19 @@ impl GpuWorld {
     /// `None` at the first call, and after more than [`CHANGES_MAX`] changes went untaken:
     /// anything may have changed.
     pub fn take_changes(&self) -> Option<Vec<ChunkCoord>> {
-        let mut ch = self
-            .window
+        self.window
             .changes
             .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let out = (ch.on && !ch.overflow).then(|| std::mem::take(&mut ch.list));
-        *ch = Changes {
-            on: true,
-            overflow: false,
-            list: Vec::new(),
-        };
-        out
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+    }
+
+    /// The chunks whose light note ([`GpuWorld::light_note`]) may have changed since the last
+    /// call: lights found, taken or emptied, a range written, released, evicted or dropped, a
+    /// dirty mark set or cleared; in no order and possibly repeated. `None` at the first call
+    /// and past [`CHANGES_MAX`], as [`GpuWorld::take_changes`].
+    pub(crate) fn take_light_changes(&mut self) -> Option<Vec<ChunkCoord>> {
+        self.lights.noted.take()
     }
 
     /// Moves the window to follow the focus, and re-keys the pending set when the focus

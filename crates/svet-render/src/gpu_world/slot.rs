@@ -403,7 +403,12 @@ impl GpuWorld {
             self.drop_lights(coord);
         }
         if every && let Some(l) = self.lights.chunks.get_mut(&coord) {
-            l.bricks.clear();
+            // The emitter bit of the chunk's light note may change; the walks and the
+            // ready answers read no lists of a placed, clean chunk.
+            if !l.bricks.is_empty() {
+                l.bricks.clear();
+                self.lights.noted.push(coord);
+            }
         }
         if self.field.band.is_some() {
             if every || lod {
@@ -490,7 +495,7 @@ impl GpuWorld {
             self.lap(left);
             if self.lights.chunks.contains_key(&coord) {
                 self.lights.dirty.insert(coord);
-                self.lights.touch();
+                self.lights.touch(coord);
             }
         }
         let empty = self.recs.write_bits(base);

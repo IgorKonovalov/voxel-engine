@@ -28,6 +28,7 @@ pub use self::open::in_view_census;
 use self::reach::{Blocked, BlockedMarks, Blocker, reach_of};
 pub use self::reads::QueueRead;
 pub(crate) use self::reads::Source as ReadSource;
+pub use self::shadow::LightNotesProbe;
 pub(crate) use self::shadow::{LightNote, Shadow, notes};
 pub(crate) use self::stats::{AUDIT_CLASS1, AUDIT_FULL, AUDIT_PARTIAL, AUDIT_PROVISIONAL};
 pub use self::stats::{AuditDiffer, RuleAudit, RuleHashes};
