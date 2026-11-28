@@ -137,9 +137,9 @@ that rule out much of it, so every entry below is judged against them:
   does for one layer.
 - **Deterministic Poisson-disk scatter by priority** (common practice; the "dart throwing
   with hashed priorities" variant). Every candidate (one per small cell, jittered by a hash)
-  carries a hashed priority. A candidate survives if no candidate within radius `r` has a
-  higher priority and also survives, which with a bounded `r` needs at most two rings of
-  neighbours. It is pull-safe and order-free, and gives blue-noise spacing instead of the
+  carries a hashed priority. A candidate survives if no candidate within radius `r` that passes
+  its density test has a higher priority. The rule is not recursive (ADR-0091), so a chunk
+  checks only the candidates within `r`, at the cost of keeping fewer points than a maximal set. It is pull-safe and order-free, and gives blue-noise spacing instead of the
   clumps of a plain per-cell hash. Layering is the same rule with a cross-layer radius
   (trees exclude shrubs within 2 m). What we take: this is the scatter primitive the engine
   could own. Plan 0113's anchors and ADR-0066's placements both need a "where" that is
@@ -250,7 +250,9 @@ above for a look the local techniques reach.
 1. Should the far field show vegetation and moss (gap 1)? **Yes.** Every generation pass
    gets a coarse answer, by amendment to Plans 0113 and 0115 at their Fable pass.
 2. Space-colonisation trees (gap 5) inside Plan 0115 or as their own plan? **Their own
-   plan**, after 0115. Parked in the backlog until drafted.
+   plan**, after 0115: [Plan 0116](../plans/0116-planted-content-a-spaced-scatter-of-any-prefab-grown-trees-roots-and-logs-and-their-far-copies.md),
+   drafted the same day with the shared scatter, roots and fallen logs, and prefabs the
+   consumer provides.
 3. An MPL-2.0 port of the erosion filter, or a reimplementation (gap 3)? **A clean
    reimplementation from the published description is preferred; if that proves too costly,
    skip the filter** rather than port the MPL source.

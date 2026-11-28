@@ -7,7 +7,7 @@ The engine was `voxel-engine`, with crates `vxe-*`, variables `VXE_*` and the WI
 `vxe:logic`, until Plan 0087 renamed it `svet` (v0.73.0); records from before keep those names,
 and `vxe-<x>` reads as `svet-<x>`.
 
-**Next free number: 0116** (0112 to 0115 the target look, drafted 2026-11-28 on Opus, awaiting a Fable second pass and the owner's approval; 0111 the stagger in flight on streamed scenes, closed 2026-11-28; 0110 the math hot paths, measured then cut, drafted 2026-11-27 after Plan 0091; 0109 a blocked chunk is checked again when its blocker clears, closed 2026-11-27; 0108 the start-up readings, closed 2026-11-27; 0107 the mirror's slot image packed on the stream workers, closed 2026-11-27; 0106 no gate test passes by a clock, closed 2026-11-26; 0093 the README rewrite, closed 2026-11-27; 0105 the dig's flash at depth, closed 2026-11-27; 0104 the wobble anchored to the owner's eye, closed 2026-11-26; 0101 the record by rule at every opening, closed 2026-11-26; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
+**Next free number: 0117** (0116 planted content, a scatter of any prefab and grown trees, drafted 2026-11-28 on Opus, Fable pass owed; 0112 to 0115 the target look, drafted 2026-11-28 on Opus, awaiting a Fable second pass and the owner's approval; 0111 the stagger in flight on streamed scenes, closed 2026-11-28; 0110 the math hot paths, measured then cut, drafted 2026-11-27 after Plan 0091; 0109 a blocked chunk is checked again when its blocker clears, closed 2026-11-27; 0108 the start-up readings, closed 2026-11-27; 0107 the mirror's slot image packed on the stream workers, closed 2026-11-27; 0106 no gate test passes by a clock, closed 2026-11-26; 0093 the README rewrite, closed 2026-11-27; 0105 the dig's flash at depth, closed 2026-11-27; 0104 the wobble anchored to the owner's eye, closed 2026-11-26; 0101 the record by rule at every opening, closed 2026-11-26; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
 the sky around the camera; 0098 the calm light by default, closed 2026-11-24; 0099 the bake
 step off the main thread, closed 2026-11-26; 0100 a sun fixed in the world, closed 2026-11-25; ADRs are a separate sequence, see `../adrs/README.md` for its next
 free number). Plan 0095, the motion wobble (a calm key light in motion), closed 2026-11-21,
@@ -60,6 +60,7 @@ were sized by Plan 0109 Phase 6. Plan 0093, the README rewrite with reproducible
 | [0113](0113-overgrowth-by-shape-a-seeded-decoration-pass-over-generated-chunks.md) | Overgrowth by shape: a seeded decoration pass over generated chunks, rules the consumer supplies | draft 11-28 | M10, `svet-world`, headless. Fable pass owed. World lane, after 0114 P1-2. |
 | [0114](0114-the-ruins-demo-world-canyons-a-lake-and-overgrown-ruins-in-apps.md) | The ruins demo world: canyons, a lake and overgrown ruins, a generic scene in `apps/` | draft 11-28 | M10, apps only. Fable pass owed; owner q5 (where it lives). World lane, after 0033's world briefs. |
 | [0115](0115-vegetation-forms-clumps-vines-and-flowers-as-voxels-with-a-rich-detail-form.md) | Vegetation forms: clumps, vines and flowers as world voxels, with a rich form of sub-voxel leaves and strands | draft 11-28 | M10, ADR-0090. Fable pass owed. P1-2 after 0113 (world lane); P3-6 after 0034. |
+| [0116](0116-planted-content-a-spaced-scatter-of-any-prefab-grown-trees-roots-and-logs-and-their-far-copies.md) | Planted content: a spaced scatter of any prefab, grown trees with roots and fallen logs, far copies | draft 11-28 | M10, ADR-0091. Fable pass owed. World lane, after 0115 P1; P4 after 0033 1a, 2a. |
 <!-- roster:end -->
 
 ## Sequence
@@ -82,7 +83,8 @@ and 2 of the list below; tracks 3 to 5 stand.
 2. **World lane beside it:** 0033's world briefs (in flight) → **0114 Phases 1 and 2** (the
    canyon, the lake, the ruins) → **0113** (overgrowth by shape) → 0114 Phases 3 and 4 (the far
    path, the overgrowth rules) → **0115 Phases 1 and 2** (shapes, vines, flowers) → 0114
-   Phases 5 and 6. 0114's window (Phase 7) is flown with 0115's (Phase 5).
+   Phases 5 and 6 → **0116** (planted content, grown trees; drafted later the same day). 0114's
+   window (Phase 7) is flown with 0115's (Phase 5); 0116's window (Phase 6) after both.
 
 ### From 2026-11-27 (owner: "make sequence for all plans that is appropriate")
 

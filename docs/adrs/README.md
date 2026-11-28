@@ -11,7 +11,7 @@ and `vxe-<x>` reads as `svet-<x>`.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0091** (0090 is the target look's, drafted 2026-11-28 with Plans 0112 to 0115; 0089 accepted at Plan 0111's close, 2026-11-28; 0088 is Plan 0110's; 0085 accepted at Plan 0101's close, 2026-11-26; 0086 accepted at Plan 0102's close, 2026-11-25; 0087 is Plan 0103's; 0079 accepted at Plan 0095's close, 2026-11-21; 0080 accepted at Plan 0096's close, 2026-11-23; 0081 is Plan 0097's; 0082 accepted at Plan 0098's close, 2026-11-24; 0083 accepted at Plan 0099's close, 2026-11-26; 0084 accepted at Plan 0100's close, 2026-11-25).
+**Next free number: 0092** (0091 is Plan 0116's, drafted 2026-11-28; 0090 is the target look's, drafted 2026-11-28 with Plans 0112 to 0115; 0089 accepted at Plan 0111's close, 2026-11-28; 0088 is Plan 0110's; 0085 accepted at Plan 0101's close, 2026-11-26; 0086 accepted at Plan 0102's close, 2026-11-25; 0087 is Plan 0103's; 0079 accepted at Plan 0095's close, 2026-11-21; 0080 accepted at Plan 0096's close, 2026-11-23; 0081 is Plan 0097's; 0082 accepted at Plan 0098's close, 2026-11-24; 0083 accepted at Plan 0099's close, 2026-11-26; 0084 accepted at Plan 0100's close, 2026-11-25).
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -109,6 +109,7 @@ the status.
 | [0088](0088-half-precision-shader-math-from-one-source-built-per-adapter.md) | Half-precision shader math comes from one WGSL source, built per adapter as f16 or f32 | proposed (Plan 0110) |
 | [0089](0089-the-streamed-mirrors-sync-takes-a-6-ms-budget-a-frame-on-top-of-the-workers-slot-image.md) | The streamed mirror's sync takes a 6 ms time budget a frame, on top of the workers' slot image | accepted at Plan 0111's close, 2026-11-28 (Outcome); supersedes ADR-0056's Alternative A |
 | [0090](0090-every-look-feature-has-a-floor-form-and-a-rich-form-and-a-rich-profile-holds-its-own-budget-on-a-named-card.md) | Every look feature has a floor form and a rich form, and a rich profile holds its own frame budget on a named card | proposed, draft (Plan 0112) |
+| [0091](0091-planted-content-is-a-pull-safe-scatter-over-a-table-of-prefabs-with-far-copies-from-each-prefabs-own-mips.md) | Planted content is a pull-safe scatter over a table of prefabs, with far copies from each prefab's own mips | proposed, draft (Plan 0116) |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

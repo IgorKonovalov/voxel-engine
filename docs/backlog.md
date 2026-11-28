@@ -33,7 +33,7 @@ From [the terrain and vegetation reading](references/procedural-terrain-and-vege
 
 ### Trees by space colonisation, leaf masses at the tips (2026-11-28)
 
-The reading's gap 5; the owner wants it as **its own plan, after Plan 0115**. A seeded builder per variant at load: attraction points in a crown shape (Runions et al. 2007), branch thickness by the pipe model, 0115's blob builder at the tips. It replaces `trees.rs`'s hash-thinned crown, the structural cause of "Sunlit tree crowns sparkle in motion". Same reading's gaps 2 (smooth integer gradient noise with derivatives), 3 (an erosion filter, a clean reimplementation from runevision's description, skipped if too costly; no MPL port) and 4 (a shared priority scatter) are candidates for the same batch. **Pick up:** when 0115's floor form merges.
+Taken 2026-11-28 by [Plan 0116](plans/0116-planted-content-a-spaced-scatter-of-any-prefab-grown-trees-roots-and-logs-and-their-far-copies.md) (ADR-0091) with the shared scatter (gap 4). Still parked from the same reading: gap 2 (smooth integer gradient noise with derivatives) and gap 3 (an erosion filter, a clean reimplementation from runevision's description or skipped; no MPL port), for a terrain plan for Plan 0114's canyon.
 
 ### The landing fade rewrites every fading block each step for 16 frames (2026-11-28)
 
