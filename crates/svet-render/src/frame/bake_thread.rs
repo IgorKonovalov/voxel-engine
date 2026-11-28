@@ -76,6 +76,14 @@ impl Frame {
         &self.baked.render_laps
     }
 
+    /// The write lists applied so far, summed over the run: the store's writes, the
+    /// `queue.write_buffer` calls they were applied in and their bytes (a reading; a frame's
+    /// share is the difference across its step).
+    pub fn bake_applied_writes(&self) -> [u64; 3] {
+        let a = self.baked.lists.applied;
+        [a.writes, a.calls, a.bytes]
+    }
+
     /// The edit's frames with the bake thread on (ADR-0083's one wait), each the wait for the
     /// dig's step in ms, the submits the frame issued and the bytes it applied over the frame's
     /// cap (the edit's list and every list made before it go whatever the cap; a reading).

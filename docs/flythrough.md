@@ -528,7 +528,8 @@ stages in ms: `acquire` (the window's surface acquire for the next frame; 0 head
 and the frame), `sync` with its stages (`select`, `size`, `pack`, `place` and `note` the light's
 two parts, `copy`, `alloc`, `lock`, `other`) and the bricks it packed, `queue` (the live queue's
 step on the render thread) with the bake thread's render laps (`build` to `wait`, then `other`;
-`no laps` in lockstep), `prepare` (the frame's start to the encode, less the stages above),
+`no laps` in lockstep; `apply` carries the store's writes it applied, the `write_buffer` calls
+they took and their bytes), `prepare` (the frame's start to the encode, less the stages above),
 `encode` (to the command buffer's finish), `submit`, `after` (the submit to the frame's end: the
 read-backs and the readings), `present` (the window's present; headless, the wait for the device
 to idle that stands for it), and `rest`, the wall less every named stage. On Linux the line

@@ -183,6 +183,23 @@ pub(crate) struct Lists {
     pub(crate) unconfirmed: std::collections::HashMap<[i32; 3], (u32, Option<u64>)>,
     /// The newest message's frame a list applied so far was made from ([`WriteList::frame`]).
     pub(crate) newest: u64,
+    /// Every [`Lists::apply`] so far, summed: the store's writes applied, the applier's calls
+    /// made for them and their bytes (a reading; the caller takes a frame's share as the
+    /// difference across its call).
+    pub(crate) applied: Applied,
+    /// The merged run's bytes ([`Merge`]), kept across frames so a merge allocates only when a
+    /// run outgrows every one before it.
+    pub(crate) staging: Vec<u8>,
+}
+
+/// The writes [`Lists::apply`] applied, summed over its calls.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Applied {
+    /// The store's writes, one a block, table word or summary.
+    pub(crate) writes: u64,
+    /// The applier's calls (`queue.write_buffer` in the frame) they were applied in.
+    pub(crate) calls: u64,
+    pub(crate) bytes: u64,
 }
 
 impl Lists {
@@ -216,6 +233,7 @@ impl Lists {
     ) -> (usize, Vec<([i32; 3], u32)>) {
         let mut bytes = 0usize;
         let mut landed = Vec::new();
+        let mut merge = Merge::new(out, std::mem::take(&mut self.staging));
         // The lists that go whatever the cap: up to and with the last edit's.
         let mut forced = self
             .waiting
@@ -234,8 +252,13 @@ impl Lists {
             // The bake half had read the words sent up to the list's message.
             self.unconfirmed
                 .retain(|_, (_, sent)| sent.is_none_or(|f| f > l.frame));
-            apply_list(l, frame, out, &mut landed, &mut self.unconfirmed);
+            self.applied.writes += l.writes.len() as u64;
+            self.applied.bytes += l.bytes as u64;
+            apply_list(l, frame, &mut merge, &mut landed, &mut self.unconfirmed);
         }
+        let (calls, staging) = merge.finish();
+        self.applied.calls += calls;
+        self.staging = staging;
         self.over = self.cap.map_or(0, |cap| bytes.saturating_sub(cap));
         self.carried += self.waiting.len() as u64;
         (bytes, landed)
@@ -264,12 +287,13 @@ impl Lists {
 fn apply_list(
     l: WriteList,
     frame: u64,
-    out: &mut dyn Applier,
+    merge: &mut Merge<'_>,
     landed: &mut Vec<([i32; 3], u32)>,
     unconfirmed: &mut std::collections::HashMap<[i32; 3], (u32, Option<u64>)>,
 ) {
     let word = u32::try_from(frame + 1).unwrap_or(u32::MAX);
     for mut w in l.writes {
+        // The landing word is patched into the write's own bytes before it joins a run.
         if let Some(Landing { chunk, at, first }) = w.landing {
             let put = if first {
                 landed.push((chunk, word));
@@ -284,7 +308,74 @@ fn apply_list(
                 d.copy_from_slice(&v.to_le_bytes());
             }
         }
-        out.write(w.offset, &w.data, w.kind);
+        merge.push(w);
+    }
+}
+
+/// Joins writes of one kind whose offsets follow on into one call of the [`Applier`]: a write
+/// that starts where the run ends and has its kind extends it; anything else ends the run and
+/// starts the next. The writes reach the applier in their order and each byte holds what the
+/// last write of it held, as one call a write would leave it: a run's writes cover disjoint
+/// ranges in order, and a run is flushed before any later write.
+struct Merge<'a> {
+    out: &'a mut dyn Applier,
+    /// The run: its offset, its kind and its end.
+    run: Option<(u64, usize, u64)>,
+    /// A run of one write keeps that write's bytes; a longer run is copied into `staging`.
+    single: Option<Vec<u8>>,
+    staging: Vec<u8>,
+    calls: u64,
+}
+
+impl<'a> Merge<'a> {
+    fn new(out: &'a mut dyn Applier, mut staging: Vec<u8>) -> Self {
+        staging.clear();
+        Self {
+            out,
+            run: None,
+            single: None,
+            staging,
+            calls: 0,
+        }
+    }
+
+    fn push(&mut self, w: Write) {
+        let len = w.data.len() as u64;
+        match self.run {
+            Some((_, kind, end)) if kind == w.kind && end == w.offset => {
+                if let Some(first) = self.single.take() {
+                    self.staging.clear();
+                    self.staging.extend_from_slice(&first);
+                }
+                self.staging.extend_from_slice(&w.data);
+                if let Some(r) = self.run.as_mut() {
+                    r.2 += len;
+                }
+            }
+            _ => {
+                self.flush();
+                self.run = Some((w.offset, w.kind, w.offset + len));
+                self.single = Some(w.data);
+            }
+        }
+    }
+
+    /// Applies the run in one call.
+    fn flush(&mut self) {
+        if let Some((offset, kind, _)) = self.run.take() {
+            match self.single.take() {
+                Some(data) => self.out.write(offset, &data, kind),
+                None => self.out.write(offset, &self.staging, kind),
+            }
+            self.staging.clear();
+            self.calls += 1;
+        }
+    }
+
+    /// Applies the last run; returns the calls made and the staging buffer to keep.
+    fn finish(mut self) -> (u64, Vec<u8>) {
+        self.flush();
+        (self.calls, self.staging)
     }
 }
 
@@ -697,5 +788,102 @@ mod tests {
         q.take(list(11, block(3, false))).expect("under");
         q.apply(11, &mut pool);
         assert_eq!(word(&pool), 3, "a later list's word is the bake half's own");
+    }
+
+    /// Every call with its offset, bytes and kind.
+    #[derive(Default)]
+    struct Calls(Vec<(u64, Vec<u8>, usize)>);
+
+    impl Applier for Calls {
+        fn write(&mut self, offset: u64, data: &[u8], kind: usize) {
+            self.0.push((offset, data.to_vec(), kind));
+        }
+    }
+
+    /// Plan 0111 Phase 6e: 300 block writes of one kind at contiguous offsets apply as one call
+    /// of their joined bytes; a gap, a kind change and a write back at an earlier offset each
+    /// start a new call; a first block's landing word inside the merged run reads the applying
+    /// frame's word, and the store's writes and the calls are counted apart.
+    #[test]
+    fn contiguous_writes_of_one_kind_apply_as_one_call() {
+        const BASE: u64 = 4096;
+        const N: usize = 300;
+        let mut m = ListMaker::new(None, 5);
+        let mut joined = Vec::new();
+        for k in 0..N {
+            let words = [k as u32, 7, 0, 0];
+            let mut w = words_at(BASE + 16 * k as u64, &words, 0);
+            // Block 150 is its chunk's first: its word 2 is the landing word.
+            if k == 150 {
+                w.landing = Some(Landing {
+                    chunk: [1, 0, 0],
+                    at: 2,
+                    first: true,
+                });
+            }
+            joined.extend_from_slice(&w.data);
+            m.push(w);
+        }
+        // Frame 8 applies the list: the landing word reads 9.
+        joined[150 * 16 + 8..150 * 16 + 12].copy_from_slice(&9u32.to_le_bytes());
+        let end = BASE + 16 * N as u64;
+        // A gap of 4 bytes, then a kind change at the run's end, then a write back at BASE.
+        m.push(words_at(end + 4, &[1, 2], 0));
+        m.push(words_at(end + 12, &[3], 1));
+        m.push(words_at(end + 16, &[4], 1));
+        m.push(words_at(BASE, &[5], 0));
+        m.seal().expect("no cap");
+        let mut q = Lists::default();
+        q.take(m.finish()).expect("no cap");
+        let mut calls = Calls::default();
+        let (bytes, landed) = q.apply(8, &mut calls);
+        assert_eq!(bytes, N * 16 + 8 + 4 + 4 + 4);
+        assert_eq!(landed, vec![([1, 0, 0], 9)]);
+        let shape: Vec<(u64, usize, usize)> =
+            calls.0.iter().map(|(o, d, k)| (*o, d.len(), *k)).collect();
+        assert_eq!(
+            shape,
+            [
+                (BASE, N * 16, 0),
+                (end + 4, 8, 0),
+                (end + 12, 8, 1),
+                (BASE, 4, 0)
+            ],
+            "one call for the 300, then the gap's, the kind's (two words joined) and the write back"
+        );
+        assert_eq!(
+            calls.0[0].1, joined,
+            "the joined bytes, the landing word patched"
+        );
+        assert_eq!(
+            calls.0[2].1,
+            [3u32, 4]
+                .iter()
+                .flat_map(|w| w.to_le_bytes())
+                .collect::<Vec<u8>>()
+        );
+        assert_eq!(
+            q.applied,
+            Applied {
+                writes: N as u64 + 4,
+                calls: 4,
+                bytes: (N * 16 + 20) as u64
+            }
+        );
+        // The pool reads as the writes one a call would leave it: the write back at BASE wins.
+        let mut q = Lists::default();
+        let mut m = ListMaker::new(None, 5);
+        m.push(words_at(BASE, &[1, 1], 0));
+        m.push(words_at(BASE + 8, &[2, 2], 0));
+        m.push(words_at(BASE, &[3], 0));
+        m.seal().expect("no cap");
+        q.take(m.finish()).expect("no cap");
+        let mut pool = Pool::default();
+        q.apply(9, &mut pool);
+        assert_eq!(
+            [BASE, BASE + 4, BASE + 8, BASE + 12].map(|a| pool.word(a)),
+            [3, 1, 2, 2]
+        );
+        assert_eq!(q.applied.calls, 2);
     }
 }
