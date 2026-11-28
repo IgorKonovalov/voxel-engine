@@ -56,6 +56,10 @@ pub(crate) struct FrameStages {
     pub(crate) sync_parts: [f64; 8],
     /// Bricks the sync packed on the render thread.
     pub(crate) bricks: u64,
+    /// The sync's staged runs (one belt copy each, `SyncStats::writes`) and the column-map
+    /// tiles it wrote (`SyncStats::column_tiles`).
+    pub(crate) writes: u64,
+    pub(crate) tiles: u64,
     /// The live queue's whole step on the render thread (`Run::step_bake_queue`).
     pub(crate) queue: f64,
     /// The bake thread's render laps in the frame, when it ran one.
@@ -181,7 +185,7 @@ impl FrameStages {
             |[s, minor, major]| format!("switches {s}, faults {minor} minor {major} major"),
         );
         format!(
-            "slow frame: {} at {:.1} s, wall {:.3} ms: acquire {:.3}, update {:.3}, poll {:.3} ({} chunks, {} evicted, {} demoted), events {:.3}, sync {:.3} ({}, other {:.3}; {} bricks), queue {:.3} ({laps}), prepare {:.3}, encode {:.3}, submit {:.3}, after {:.3}, present {:.3}, rest {:.3}; {counters}",
+            "slow frame: {} at {:.1} s, wall {:.3} ms: acquire {:.3}, update {:.3}, poll {:.3} ({} chunks, {} evicted, {} demoted), events {:.3}, sync {:.3} ({}, other {:.3}; {} bricks, {} writes, {} tiles), queue {:.3} ({laps}), prepare {:.3}, encode {:.3}, submit {:.3}, after {:.3}, present {:.3}, rest {:.3}; {counters}",
             self.frame,
             self.at_s,
             self.wall,
@@ -196,6 +200,8 @@ impl FrameStages {
             parts(&SYNC_PARTS, &self.sync_parts),
             self.sync_other(),
             self.bricks,
+            self.writes,
+            self.tiles,
             self.queue,
             self.prepare,
             self.encode,
@@ -441,6 +447,8 @@ impl FrameStages {
             ];
             self.sync_parts = us.map(|v| v as f64 / 1e3);
             self.bricks = s.packed_bricks;
+            self.writes = s.writes;
+            self.tiles = s.column_tiles;
         }
     }
 }
@@ -573,6 +581,8 @@ mod tests {
             sync: 16.0,
             sync_parts,
             bricks: 900,
+            writes: 41,
+            tiles: 17,
             queue: 6.0,
             laps: Some([4.0, 0.5, 0.5, 0.25, 0.25, 0.0, 0.0]),
             applied: [300, 2, 98_304, 3, 1],
@@ -592,7 +602,7 @@ mod tests {
         assert_eq!(f.named(), 31.5);
         assert_eq!(
             f.line(),
-            "slow frame: 9 at 2.5 s, wall 40.000 ms: acquire 0.500, update 0.250, poll 1.000 (7 chunks, 5 evicted, 3 demoted), events 0.250, sync 16.000 (select 0.000, size 0.000, pack 0.000, place 0.000, note 0.000, copy 3.000, alloc 12.000, lock 0.000, other 1.000; 900 bricks), queue 6.000 (build 4.000, take 0.500, issue 0.500, apply 0.250 (300 writes, 2 calls, 98304 bytes; 3 lists, 1 whole; waiting 4 lists, 5000 bytes), collect 0.250, send 0.000, wait 0.000, other 0.500), prepare 2.000, encode 3.000, submit 0.500, after 1.000, present 1.000, rest 8.500; switches 2, faults 300 minor 0 major"
+            "slow frame: 9 at 2.5 s, wall 40.000 ms: acquire 0.500, update 0.250, poll 1.000 (7 chunks, 5 evicted, 3 demoted), events 0.250, sync 16.000 (select 0.000, size 0.000, pack 0.000, place 0.000, note 0.000, copy 3.000, alloc 12.000, lock 0.000, other 1.000; 900 bricks, 41 writes, 17 tiles), queue 6.000 (build 4.000, take 0.500, issue 0.500, apply 0.250 (300 writes, 2 calls, 98304 bytes; 3 lists, 1 whole; waiting 4 lists, 5000 bytes), collect 0.250, send 0.000, wait 0.000, other 0.500), prepare 2.000, encode 3.000, submit 0.500, after 1.000, present 1.000, rest 8.500; switches 2, faults 300 minor 0 major"
         );
 
         // A frame of exactly 33.3 ms is not slow: no line, and only every frame's counters.
@@ -637,6 +647,26 @@ mod tests {
                 "a slow frame's switches 2.00, faults 300.0 minor 0.00 major; any frame's switches 2.00, faults 300.0 minor 0.00 major"
             ),
             "{summary}"
+        );
+    }
+
+    #[test]
+    fn the_sync_part_carries_the_syncs_writes_and_column_tiles() {
+        let mut f = frame(9, 40.0);
+        let s = SyncStats {
+            packed_bricks: 0,
+            writes: 23,
+            column_tiles: 9,
+            copy_us: 4_500,
+            ..SyncStats::default()
+        };
+        f.sync_from(16.0, Some(&s));
+        assert_eq!((f.bricks, f.writes, f.tiles), (0, 23, 9));
+        assert!(
+            f.line()
+                .contains(", copy 4.500, alloc 0.000, lock 0.000, other 11.500; 0 bricks, 23 writes, 9 tiles), queue "),
+            "{}",
+            f.line()
         );
     }
 

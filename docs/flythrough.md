@@ -527,7 +527,8 @@ summary over every such frame. A frame's wall is the span from its start to the 
 stages in ms: `acquire` (the window's surface acquire for the next frame; 0 headless),
 `update`, `poll` with the chunks it inserted and the chunks its events evicted and demoted, `events` (the poll's events applied to the mirror
 and the frame), `sync` with its stages (`select`, `size`, `pack`, `place` and `note` the light's
-two parts, `copy`, `alloc`, `lock`, `other`) and the bricks it packed, `queue` (the live queue's
+two parts, `copy`, `alloc`, `lock`, `other`), the bricks it packed, its `writes` (the staged runs, one belt copy each)
+and the column-map `tiles` it wrote, `queue` (the live queue's
 step on the render thread) with the bake thread's render laps (`build` to `wait`, then `other`;
 `no laps` in lockstep; `apply` carries the store's writes it applied, the `write_buffer` calls
 they took and their bytes), `prepare` (the frame's start to the encode, less the stages above),
