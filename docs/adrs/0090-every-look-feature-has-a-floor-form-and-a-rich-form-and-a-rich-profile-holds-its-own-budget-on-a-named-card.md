@@ -114,6 +114,16 @@ The renderer measures its frame and raises or lowers each feature's form to fill
 lost for the reasons ADR-0055 rejected adapting at run time: a form that moves frame to frame
 moves the image, against "stable image first", and no reading would name what a profile costs.
 
+## Owner answers (2026-11-28)
+
+The owner answered the draft's eight questions, the recommended option in each: the card is the
+RTX 3080 Laptop; the Rich budget is 16.6 ms at 1080p output with FSR 2 at 1.5 (the split stays a
+guess until read); a profile never changes the world; `Rich` is a profile of its own, not folded
+into `High`; Floor's water reflects the sky with a screen-space arm tried in the window; the demo
+world lives in `apps/ruins`; Plan 0035's haze brief runs before Plan 0033's render half; Plan
+0033 reads a fourth level for Rich. The ADR stays proposed until the Fable second pass and the
+owner's go on the plans that carry it.
+
 ## Outcome
 
 _(Added only at acceptance if implementation falsified something above.)_
