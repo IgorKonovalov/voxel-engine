@@ -44,6 +44,9 @@ pub enum PreRollState {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PreRollSummary {
     pub steps: u32,
+    /// The chunks the steps' syncs selected and left for a later sync because the mirror's
+    /// time budget was spent (summed `SyncStats::time_deferred_chunks`): 0 under no budget.
+    pub time_deferred_chunks: u64,
     pub near_ms: f64,
     pub near_baked: u64,
     pub near_samples: u64,
@@ -60,6 +63,8 @@ pub struct PreRollSummary {
 pub struct PreRoll {
     cfg: PreRollConfig,
     steps: u32,
+    /// The steps' syncs' `SyncStats::time_deferred_chunks`, summed.
+    time_deferred_chunks: u64,
     /// The near chunks' moment: the work time, the chunks baked and the samples then.
     near_done: Option<(f64, u64, u64)>,
     /// The full chunks mirrored at the near chunks' moment.
@@ -73,6 +78,7 @@ impl PreRoll {
         Self {
             cfg,
             steps: 0,
+            time_deferred_chunks: 0,
             near_done: None,
             first_pass: Vec::new(),
             state: PreRollState::Near { settled: 0, of },
@@ -124,9 +130,10 @@ impl PreRoll {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("pre-roll sync"),
         });
-        mirror
+        let synced = mirror
             .sync(world, queue, &mut enc)
             .map_err(|e| PreRollError::Sync(e.to_string()))?;
+        self.time_deferred_chunks += synced.time_deferred_chunks;
         queue.submit([enc.finish()]);
         let view = QueueView {
             eye: view.eye,
@@ -209,6 +216,7 @@ impl PreRoll {
                 self.near_done.unwrap_or((work_ms, baked, samples));
             self.state = PreRollState::Done(PreRollSummary {
                 steps: self.steps,
+                time_deferred_chunks: self.time_deferred_chunks,
                 near_ms,
                 near_baked,
                 near_samples,
@@ -288,6 +296,7 @@ mod tests {
             s,
             PreRollSummary {
                 steps: 4,
+                time_deferred_chunks: 0,
                 near_ms: 1000.0,
                 near_baked: 2,
                 near_samples: 20,
@@ -340,6 +349,7 @@ mod tests {
             s,
             PreRollSummary {
                 steps: 4,
+                time_deferred_chunks: 0,
                 near_ms: 120.0,
                 near_baked: 2,
                 near_samples: 30,

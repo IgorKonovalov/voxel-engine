@@ -278,8 +278,8 @@ impl Run {
             ms_since(self.start)
         );
         println!(
-            "pre-roll: {} steps, {} chunks baked, {} samples, {:.0} ms of steps, the longest {:.1} ms",
-            s.steps, s.baked, s.samples, p.work_ms, p.longest_ms
+            "pre-roll: {} steps, {} chunks baked, {} samples, {:.0} ms of steps, the longest {:.1} ms, {} chunks left by a sync's time budget",
+            s.steps, s.baked, s.samples, p.work_ms, p.longest_ms, s.time_deferred_chunks
         );
         if let Some(q) = frame.bake_queue() {
             let qs = q.stats();
