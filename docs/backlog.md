@@ -840,6 +840,16 @@ and invisible to Plan 0090's pop counter. Cost a guess: one hash and one multipl
 per-material style word), not on the material row. Size S; a look spike with an owner window, the content pass it
 waited for is done (2026-11-20, the showcase's palette).
 
+### FSR 2's accumulation past AMD's cap for still pixels
+
+Parked 2026-11-28 (owner: "all recommended", Plan 0081's 3b stillness question 3). Plan 0081's
+3b and 3c readings measured the grass's shimmer at wind 0 as FSR 2's accumulation rippling over
+jittered sub-pixel contrast: a new sample enters at about 1 - 0.974 of a pixel's history, so a
+pixel alternating between element and face moves by its contrast times that share each frame.
+Letting a still pixel accumulate past AMD's cap (ADR-0034) would roughly halve that ripple across
+the whole image, not only the grass. A spike beside a stillness plan, measured on the pop
+counter's scenes (Plan 0090) and 3c's rig in `mod reading` of `apps/flythrough/tests/gpu_detail.rs`.
+
 ### Surface colour as the voxels' texture, in three layers, before any image texture
 
 Parked 2026-11-27 (owner: "later", on the question of textures on the blocks). No image
