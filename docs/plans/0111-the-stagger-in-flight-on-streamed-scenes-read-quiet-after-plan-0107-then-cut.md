@@ -1449,3 +1449,14 @@ nothing of this ruling touches its files.
    guess from 1.2 ms a MiB; `apply` max would read about 5 to 7 ms against the 8 ms bar, not
    measured). The owner can read both in Phase 7's window by the flag before choosing; the
    fades' rewrite itself stays in the backlog as the production's lever.
+
+## Amended 2026-11-28 (owner, the open questions)
+
+"All recommended" (owner, 2026-11-28 morning), so the recommended option of each open question stands:
+
+1. **Keep 6a** (against the Phase 6 revert rule), with 6a' finishing it.
+2. **6a''** (the light notes as a delta) runs, after 6b's reading, as the 2026-11-27 amendment and its restated bars write it.
+3. **6h**: its count half now (`writes` and `tiles` on the `slow frame:` line); its cut half on its reading.
+4. **The pair** (`--sync-ms 6` and `--mirror-pack workers`) stays the default at +4 to +7 % quiet full residency.
+5. **Plan 0107's condition 3** is accepted as read on the fill at 5 s and 15 s.
+6. **The apply cap** stays 2 MiB by default; `--apply-mib` stays a setting.
