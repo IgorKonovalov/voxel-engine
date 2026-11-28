@@ -60,7 +60,7 @@ were sized by Plan 0109 Phase 6. Plan 0093, the README rewrite with reproducible
 | [0113](0113-overgrowth-by-shape-a-seeded-decoration-pass-over-generated-chunks.md) | Overgrowth by shape: a seeded decoration pass over generated chunks, rules the consumer supplies | draft 11-28 | M10, `svet-world`, headless. Fable pass owed. World lane, after 0114 P1-2. |
 | [0114](0114-the-ruins-demo-world-canyons-a-lake-and-overgrown-ruins-in-apps.md) | The ruins demo world: canyons, a lake and overgrown ruins, a generic scene in `apps/` | draft 11-28 | M10, apps only. Fable pass owed; owner q5 (where it lives). World lane, after 0033's world briefs. |
 | [0115](0115-vegetation-forms-clumps-vines-and-flowers-as-voxels-with-a-rich-detail-form.md) | Vegetation forms: clumps, vines and flowers as world voxels, with a rich form of sub-voxel leaves and strands | draft 11-28 | M10, ADR-0090. Fable pass owed. P1-2 after 0113 (world lane); P3-6 after 0034. |
-| [0116](0116-planted-content-a-spaced-scatter-of-any-prefab-grown-trees-roots-and-logs-and-their-far-copies.md) | Planted content: a spaced scatter of any prefab, grown trees with roots and fallen logs, far copies | draft 11-28 | M10, ADR-0091. Fable pass owed. World lane, after 0115 P1; P4 after 0033 1a, 2a. |
+| [0116](0116-planted-content-a-spaced-scatter-of-any-prefab-grown-trees-roots-and-logs-and-their-far-copies.md) | Planted content: a spaced scatter of any prefab, grown trees with roots and fallen logs, far copies | draft 11-28 | M10, ADR-0091. Fable pass owed. World lane, after 0113 and 0115 P1; P5 after 0033 1a, 2a. |
 <!-- roster:end -->
 
 ## Sequence

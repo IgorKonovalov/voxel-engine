@@ -22,11 +22,12 @@
 > "consumers should be able to provide trees themselves". The backlog's "Trees by space
 > colonisation, leaf masses at the tips" and "Sunlit tree crowns sparkle in motion".
 > **Starts after:** Plan 0115's Phase 1 (its blob builder, which the grower calls at the tips)
-> on the world lane; Phase 4 after Plan 0033's world briefs 1a and 2a (`ClipCoord`,
+> on the world lane, after Plan 0113 (its `WorldSource::halo`, which the roots read the
+> ground through); Phase 5 after Plan 0033's world briefs 1a and 2a (`ClipCoord`,
 > `MipRule`, `coarse_chunk`). The smooth gradient noise and the erosion filter (the reading's
 > gaps 2 and 3) are **not** here: they go to a terrain plan for Plan 0114's canyon.
-> **Exploration (lane rules 2b):** Phases 3 and 5 are exploration; the owner's window in
-> Phase 6 is their gate. Every phase lands its CPU tests of data, determinism and API.
+> **Exploration (lane rules 2b):** Phases 4 and 6 are exploration; the owner's window in
+> Phase 7 is their gate. Every phase lands its CPU tests of data, determinism and API.
 
 ## TL;DR
 
@@ -39,7 +40,9 @@ an envelope, branch radii by the pipe model, Plan 0115's dense blobs at the tips
 to a prefab. The grower is one supplier. A `.vox` tree or a consumer-built prefab goes through
 the same table and gets the same spacing and far copies. The fly-through's hills grow
 broadleaf, conifer, shrub and bare trees with surface roots, and fallen logs between them,
-beside today's trees under `--tree-form classic|grown`. The first thing seen is a CPU test: a
+beside today's trees under `--tree-form classic|grown`. **Roots are laid on the ground per
+plant at generation time, read from the inner source's voxels, and never float: a test
+asserts zero exceptions** (owner, 2026-11-28). The first thing seen is a CPU test: a
 scatter decides the same survivors in any chunk order, and no two survivors of a layer are
 closer than its radius. Then the hills, with the classic trees spaced by it.
 
@@ -91,10 +94,25 @@ ADR-0091. In brief:
   `prefab::blob`. The envelopes are `Ellipsoid`, `Cone`, `Disc` (roots: flattened, opening
   downward) and `Capsule`; `Envelope` is a public trait. A log is a skeleton grown in a
   `Capsule` lying along x, with no tip blobs, and it is placed by its own layer.
+- **Roots follow the ground exactly (owner, 2026-11-28: "100%").** Roots are **not** in the
+  prefab. A variant carries a flat root skeleton: a colonisation in a `Disc` envelope in xy
+  from the trunk's base, with radii by the pipe model. `PlantedSource` lays it on the ground
+  per plant, at generation time. The ground of a column is the top voxel of the **inner
+  source** that `PlantSurface::is_ground` accepts (default: not air, so water can be
+  refused), searched in a window of `ROOT_WINDOW` voxels (32) above and below the plant's
+  base. A root voxel of thickness `t` at column `c` fills from `g(c) - sink` up to `g(c) + t`.
+  Where a root's neighbouring column along its path has lower ground (a step, a cliff), the
+  column is also filled down to that lower ground, so the root hugs the face with nothing
+  under it. Where the ground leaves the window, the root ends at that node with its
+  children. The ground is read from the inner source's voxels, not from the consumer's
+  `sample` z, so the guarantee holds for any inner source. It is read through Plan 0113's
+  `WorldSource::halo`: the direct path for per-voxel sources, and the default (neighbouring
+  chunks generated) otherwise. A root depends only on the seed and the inner source, never
+  on another chunk's output, so it stays pull-safe.
 - **Species in `apps/`.** Broadleaf, conifer, shrub and bare are parameter rows in
-  `apps/flythrough/src/trees.rs`. Roots are a second colonisation from the trunk's base
-  node, joined into one skeleton before rasterising, on broadleaf and bare. Logs are a layer
-  whose density is 0 where the consumer's slope is over its line.
+  `apps/flythrough/src/trees.rs`; broadleaf and bare carry roots. Logs are a layer whose
+  density is 0 where the ground under their footprint varies by more than one voxel; the same
+  ground read fills under a log down to the ground, so no log floats either.
 
 We rejected (ADR-0091): placements as ADR-0066's list (an unbounded world cannot be listed),
 trees as Plan 0113 anchors (a reach of 100 voxels reads about 70 times a chunk), a
@@ -154,7 +172,8 @@ flowchart LR
 ### Phase 2: The grower
 - **Owner skill:** dev
 - **What:** `grow.rs`: `Envelope` and its four shapes, `colonise`, `Skeleton::radii`,
-  `rasterise` with tip blobs, roots as a second colonisation joined at the base node.
+  `rasterise` with tip blobs, and the flat root skeleton (a `Disc` colonisation from the base
+  node, kept as a skeleton, not rasterised: Phase 3 lays it).
 - **Files touched:** new `crates/svet-world/src/grow.rs` (and `grow/tests.rs`),
   `crates/svet-world/src/lib.rs`; `prefab.rs` only if `rasterise` needs a builder helper.
 - **Done when:**
@@ -173,7 +192,36 @@ flowchart LR
   6. A reading: build time per variant (median of 16 seeds per envelope, the RTX host, one
      thread) and prefab bytes.
 
-### Phase 3: The forms on the hills, consumer trees beside them (exploration)
+### Phase 3: Roots laid on the ground
+- **Owner skill:** dev
+- **What:** the root drape in `PlantedSource` (the ground read through `halo`,
+  `PlantSurface::is_ground`, the face fill, the window's end), and the same ground read
+  filling under logs. The read needs a vertical margin of `ROOT_WINDOW` and a horizontal
+  margin of one voxel (the face fill reads the neighbouring column): if Plan 0113's `halo`
+  takes one margin for all axes, this phase gives it a per-axis margin, since a cubic margin
+  of 32 would read 128³, eight times the chunk.
+- **Files touched:** `crates/svet-world/src/plant.rs` (or `plant/roots.rs`), its tests.
+- **Done when:**
+  1. `roots_never_float` (CPU, about 3 s): on six test grounds (flat, slopes of 1 in 2 and 2
+     in 1, a 10-voxel step, a dome of radius 40, and value-noise hills) under 64 seeds each,
+     for every root voxel at `(x, y, z)`, every voxel of its column from the ground `g(x, y)`
+     up to `z` is root or inner solid, and `z <= g(x, y) + t_max`. **Zero exceptions**:
+     the test counts the violations and asserts 0.
+  2. `roots_hug_a_cliff` (CPU, under 1 s): a root crossing the 10-voxel step stays
+     6-connected from the upper ground to the lower ground, and every voxel it adds on the
+     face has the face (inner solid) as a neighbour.
+  3. `roots_stop_at_the_window` (CPU, under 1 s): over a pit deeper than `ROOT_WINDOW`, no
+     root voxel lies over the pit, and the root's nodes beyond its edge are not written.
+  4. `roots_refuse_water` (CPU, under 1 s): with `is_ground` refusing a water row, a root
+     reaching a lake ends at the shore and no root voxel lies on or in the water.
+  5. `logs_never_float` (CPU, under 1 s): over the six grounds, every log voxel's column
+     holds no air between the log's lowest voxel and the ground.
+  6. `planting_is_the_same_in_any_chunk_order` holds with roots, on a source with a direct
+     `halo` and on one using the default.
+  7. A reading: chunk generation time with roots, against without, on both `halo` paths
+     (median of 64 chunks, RTX host).
+
+### Phase 4: The forms on the hills, consumer trees beside them (exploration)
 - **Owner skill:** dev
 - **What:** the species rows (broadleaf, conifer, shrub, bare; roots on broadleaf and bare),
   the log layer, three layers on the hills (trees, shrubs, logs) with cross radii, built at
@@ -189,17 +237,18 @@ flowchart LR
   1. `a_vox_tree_plants_like_a_grown_one` (CPU, under 2 s): the fixture loads to a prefab,
      joins a layer's table, and `planting_is_the_same_in_any_chunk_order` holds with it.
   2. The order test holds for `grown` with all three layers.
-  3. `logs_lie_where_the_ground_is_flat` (CPU, under 1 s): no log survives where the hills'
-     slope (the consumer's column-height difference over 8 voxels) is over its line.
+  3. `roots_never_float` holds on the hills with every root-bearing species row.
   4. Readings: load time of all variants on 1 and 4 threads, chunk generation time (median of
      64 chunks) for classic and grown, mixed bricks and mirror bytes at the default
      residency, all on the RTX host.
 
-### Phase 4: Far copies
+### Phase 5: Far copies
 - **Owner skill:** dev
 - **What:** item mips at levels 1 to 3 under the residency's `MipRule`, built at
-  registration; `PlantedSource::coarse_chunk` over the inner coarse answer; the outdoor
-  source's `grown` form takes it (the classic form keeps Plan 0033's envelope rule).
+  registration; `PlantedSource::coarse_chunk` over the inner coarse answer; roots laid at
+  each level on that level's coarse ground (the inner source's coarse cells), by the same
+  rule with radii divided by the cell; the outdoor source's `grown` form takes it (the
+  classic form keeps Plan 0033's envelope rule).
 - **Files touched:** `crates/svet-world/src/plant.rs`, its tests, `prefab.rs` (a prefab mip
   helper), `apps/flythrough/src/outdoor.rs`.
 - **Done when:**
@@ -209,11 +258,13 @@ flowchart LR
      only within one cell of a plant's box (the snap).
   2. `a_consumer_prefab_has_far_copies` (CPU, under 1 s): the `.vox` fixture's mips are
      built at registration and appear in a level-2 clip chunk at the snapped position.
+  3. `far_roots_never_float` (CPU, about 2 s): `roots_never_float`'s property at levels 1
+     to 3, against each level's coarse ground, zero exceptions.
   3. Readings: coarse generation per clip chunk at each level, with and without plants, and
      the far field's VRAM with grown trees at 0033's default levels, against its 0.5 GB
      line.
 
-### Phase 5: Stillness and cost against the classic trees (exploration)
+### Phase 6: Stillness and cost against the classic trees (exploration)
 - **Owner skill:** dev
 - **What:** readings only: pixels changing per frame on a slow pan over the hills' forest,
   classic against grown, on Plan 0115 Phase 3's rig, near and across the first far-level
@@ -221,14 +272,14 @@ flowchart LR
 - **Files touched:** `docs/plans/logs/0116.md`, the reading's `mod reading`.
 - **Done when:** the readings log holds the table for both adapters, by form.
 
-### Phase 6: The owner's window
+### Phase 7: The owner's window
 - **Owner skill:** human
 - **What:** the owner flies the hills (and Plan 0114's ruins if merged) with `classic` and
   `grown`. He picks the default form and the per-species rows (crown size, tip blob size,
   roots, log density), and judges the far trees at the level switches.
 - **Done when:** the picks are in the readings log.
 
-### Phase 7: The picks as defaults and tests
+### Phase 8: The picks as defaults and tests
 - **Owner skill:** dev
 - **What:** the picked rows as defaults; a fixed cross-platform vector (seed, layers, the
   species rows, expected per-chunk hashes over 2 × 2 × 1 chunks) on both CI arms; the golden
@@ -246,6 +297,8 @@ flowchart LR
 pub trait PlantSurface: Sync {
     /// Ground z and density (0..=65535) for `layer` at column `xy`, or None: no candidate.
     fn sample(&self, layer: u8, xy: [i32; 2]) -> Option<(i32, u16)>;
+    /// Whether roots and logs may rest on `m` (default: not air).
+    fn is_ground(&self, m: MaterialId) -> bool { m != AIR }
 }
 pub struct Layer { pub cell_log2: u8, pub radius: u16, pub cross: Vec<(u8, u16)>, pub items: Vec<Item> }
 pub struct Item { pub prefab: Arc<Prefab>, pub anchor: [i32; 3], pub weight: u16 /* + mips, built at registration */ }
@@ -255,8 +308,9 @@ pub trait Envelope: Sync { fn bounds(&self) -> ([i32; 3], [i32; 3]); fn contains
 ```
 
 **The scatter's neighbourhood, worked.** A chunk is 64 voxels across. With the largest
-item's footprint radius `F` (a broadleaf crown up to 40 voxels), the plants whose footprint
-meets a chunk have their positions in the chunk's xy box widened by `F`, which is 144 voxels.
+item's footprint radius `F` (a root disc up to 48 voxels, wider than a crown of up to 40),
+the plants whose footprint meets a chunk have their positions in the chunk's xy box widened
+by `F`, which is 160 voxels.
 Each of those candidates checks its layer's candidates within `radius` (60 voxels). With a
 32-voxel cell the box is about 5 × 5 cells, and each candidate checks about 5 × 5 cells
 around itself, so about 625 hash-and-sample calls per layer per chunk column. A coarse
@@ -268,12 +322,12 @@ consumer's `sample` dominates, which is why it is a callback the consumer can ca
 
 | `nfr.md` figure | projection (a guess) | how the close measures it |
 |---|---|---|
-| Section 5, a chunk's generation | grown planting within 1.5x the inner source on the hills | Phase 3 reading, 64 chunks, median, RTX host |
-| Section 5, coarse generation | read, per level; no projection before 0033's own reading | Phase 4 reading |
-| Section 3, RAM and mirror | denser crowns (blobs at fill 0.85 or more against 0.25) add mixed bricks; read | Phases 3 and 4 readings |
-| Section 3, far field VRAM | inside 0033's 0.5 GB forest line, or the plan reports it | Phase 4 reading |
-| Start-up | the grower at load: under 1 s for all variants on 4 threads (a guess) | Phase 3 reading; over it, fewer variants per form |
-| Section 2, frame | none on any profile (ADR-0090 rule 1); the march over denser crowns is read | Phase 5 reading |
+| Section 5, a chunk's generation | grown planting within 1.5x the inner source on the hills | Phase 3 and 4 readings, 64 chunks, median, RTX host |
+| Section 5, coarse generation | read, per level; no projection before 0033's own reading | Phase 5 reading |
+| Section 3, RAM and mirror | denser crowns (blobs at fill 0.85 or more against 0.25) add mixed bricks; read | Phases 4 and 5 readings |
+| Section 3, far field VRAM | inside 0033's 0.5 GB forest line, or the plan reports it | Phase 5 reading |
+| Start-up | the grower at load: under 1 s for all variants on 4 threads (a guess) | Phase 4 reading; over it, fewer variants per form |
+| Section 2, frame | none on any profile (ADR-0090 rule 1); the march over denser crowns is read | Phase 6 reading |
 
 ## Risks & open questions
 
@@ -281,13 +335,17 @@ consumer's `sample` dominates, which is why it is a callback the consumer can ca
   normalisation are where float would creep in. Everything is integer, ties go to the lower
   index, and the fixed vector on both CI arms is the guard. `PlantSurface::sample` is
   consumer code, and the order test catches only the engine's order dependence.
-- **Roots float on slopes** on the downhill side. The root disc opens downward and sinks by
-  the trunk's sink; the window judges what is left. A ground-aware root (reading the inner
-  source) would break the prefab's independence and is not planned.
+- **The roots' ground read costs generation time.** A root reads the inner source's ground
+  in its columns over a window of 64 voxels, which can cross into the chunks above and
+  below. On a source without a direct `halo` the default generates them (up to three
+  chunks' worth per chunk with roots). Phase 3 reads both paths; the lever is a direct
+  `halo` (or a column-top method) on the demo's sources, never a looser rule.
+- **Ground changed after generation** (a dig under a root) can leave a root over air. That
+  is an edit, and ADR-0008's support and collapse apply as to any voxel.
 - **Far copies jump at the switch** by up to half a cell. Plan 0033's band hides it, and
-  Phase 5 reads it.
+  Phase 6 reads it.
 - **Crowns still shimmer at the silhouette** if the tip blobs are small against the pixel at
-  the switch distance. The blob size is the lever, and Phase 5 measures it before the window.
+  the switch distance. The blob size is the lever, and Phase 6 measures it before the window.
 - **Plan 0115's blob builder** is a dependency. If 0115 changes its builder at its window,
   Phase 2's tips follow it.
 
@@ -299,7 +357,7 @@ consumer's `sample` dominates, which is why it is a callback the consumer can ca
 - No growth over time, no wind sway of trunks or branches (Plan 0081's and Plan 0036's wind
   stays on the detail layer), no felling physics (a cut tree is a dug voxel; ADR-0008's
   collapse applies as to any voxel).
-- No ground-following roots, no stacked-ledge candidates beyond one surface per layer.
+- No stacked-ledge candidates beyond one surface per layer.
 - No rich form of its own: Plan 0115's `Leaf` elements apply to the tip blobs' rows.
 - No Plan 0114 wiring: its Phase 5 takes the scatter for the ruins when both have merged.
 
@@ -312,11 +370,12 @@ consumer's `sample` dominates, which is why it is a callback the consumer can ca
 |---|---|---|---|
 | 1: the scatter and `PlantedSource` | dev | not started | |
 | 2: the grower | dev | not started | |
-| 3: the forms on the hills, consumer trees | dev | not started | |
-| 4: far copies | dev | not started | |
-| 5: stillness and cost | dev | not started | |
-| 6: the owner's window | human | not started | |
-| 7: the picks as defaults and tests | dev | not started | |
+| 3: roots laid on the ground | dev | not started | |
+| 4: the forms on the hills, consumer trees | dev | not started | |
+| 5: far copies | dev | not started | |
+| 6: stillness and cost | dev | not started | |
+| 7: the owner's window | human | not started | |
+| 8: the picks as defaults and tests | dev | not started | |
 
 ### Notes
 

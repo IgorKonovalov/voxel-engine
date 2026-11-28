@@ -48,6 +48,15 @@ from.
    answer. The scatter is the same function at every distance, so a tree in the far field is
    the same tree, shrunk.
 
+**Roots follow the ground exactly** (owner, 2026-11-28: "100%"). They are not part of the
+prefab. A variant carries a flat root skeleton, and `PlantedSource` lays it per plant on the
+ground it reads from the inner source's voxels: the top voxel the consumer's `is_ground`
+accepts, within a window above and below the base. Each root voxel's column is filled from
+just under that ground to the root's thickness above it, and down a step or a cliff face to
+the lower neighbour's ground. A root ends where the ground leaves the window. A root is a
+function of the seed and the inner source only, so it stays pull-safe, and a test asserts
+that no root voxel has air under it. Logs rest on the same ground read.
+
 A seeded **grower** (space colonisation, Runions, Lane & Prusinkiewicz 2007, in fixed point,
 with branch radii by the pipe model and Plan 0115's blob builder at the tips) is one way to
 make prefabs for that table. It takes an envelope trait the consumer can implement, and it
@@ -74,6 +83,9 @@ names no plant.
 - The non-recursive survival rule keeps fewer points than a maximal Poisson-disk set: a
   candidate killed by a neighbour that is itself killed leaves a gap. Density is tuned
   against that, not computed.
+- Roots read the inner source's ground: a vertical window of 64 voxels plus one column
+  around, through Plan 0113's `halo`. On a source without a direct `halo` that is up to
+  three chunks generated per chunk with roots. Exactness is bought with generation time.
 - One candidate per cell per layer means one surface per column per layer. A consumer with
   stacked ledges picks which surface a candidate uses, or adds a layer.
 - The grower's load cost grows with variants. It runs at load, on threads, and is read
@@ -96,7 +108,14 @@ A coarse cell is leaf where crowns cover most of it (Plan 0033's answer for the 
 trees). It is cheaper, but the far forest becomes a blanket with a visible switch to the real
 trees at the full-detail edge. The owner picked shrunk copies (2026-11-28).
 
-### Alternative D: L-systems as the grower
+### Alternative D: roots inside the tree's prefab
+This was the first draft: roots grown in a disc that opens downward, sunk with the trunk. It
+is cheap and keeps the prefab whole, but a rigid root floats on the downhill side of any
+slope and over any step. The owner wants roots to follow the ground 100%, which only a read
+of the actual ground per plant gives. Reading the ground from the consumer's `sample` z
+instead of the voxels was also rejected: it trusts an approximation the engine cannot check.
+
+### Alternative E: L-systems as the grower
 Rewriting rules per species, with no competition for space, so crowns need hand-tuned
 pruning to avoid self-intersection. They stay available to a consumer through the prefab
 table. The engine's grower is colonisation because its crown is just an envelope, and
