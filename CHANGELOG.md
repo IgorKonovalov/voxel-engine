@@ -6,6 +6,8 @@ SemVer 0.x (any minor may break the API until 1.0).
 
 ## [Unreleased]
 
+- **Changed (`flythrough`, the owner's call, 2026-11-27):** unset, `--pre-roll` is `full` in a window over the cave as well; only the outdoor hills keep `near` in a window. Headless and `--pre-roll-drain` stay `full`; the tester's runs take the window's default and pass no `--pre-roll`. No golden moved.
+
 ## [0.83.0] - 2026-11-27
 
 Plan 0107 (a minor bump: new public items on `svet-render`, none removed; ADR-0056's Outcome added to). **The mirror's slot image is packed on the stream workers, as a setting that stays off.** While the camera moves the mirror packs every arriving chunk's bricks on the render thread. The stream workers can now make each full chunk's slot words, sizes and emitter lists, and the mirror copy them; the mirror's bytes are equal whichever thread packed. Read on the RTX 3080 Laptop it cuts the sync's p99 by 14 to 15 % against the plan's bar of 20 %, and the stage that leads the tail (`alloc`) does not move, so the default is unchanged. Also folded in: the chores on main since v0.82.0.

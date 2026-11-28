@@ -45,20 +45,51 @@ were sized by Plan 0109 Phase 6. Plan 0093, the README rewrite with reproducible
 | [0071](0071-the-consumers-path-a-render-example-a-renderer-tested-alone-names-and-errors.md) | The consumer's path: a render example as the contract, a renderer tested alone, one name per thing, errors | approved | Cross-cutting, ADR-0057. From the 2026-11-12 review. After 0045, 0069 and 0044's Phase 8. |
 | [0073](0073-a-settings-menu-and-file-for-the-fly-through-and-the-tester.md) | A settings menu and a settings file for the fly-through and the tester | approved | ADR-0058. Apps only. After 0069, 0071 and 0080; amended 2026-11-16 (owner). |
 | [0076](0076-a-key-help-overlay-for-the-fly-through-from-the-key-table.md) | A key help overlay for the fly-through: `F1` (readings move to `Enter`), written from the key tables, modes live, 80 x 45 | superseded | Apps only, no ADR. Folded into 0080 (owner, 2026-11-16). |
-| [0081](0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md) | A surface detail layer: blades, caps and pebbles marched above styled faces, lit as hits, faded by size on screen | approved | M10, ADR-0063 (proposed). Re-read 2026-11-26, 4 questions. After 0107 and 0108. |
+| [0081](0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md) | A surface detail layer: blades, caps and pebbles marched above styled faces, lit as hits, faded by size on screen | approved | M10, ADR-0063 (proposed). Re-read 11-26, questions answered. After 0107 and 0108. |
 | [0082](0082-squash-and-stretch-a-scale-per-part-in-the-pose-and-the-clips.md) | Squash and stretch: a scale per axis per part in the pose and the clips, a slime in the library with a bounce | approved | M6, ADR-0064 (proposed). Approved 2026-11-16. After 0063, the clip chore, 0078 and 0079 P1-3. |
 | [0084](0084-staged-structures-stages-from-a-vox-a-stamp-with-a-write-policy-and-a-region-a-reveal-and-a-demolish.md) | Staged structures: stages from a `.vox`'s layers, a stamp with a write policy and a region, a reveal over ticks, a demolish | approved | M7, ADR-0067. Approved 2026-11-16. After Plan 0083 closes. |
 | [0085](0085-entity-variants-holding-clips-and-an-entity-stamped-into-the-world.md) | Entity variants (hide, swap, remap) from the `.rig`, a clip that holds, a posed entity stamped into the world | approved | M6, ADR-0068, ADR-0069 (proposed). Approved 2026-11-16. After 0063, the chore, 0078 and 0082. |
 | [0089](0089-deterministic-simulation-testing-seeded-scenarios-a-simulated-channel-a-mirror-oracle-and-gates.md) | Deterministic simulation testing: seeded scenarios, a shrinker, a simulated channel, a mirror oracle, determinism gates | approved | ADR-0073. After 0087 (owner). Pre-flight 2026-11-19, q7 answered. |
-| [0090](0090-the-pop-counter-scenes-on-lavapipe-count-the-pixels-that-break-the-light-rules-a-ratchet.md) | The pop counter: fixed scenes on lavapipe count the pixels that break each light rule, by source; a baseline that only falls | approved | Cross-cutting, ADR-0076 (proposed). Before 0081 or not: its question 4. |
+| [0090](0090-the-pop-counter-scenes-on-lavapipe-count-the-pixels-that-break-the-light-rules-a-ratchet.md) | The pop counter: fixed scenes on lavapipe count the pixels that break each light rule, by source; a baseline that only falls | approved | Cross-cutting, ADR-0076 (proposed). After 0092; does not hold 0081. |
 | [0091](0091-the-frame-profiler-scopes-across-threads-a-gpu-lane-a-dump-for-agents-and-a-hud-ticker.md) | The frame profiler: scopes across the threads, a GPU lane, a dump the agent ranks, budget scopes, a HUD ticker | approved | M7, ADR-0077. After 0087 and 0089, before 0090 (owner). |
 | [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
 | [0103](0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md) | A pipeline cache for the renderer: the driver's cache through wgpu in an engine envelope, bytes the consumer keeps | draft, parked 11-24 | ADR-0087 (proposed). Parked: the driver's cache already warms a second start (logs/0103.md). |
-| [0110](0110-the-math-hot-paths-measured-then-cut-shader-math-f16-and-the-integer-root.md) | The math hot paths, measured then cut: shader math and f16 by adapter | draft 11-27 | ADR-0088. After 0091 (owner). P2 the owner's clock sweep; keep at >= 5 % on RENOIR. |
+| [0110](0110-the-math-hot-paths-measured-then-cut-shader-math-f16-and-the-integer-root.md) | The math hot paths, measured then cut: shader math and f16 by adapter | approved 11-27 | ADR-0088. After M10 (0033-0037) and 0091 (owner). P2 the owner's clock sweep; keep at >= 5 % on RENOIR. |
 | [0111](0111-the-stagger-in-flight-on-streamed-scenes-read-quiet-after-plan-0107-then-cut.md) | The stagger in flight on streamed scenes: read quiet, then cut | in progress | P1-6e done; 6e missed: a move's header flushed the carried lists; 6e' (the fix, the cap a setting) then 6f; 6a'', 6h ask the owner |
 <!-- roster:end -->
 
 ## Sequence
+
+### From 2026-11-27 (owner: "make sequence for all plans that is appropriate")
+
+Every active plan gets a slot. There are four tracks. The look track takes the GPU lock and the
+owner's windows, so it runs one plan at a time. The other three are mostly headless and run as
+one lane beside it. At most two lanes build at once, and a lane owing a quiet reading gets a
+slot with nothing else building. The numbered list from 2026-11-10 below is the history this
+replaces.
+
+1. **Look and performance (serial, M10):** Plan 0111 (in flight) → Plan 0081 (surface detail;
+   its four questions answered 2026-11-26) → Plan 0033's render half → 0034 → 0035 → 0037 → 0036 → Plan 0110
+   (approved 2026-11-27: after M10 and after Plan 0091).
+2. **World briefs beside the look track:** Plan 0033's world brief 3 starts after 0111's quiet
+   runs (Phases 2 and 3) and runs beside 0111's later phases and 0081. Its lane merges main
+   first.
+3. **Tooling (one lane):** Plan 0089 (deterministic simulation testing) → 0091 (frame profiler)
+   → 0092 (WGSL hot reload) → 0090 (pop counter), the owner's order of 2026-11-19. Plan 0090
+   does not hold Plan 0081 (its question 4, answered "no wait" by the owner 2026-11-26). The M10 light plans that land
+   after 0090 pass its ratchet.
+4. **Entities and world (one lane, alternating with tooling when two lanes already build):**
+   Plan 0082 (squash and stretch) → 0085 (variants, a held clip, an entity stamped into the
+   world); Plan 0084 (staged structures) after 0085, or beside it when only one other lane is
+   open.
+5. **The consumer's path, alone:** Plan 0071 renames across the crates, so like Plan 0087 it
+   runs when no other lane is open: in the gap after M10's last plan (0036) closes, before Plan
+   0110. Plan 0073 (the settings menu and file) follows it, beside Plan 0110.
+
+Parked: Plan 0103 (pipeline cache). Small chores (the cave's window `--pre-roll` back to `full`,
+owner 2026-11-27) go between phases on whichever lane is idle.
+
+### From 2026-11-10
 
 The order the active plans run in (owner, 2026-11-10, set at the review of every active plan;
 amended 2026-11-11: Plan 0045 moves ahead of Plan 0058 and the rest of Plan 0044).
