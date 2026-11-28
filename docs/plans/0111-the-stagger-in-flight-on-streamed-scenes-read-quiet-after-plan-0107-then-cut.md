@@ -378,6 +378,7 @@ Readings: [`logs/0111.md`](logs/0111.md).
 | 6b: the slab's frame, read in four arms | dev | done (a reading on `0c7d353b`, no code); Hold D (Plan 0107's conditions) run; deviations: D before C, D's `--report` dropped (`over_33ms` from the summary), D's full residency not reached in any run, the copy-led split over the printed lines only | 6c926800 |
 | 6c: the picks from 6b | human | done 2026-11-28 (the amendment "6c's picks": both defaults flip as one pair; ADR-0089 proposed) | 14f500ea |
 | 6d: the picked defaults, and the identity test the flip owes | dev | done; the flip restored by the architect's ruling (A/tip1 discarded as a cold launch); reading of record the warm pairs: `full residency after` +3.6 % (pair 2), +7.4 % (C); pre-roll span +3.3 / +3.7 / +8.9 %; other quiet bars met, loaded `over_33ms` 0.188; deviations in the log | fa3fe4a8 (defaults and test), 055a6148 (revert), 63bad424 (restore), committed with this row (log) |
+| 6e: the outdoor's `apply`: the write lists' count read, then coalesced | dev | count kept, merge reverted; bars missed: `apply` p99 2.600 / 2.467 (under 2.0), max 99.521 / 92.714 (under 8), `apply`-led slow frames 14 / 14 (0); the count 1 489 to 15 449 writes, 1 to 86 MB in the `apply`-led frames, calls 97.6 to 100 % of writes; at the architect; deviations in the log | 6ddf88b7 (count and merge), committed with this row (merge reverted, log) |
 | 7: the owner flies the same paths | human | not started | |
 
 ### Notes
