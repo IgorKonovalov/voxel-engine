@@ -245,15 +245,15 @@ What we should **not** do: simulate erosion or ecosystems during streaming, use 
 crates in anything the engine ships, or generate vegetation on the GPU. Each breaks a rule
 above for a look the local techniques reach.
 
-## Owner questions this raises
+## Owner questions this raised (answered 2026-11-28)
 
-1. Should the far field show vegetation and moss at all (gap 1), or is bare terrain past
-   the full-detail radius acceptable for now? The recommendation is yes: the target look's
-   distant ledges are green.
-2. Should trees in the demo move to space colonisation (gap 5) inside Plan 0115, or as their
-   own small plan after it?
-3. Is an MPL-2.0 file in `apps/` acceptable for the erosion port (gap 3), or should it be a
-   clean reimplementation from the blog post's description?
+1. Should the far field show vegetation and moss (gap 1)? **Yes.** Every generation pass
+   gets a coarse answer, by amendment to Plans 0113 and 0115 at their Fable pass.
+2. Space-colonisation trees (gap 5) inside Plan 0115 or as their own plan? **Their own
+   plan**, after 0115. Parked in the backlog until drafted.
+3. An MPL-2.0 port of the erosion filter, or a reimplementation (gap 3)? **A clean
+   reimplementation from the published description is preferred; if that proves too costly,
+   skip the filter** rather than port the MPL source.
 
 ## Sources
 

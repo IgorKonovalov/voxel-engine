@@ -27,6 +27,14 @@ From [Plan 0111](plans/done/0111-the-stagger-in-flight-on-streamed-scenes-read-q
 - **The hitch line is read at 720p only.** Phase 7's tester runs were at 1280 x 720, Phase 3's at 2560 x 1440; the line's reading on record is the 720p one, and the RENOIR is not read under the defaults.
 - **The `bake lists:` exit line holds the backlog's peak, not its frame** (the amendment "6e''s backlog bar"): a line naming the peak's frame and the frames it took to drain would turn the slab's 7 to 9 frames late from arithmetic into a reading. Pick up with the fades' rewrite, the entry below.
 
+### Vegetation and overgrowth in the far field (2026-11-28)
+
+From [the terrain and vegetation reading](references/procedural-terrain-and-vegetation.md), gap 1; the owner said yes. Plans 0113 and 0115 define their output on full-detail chunks only, so ADR-0028's clip chunks would show distant ledges as bare stone. **What it takes:** every generation pass declares a coarse answer (decoration rules on the coarse grid with a scaled reach; a canopy-density field for placements). **Pick up:** at the Fable pass on 0113 and 0115, as an amendment to each, checked against Plan 0033's seam reading.
+
+### Trees by space colonisation, leaf masses at the tips (2026-11-28)
+
+The reading's gap 5; the owner wants it as **its own plan, after Plan 0115**. A seeded builder per variant at load: attraction points in a crown shape (Runions et al. 2007), branch thickness by the pipe model, 0115's blob builder at the tips. It replaces `trees.rs`'s hash-thinned crown, the structural cause of "Sunlit tree crowns sparkle in motion". Same reading's gaps 2 (smooth integer gradient noise with derivatives), 3 (an erosion filter, a clean reimplementation from runevision's description, skipped if too costly; no MPL port) and 4 (a shared priority scatter) are candidates for the same batch. **Pick up:** when 0115's floor form merges.
+
 ### The landing fade rewrites every fading block each step for 16 frames (2026-11-28)
 
 Read at Plan 0111 Phase 6e (the amendment "6e's count"), from the code and the quiet outdoor's
