@@ -33,11 +33,16 @@ bake thread's largest producer of writes and CPU on a streamed scene with sky.
   from, so a landing is one write and the bake thread's `fades` stage goes; an ADR, since a
   double-width block (two values a record) and a fade start word are the two shapes and each
   costs pool bytes or a divergent read.
-- **The reading that sizes it:** 6e''s `bake lists:` exit line (the fades' show bytes a step
-  beside the bytes applied) on the quiet outdoor and cave.
-- **Pick up:** after Plan 0111 closes, if 6e''s raised apply cap is what keeps the drain in
-  pace with the production, or when the bake thread's step is read for the next lever ("The bake
-  thread's feed on the RTX").
+- **The reading that sizes it** (Plan 0111 Phase 6e', the quiet headless outdoor, RTX 3080
+  Laptop, `5301e227`, five runs): the fades' shows are 3.21 of the 3.61 GB the run applied
+  (89 %), 693 to 718 KB a step mean and 3 654 552 to 3 787 788 bytes in the largest step, over
+  the 2 MiB apply cap on their own; after a window move's slab lands, the 16 fade steps leave 15.5
+  to 18.3 MB waiting at the peak, so that slab's light lands 7 to 9 frames late (0.12 to 0.14 s)
+  while everything else lands the frame it arrives. The cave's figure is not read.
+- **Pick up:** after Plan 0111 closes, if the owner's Phase 7 eye reads a move's slab as late or
+  its fade as stretched, or when the bake thread's step is read for the next lever ("The bake
+  thread's feed on the RTX"): a shader fade would cut the bake thread's largest producer by the
+  figures above.
 
 ### The v0.79.1 tester archive on the owner's box: stagger in flight, no frame rate shown, a build-machine asset path (owner, 2026-11-27)
 

@@ -1370,3 +1370,81 @@ and Implementation-log row merge onto plan-0111 after 6e' lands (two appended se
    p50 is 0.75 ms today), and the light lands up to 2 s sooner. Alternative: keep 1 MiB and cut
    the production first (the fades' rewrite, a design plan with an ADR); the outdoor's 100 ms
    frames stay until it lands.
+
+## Amended 2026-11-28 (architect, 6e''s backlog bar)
+
+Read from the Phase 6e' section of [logs/0111.md](logs/0111.md) (the count and Hold A, six runs)
+and the tree at `5301e227` (`crates/svet-render/src/bake/writes.rs` `Lists::apply`,
+`bake/queue/digs.rs` `advance_fades`, `bake/link.rs`). No run was made for this ruling. The
+owner is asleep; question 6 below is restated with the reading.
+
+### The ruling: 6e' stays at `5301e227`; its missed bar was mis-set, and is restated, not re-run
+
+6e' met four bars of five on both runs: `over_100ms` 4 / 4 to 0 / 0, `apply`-led slow frames
+15 / 13 to 0 / 0, `apply` max 92.1 / 96.4 to 4.68 / 4.91 ms, `apply` p99 +0.17 / +0.20 ms against
++0.5. Beside the bars, `over_33ms` 19 / 18 to 0 / 2, the frame max 144 / 150 to 41 / 42 ms, and
+the lists carried 62 494 / 59 111 to 2 075 / 1 840. It missed "most bytes waiting under twice the
+apply cap" (4 194 304): 15 534 292 / 18 272 368, against the base's 103 405 120 / 106 925 980.
+
+The Phase 6 rule reads "a remedy that does not move its stage is reverted"; 6e' moved its stage
+by twenty times at the max and to zero at the slow count. The stricter reading 6a's ruling
+applied, a missed bar reverts, does not hold here either, and for the same reason it did not hold
+at 6a: **the phase's text was wrong, and the error is the architect's.** The same phase set the
+cap's default to twice the count's *mean* bytes a frame (759 KB, so 2 MiB) and asked the backlog
+to stay under twice the cap. Those two hold together only for a producer whose every step stays
+near its mean. The count read the producer's peak at five times it: the fades' shows alone are
+3 654 552 to 3 787 788 bytes in their largest step (mean 693 to 718 KB), over the 2 MiB cap on
+their own. A landing fades for `FADE` = 16 steps, each a `store.show` of the block, its summary
+and its parents (`advance_fades`), so a window move's slab of landings is followed by 16 steps of
+production above the cap, and what the render thread cannot drain in those steps waits: up to
+16 x (3.79 - 2.10) = 27 MB by the arithmetic, 15.5 and 18.3 MB read. The remaining peak is the
+fade's tail, which the backlog entry "The landing fade rewrites every fading block each step for
+16 frames" already parks as the production's lever (and the count puts a figure on it: the fades
+wrote 3.21 of the 3.61 GB applied, 89 %). A re-run cannot meet the bar as written at 2 MiB; a
+revert would restore 100 ms frames to redo a bar.
+
+**Attribution's standing:** the exit line holds the peak's size alone, not its frame, so "the
+peak falls in the 16 steps after a move" is read from the arithmetic and from the carried count
+(2 075 / 1 840 lists over 46 moves, about 40 to 45 a move; the tip's slow lines read `waiting`
+0), not from a trace. The close review may ask the `bake lists:` line for the peak's frame and
+the frames the backlog took to drain; that is a line in `run/queue.rs`, folded into the close's
+fix pass or Phase 7's read, not a brief.
+
+### What the remaining peak costs: the light at a move's slab lands 7 to 9 frames late
+
+A list waits, at the peak, the backlog divided by the drain: 15 534 292 / 2 097 152 = 7.4 frames
+and 18 272 368 / 2 097 152 = 8.7 frames, against the base's 98.6 and 102 frames (its "up to 2 s").
+At the quiet headless run's about 16 ms a frame (4404 frames in roughly 70 s after the pre-roll)
+that is **0.12 to 0.14 s of late light, once per move, on the slab that lands with it**, and the
+fade's later shows arrive late by the same, so a slab's fade reads as about 24 frames instead of
+16 (a guess from the arithmetic; the eye in Phase 7 decides whether it shows). Everywhere else
+the drain is ahead of the production by about 2.7 times (mean applied 0.80 MB a frame against
+the 2 MiB cap) and a list lands the frame it arrives. This is well under the owner's complaint
+("no waiting for light", 2026-11-20: a settle of about a minute), and under the fade itself.
+
+The bar, restated for 6e''s record (met on the existing reading; no re-run): **a list waits at
+most the fade's 16 frames at the backlog's peak** (most bytes waiting after an apply over the
+apply cap: 7.4 / 8.7 frames), so no show of a landing's fade lands after the frame its fade would
+have ended on. The dev copies this row into the log's bars table with the ruling, no code.
+
+### No 6e''; the production's lever stays parked
+
+A 6e'' that cut the peak would raise the cap to the step's maximum (4 MiB, so a 3.8 MB fade step
+drains in its frame), or cut the production (the backlog entry's shader fade, an ADR). The first
+is the flag `--apply-mib 4` as shipped, a setting the owner can try in Phase 7's window with no
+code; the second is a design plan after this one. Neither is a brief of this plan tonight.
+6f's order stands as "6f's order" above wrote it: 6f runs in the lane now, on 6e''s tip, and
+nothing of this ruling touches its files.
+
+### Owner question 6, restated (recommended option first)
+
+6. **The apply cap a setting at 2 MiB by default (twice the count's mean bytes a frame), so the
+   outdoor's 100 ms frames go and a landing lands the frame it arrives everywhere but a move's
+   slab, where it lands 7 to 9 frames late (0.12 to 0.14 s, inside the 16-frame fade)?**
+   Recommended: yes, as shipped at `5301e227`; the frame is the priority (owner, 2026-11-03) and
+   the cost of the cap's frames is 1.2 ms a MiB applied (`apply` p99 +0.2 ms). Alternative:
+   `--apply-mib 4` as the default, which drains the fades' largest step (3.8 MB) in its frame so
+   the slab lands with no wait, for about +2 ms of `apply` on each of a move's 16 fade frames (a
+   guess from 1.2 ms a MiB; `apply` max would read about 5 to 7 ms against the 8 ms bar, not
+   measured). The owner can read both in Phase 7's window by the flag before choosing; the
+   fades' rewrite itself stays in the backlog as the production's lever.
