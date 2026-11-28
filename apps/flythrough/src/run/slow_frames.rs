@@ -47,6 +47,9 @@ pub(crate) struct FrameStages {
     pub(crate) poll: f64,
     /// Chunks the poll inserted.
     pub(crate) chunks: u32,
+    /// Chunks the poll's events evicted and demoted (the mirror's drops).
+    pub(crate) evicted: u32,
+    pub(crate) demoted: u32,
     /// The poll's events applied to the mirror and the frame (`events`).
     pub(crate) events: f64,
     pub(crate) sync: f64,
@@ -178,7 +181,7 @@ impl FrameStages {
             |[s, minor, major]| format!("switches {s}, faults {minor} minor {major} major"),
         );
         format!(
-            "slow frame: {} at {:.1} s, wall {:.3} ms: acquire {:.3}, update {:.3}, poll {:.3} ({} chunks), events {:.3}, sync {:.3} ({}, other {:.3}; {} bricks), queue {:.3} ({laps}), prepare {:.3}, encode {:.3}, submit {:.3}, after {:.3}, present {:.3}, rest {:.3}; {counters}",
+            "slow frame: {} at {:.1} s, wall {:.3} ms: acquire {:.3}, update {:.3}, poll {:.3} ({} chunks, {} evicted, {} demoted), events {:.3}, sync {:.3} ({}, other {:.3}; {} bricks), queue {:.3} ({laps}), prepare {:.3}, encode {:.3}, submit {:.3}, after {:.3}, present {:.3}, rest {:.3}; {counters}",
             self.frame,
             self.at_s,
             self.wall,
@@ -186,6 +189,8 @@ impl FrameStages {
             self.update,
             self.poll,
             self.chunks,
+            self.evicted,
+            self.demoted,
             self.events,
             self.sync,
             parts(&SYNC_PARTS, &self.sync_parts),
@@ -562,6 +567,8 @@ mod tests {
             update: 0.25,
             poll: 1.0,
             chunks: 7,
+            evicted: 5,
+            demoted: 3,
             events: 0.25,
             sync: 16.0,
             sync_parts,
@@ -585,7 +592,7 @@ mod tests {
         assert_eq!(f.named(), 31.5);
         assert_eq!(
             f.line(),
-            "slow frame: 9 at 2.5 s, wall 40.000 ms: acquire 0.500, update 0.250, poll 1.000 (7 chunks), events 0.250, sync 16.000 (select 0.000, size 0.000, pack 0.000, place 0.000, note 0.000, copy 3.000, alloc 12.000, lock 0.000, other 1.000; 900 bricks), queue 6.000 (build 4.000, take 0.500, issue 0.500, apply 0.250 (300 writes, 2 calls, 98304 bytes; 3 lists, 1 whole; waiting 4 lists, 5000 bytes), collect 0.250, send 0.000, wait 0.000, other 0.500), prepare 2.000, encode 3.000, submit 0.500, after 1.000, present 1.000, rest 8.500; switches 2, faults 300 minor 0 major"
+            "slow frame: 9 at 2.5 s, wall 40.000 ms: acquire 0.500, update 0.250, poll 1.000 (7 chunks, 5 evicted, 3 demoted), events 0.250, sync 16.000 (select 0.000, size 0.000, pack 0.000, place 0.000, note 0.000, copy 3.000, alloc 12.000, lock 0.000, other 1.000; 900 bricks), queue 6.000 (build 4.000, take 0.500, issue 0.500, apply 0.250 (300 writes, 2 calls, 98304 bytes; 3 lists, 1 whole; waiting 4 lists, 5000 bytes), collect 0.250, send 0.000, wait 0.000, other 0.500), prepare 2.000, encode 3.000, submit 0.500, after 1.000, present 1.000, rest 8.500; switches 2, faults 300 minor 0 major"
         );
 
         // A frame of exactly 33.3 ms is not slow: no line, and only every frame's counters.

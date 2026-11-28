@@ -10,8 +10,8 @@
 //!
 //! The caller drives everything: [`Streamer::update`] takes the focus points and, when a
 //! focus chunk moved, rebuilds the job queue; [`Streamer::poll`] inserts finished chunks and
-//! performs demotions and evictions. When a single focus moves one chunk step (each axis by
-//! at most one), the queue and the sweep are updated from the shells the step moves across
+//! performs demotions and evictions, at most [`EVICT_PER_POLL`] a poll. When a single focus
+//! moves one chunk step (each axis by at most one), the queue and the sweep are updated from the shells the step moves across
 //! instead of rebuilt; the result is the rebuild's, job for job. The queue is ordered by tier (full loads and promotions
 //! first), then `d2`, then coordinate, so the nearest chunks load first and ties fall to
 //! coordinate order. A queued job whose chunk stops being wanted is dropped at the next
@@ -46,6 +46,13 @@ use crate::store::{World, read};
 use residency::{Job, Key, Refocus, ResidencyPlan};
 pub use workers::{ChunkPrep, Prepared};
 use workers::{DemoteJob, Done, Queue, Shared, SpillJob, lock, worker};
+
+/// The most evictions and demotions one [`Streamer::poll`] performs under the store's write
+/// lock, and so the most evictions its events carry from the sweep. A sweep that finds more
+/// (a focus jump, new radii) performs the first this many in the sweep's order and leaves the
+/// rest resident for the next polls: such a chunk lingers outside its band for a few polls,
+/// and nothing that reads the bands sees it.
+pub const EVICT_PER_POLL: usize = 256;
 
 /// Residency radii in chunks, and the hysteresis applied past each.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -316,11 +323,19 @@ impl Streamer {
         self.apply(world, done)
     }
 
-    /// Blocks until no job is queued or running and every result is applied; returns what
-    /// changed meanwhile. For tests and startup.
+    /// Blocks until no job is queued or running, every result is applied and no eviction or
+    /// demotion waits past [`EVICT_PER_POLL`]; returns what changed meanwhile. For tests and
+    /// startup.
     pub fn wait_idle(&mut self, world: &World) -> StreamEvents {
         let mut events = self.poll(world);
-        while !self.plan.in_flight.is_empty() || !self.spilling.is_empty() {
+        loop {
+            if self.plan.deferred() > 0 {
+                events.append(self.poll(world));
+                continue;
+            }
+            if self.plan.in_flight.is_empty() && self.spilling.is_empty() {
+                break;
+            }
             let Ok(d) = self.results.recv() else {
                 break;
             };
@@ -331,6 +346,12 @@ impl Streamer {
             events.append(self.apply(world, done));
         }
         events
+    }
+
+    /// Chunks outside their band that the last poll's sweep left resident past
+    /// [`EVICT_PER_POLL`], for the next polls.
+    pub fn deferred_removals(&self) -> usize {
+        self.plan.deferred()
     }
 
     /// Hands a chunk leaving residency to persistence if it holds edits; otherwise drops it.

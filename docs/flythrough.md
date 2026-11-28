@@ -525,7 +525,7 @@ each of the 64 slowest frames whose wall was over 33.3 ms, in frame order, then 
 summary over every such frame. A frame's wall is the span from its start to the next frame's
 (the `dt` the `frames:` line's `wall` reads), and its line splits it into that frame's own
 stages in ms: `acquire` (the window's surface acquire for the next frame; 0 headless),
-`update`, `poll` with the chunks it inserted, `events` (the poll's events applied to the mirror
+`update`, `poll` with the chunks it inserted and the chunks its events evicted and demoted, `events` (the poll's events applied to the mirror
 and the frame), `sync` with its stages (`select`, `size`, `pack`, `place` and `note` the light's
 two parts, `copy`, `alloc`, `lock`, `other`) and the bricks it packed, `queue` (the live queue's
 step on the render thread) with the bake thread's render laps (`build` to `wait`, then `other`;

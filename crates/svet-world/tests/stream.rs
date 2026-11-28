@@ -779,3 +779,54 @@ fn a_stamp_past_residency_finishes_when_the_chunk_arrives() {
     assert_eq!(world.store().coords(), whole.store().coords());
     assert_eq!(world.voxel_hash(), whole.voxel_hash());
 }
+
+/// A focus jump that puts every resident chunk past the LOD ball: radii 2 and 7 with
+/// hysteresis 1 leave `chunks_in_ball(7)` resident (at least 1 000), and a jump of 100 chunks
+/// along x puts all of them past `r_lod + h`. Poll `k` after the jump evicts
+/// `min(EVICT_PER_POLL, n - k * EVICT_PER_POLL)` of them and defers the rest, so all are gone
+/// within `ceil(n / EVICT_PER_POLL)` polls; the evictions, joined in poll order, are the sorted
+/// list the uncapped sweep gives; an evicted chunk leaves residency, a deferred one stays
+/// resident. The incremental oracle is on, so every sweep after the jump's full scan is
+/// compared with a full scan of residency, uncapped, at that poll.
+#[test]
+fn a_focus_jump_evicts_at_most_the_cap_a_poll_in_the_sweeps_order() {
+    let world = World::new(&test_table());
+    let mut s = Streamer::new(Arc::new(UniformSource(3)), config(2, 7, 1, 4));
+    s.set_incremental_oracle(true);
+    s.update(&world, &[VoxelCoord([5, 5, 5])]);
+    s.wait_idle(&world);
+    let old = ball([0, 0, 0], 49);
+    let n = old.len();
+    assert_eq!(n as u64, chunks_in_ball(7));
+    assert!(n >= 1_000, "{n} resident");
+    assert_eq!(s.deferred_removals(), 0);
+    for &c in &old {
+        assert!(s.tier(c).is_some(), "{c:?} resident before the jump");
+    }
+
+    s.update(&world, &[VoxelCoord([100 * CHUNK_EDGE + 5, 5, 5])]);
+    let polls = n.div_ceil(EVICT_PER_POLL);
+    assert_eq!(polls, 6, "{n} chunks at {EVICT_PER_POLL} a poll");
+    let (_, sweeps_before) = s.oracle_checks();
+    let mut evicted = Vec::new();
+    for k in 0..polls {
+        let ev = s.poll(&world);
+        let want = EVICT_PER_POLL.min(n - k * EVICT_PER_POLL);
+        assert_eq!(ev.evicted.len(), want, "poll {k}");
+        evicted.extend(ev.evicted);
+        assert_eq!(s.deferred_removals(), n - evicted.len(), "poll {k}");
+        for (i, &c) in old.iter().enumerate() {
+            assert_eq!(s.tier(c).is_some(), i >= evicted.len(), "poll {k}, {c:?}");
+        }
+    }
+    assert_eq!(evicted, old, "the sweep's order");
+    let (_, sweeps) = s.oracle_checks();
+    assert_eq!(
+        sweeps - sweeps_before,
+        polls as u64 - 1,
+        "every poll after the jump's full scan is checked"
+    );
+    let ev = s.wait_idle(&world);
+    assert!(ev.evicted.is_empty(), "{:?}", ev.evicted);
+    assert_eq!(s.deferred_removals(), 0);
+}

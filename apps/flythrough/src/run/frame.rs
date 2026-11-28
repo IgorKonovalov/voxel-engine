@@ -59,6 +59,8 @@ impl Run {
         if let Some(p) = self.hud.run.slow.pending.as_mut() {
             [p.update, p.poll, p.events] = [update_ms, poll_ms, apply_ms];
             p.chunks = ev.loaded.len() as u32;
+            p.evicted = ev.evicted.len() as u32;
+            p.demoted = ev.demoted.len() as u32;
             p.sync_from(sync_ms, synced.as_ref().ok());
         }
         self.hud.run.poll_ms.push(poll_ms);
