@@ -374,6 +374,29 @@ bits, the binding, the GPU lock). So 0081 before 0033 stands for the render half
    and 2b when a lane slot is free; the census's numbers (the bytes, the generation rate,
    the far forest's cost) then exist before the render half is briefed.
 
+## Amended 2026-11-28 (architect, the target look: cost per profile, the ruins, haze first)
+
+Drafted on Opus 2026-11-28 (Fable exhausted for the week); a Fable second pass reviews and fixes
+this draft after the weekly reset (owner). Awaits the owner's approval with ADR-0090. Placed
+here, ahead of the TL;DR, so it does not meet the lane's own sections.
+
+The owner's target look (2026-11-28: overgrown ruins in canyons under a very long hazy view)
+and [ADR-0090](../adrs/0090-every-look-feature-has-a-floor-form-and-a-rich-form-and-a-rich-profile-holds-its-own-budget-on-a-named-card.md)
+(proposed: a floor form and a rich form per look feature, a fifth profile, Rich, with its own
+16.6 ms on the RTX 3080 Laptop) add to the plan as it stands after the 2026-11-26 re-read:
+
+- **Cost per profile.** Portable: two levels, ending at 512 m (as the 2026-11-17 section has
+  it). Floor: three levels, about 1 km. Rich: a fourth level (about 2 km) is a candidate, a
+  setting read in Phase 8 on the RTX (frame and VRAM, against Plan 0112's "Rich forms" line)
+  and kept only if the owner's window picks it. Phase 10 writes the cost per profile table in
+  `docs/nfr/02-frame-budget.md`.
+- **The ruins demo.** Plan 0114's canyon and ruins source gains this plan's coarse path in its
+  Phase 3, after this plan's source path lands. If Plan 0114's Phases 1 to 3 have merged by
+  Phase 9, the owner's flight takes the canyon as a second scene beside the outdoor source;
+  nothing in this plan waits for it.
+- **Haze is on.** Plan 0035's aerial-perspective brief (5a) now runs before this plan's render
+  half, so Phases 7 to 9 read and fly with aerial on at its defaults and record that they did.
+
 ## TL;DR
 
 Beyond the full-detail sphere the world is drawn from three coarse levels of 20, 40 and 80 cm

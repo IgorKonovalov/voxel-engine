@@ -1034,3 +1034,30 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   shimmer (Risks).
 - A temporal filter on the shadow map, if Phase 8 sees a shadow edge shimmer (Risks).
 - Clouds in Plan 0034's water reflections, through `cloud_sky_radiance(d)`.
+
+## Amended 2026-11-28 (architect, the target look: aerial perspective first)
+
+Drafted on Opus 2026-11-28 (Fable exhausted for the week); a Fable second pass reviews and fixes this draft after the weekly reset (owner). Awaits the owner's approval with ADR-0090.
+
+The owner's target look (2026-11-28) leans on a very long view in haze, and his order is the
+cheap features first. Aerial perspective is this plan's Phase 5, under 0.1 ms on the RTX by
+the 2026-11-17 section, queued behind four cloud phases. (The backlog's entry said "an
+atmosphere term no plan carries": that was drift; this plan carries it.) Phase 5 splits:
+
+- **Brief 5a, run first, on main after Plan 0112 closes and before Plan 0033's render half:**
+  `sky_aerial.wgsl` and its volume, the composite's `media` section with the cloud and M8
+  slots named in its comment and empty, `--aerial on|off` with its toggle and banner, and
+  bars 1, 2, 5 and 6 as written; bar 4's clear-sky half (the meter equals the composite's
+  mean with aerial on); bar 3 with the far field off (the plan's own fallback). Aerial is on in
+  every profile's defaults. Files touched as Phase 5 lists them, less `clouds.wgsl`.
+- **Brief 5a-w (Owner skill: human):** a short owner look at the outdoor hills (and Plan
+  0114's canyon if merged) at Floor; done when the owner has said keep on, keep off, or a
+  strength (the Rayleigh and Mie scale) recorded in `docs/plans/logs/0035.md`.
+- **Brief 5b, in Phase 5's place after Phase 4:** cloud samples through the volume, bar 4's
+  overcast half, and bar 3 with the far field at the smallest clip radius Plan 0033 accepts.
+
+**Two forms ([ADR-0090](../adrs/0090-every-look-feature-has-a-floor-form-and-a-rich-form-and-a-rich-profile-holds-its-own-budget-on-a-named-card.md)).** Floor and Portable: the 32^3 volume. Rich (exploration in 5a, readings
+only; the window of Phase 8 picks): a height-fog density term in the same volume (altitude
+falloff, in-scattered by the sun, the canyon's mist) and 64 depth slices instead of 32. The
+clouds keep the 2026-11-17 defaults (Floor `OneInFour`); a faster update mode is the Rich
+candidate, read on the RTX in Phase 7. Phase 9 writes the cost per profile table.

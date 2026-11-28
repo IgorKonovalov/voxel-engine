@@ -905,3 +905,28 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   scene shows the gap.
 - A reference worth adding to `docs/references/`: Finch, "Effective Water Simulation from
   Physical Models", GPU Gems (2004), ch. 1; Tessendorf, "Simulating Ocean Water" (2001).
+
+## Amended 2026-11-28 (architect, the target look: two forms per profile)
+
+Drafted on Opus 2026-11-28 (Fable exhausted for the week); a Fable second pass reviews and fixes this draft after the weekly reset (owner). Awaits the owner's approval with ADR-0090.
+
+The owner's target look (2026-11-28, `docs/references/local/wbk-voxel-2026/`: a lake mirroring
+the cliffs, turquoise over the shallows) and [ADR-0090](../adrs/0090-every-look-feature-has-a-floor-form-and-a-rich-form-and-a-rich-profile-holds-its-own-budget-on-a-named-card.md) (proposed: a floor form and a rich form per
+look feature, a rich profile with its own budget on the RTX 3080 Laptop) change three things.
+
+- **The reflection's forms by profile.** Portable: `Sky`. Floor: `Sky`, or a new `Screen` arm
+  if the window picks it. Rich: `Trace` (Phase 4 as written). `Screen` reflects the
+  composite's own colour along the reflected ray in screen space at the internal resolution
+  and falls back to `sky_radiance(r)` where the ray leaves the screen or meets nothing; it is
+  an exploration arm of Phase 4 with readings (cost on both adapters, and stillness on a slow
+  pan: a screen-space reflection loses what leaves the screen, so it must pass ADR-0076's rules
+  like any other term, else Floor keeps `Sky`). `Trace` joins `RICH_FIELDS` (Plan 0112).
+- **The shallows.** Phase 2's absorption colour per liquid row is read at the shallows of Plan
+  0114's lake (if its Phase 1 has merged) at depths of 2, 5 and 20 voxels, and the window
+  (Phase 9) picks the row's colour there; the golden scene stays the plan's pond.
+- **Cost per profile.** Phase 8's readings take each reflection form at its profile (RTX at
+  Floor and Rich, RENOIR at Portable), and Phase 10 writes the cost per profile table in
+  `docs/nfr/02-frame-budget.md`; `Trace`'s Rich share is named against Plan 0112's
+  "Rich forms" line (6.0 ms, a proposal).
+
+The plan's place in the sequence is unchanged: after Plan 0033's render half.

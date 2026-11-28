@@ -253,6 +253,30 @@ this plan's files and need no GPU lock; they may run beside it (Plan 0033's re-r
    unstarted; the batch runs in the owner's order of 2026-11-26, and 0090 takes its baseline
    whenever it runs. The index row is corrected.
 
+## Amended 2026-11-28 (architect, the target look: cost per profile and what moves out)
+
+Drafted on Opus 2026-11-28 (Fable exhausted for the week); a Fable second pass reviews and fixes
+this draft after the weekly reset (owner). Awaits the owner's approval with ADR-0090. Placed
+here, ahead of the TL;DR, so it does not meet the lane's amendments of the same day.
+
+[ADR-0090](../adrs/0090-every-look-feature-has-a-floor-form-and-a-rich-form-and-a-rich-profile-holds-its-own-budget-on-a-named-card.md)
+(proposed) gives each look feature a floor form and a rich form, and a fifth profile, Rich
+(Plan 0112), with its own 16.6 ms on the RTX 3080 Laptop. For this plan:
+
+- **The forms by profile.** Portable: the layer off (Phase 1, unchanged). Floor: the arms the
+  lane's 3b stop rule allows (at most 1.0 ms over `off` on the RTX at Floor). Rich: the arms the
+  lane's 2026-11-28 rulings mark costly (the probes, more cells) become candidates for the Rich
+  profile instead of a setting no profile applies; the window (Phase 5) judges them as the rich
+  form, under the same stillness rules (ADR-0090 rule 2). Until Plan 0112 lands `Profile::Rich`,
+  the window flies the rich candidates as flags, and Plan 0112's Phase 1 lists the picks in
+  `RICH_FIELDS`. Phase 6 writes the cost per profile table in `docs/nfr/02-frame-budget.md`.
+- **Taller blades stay here.** The owner's "grass should be much longer" (after brief 3d) is
+  this plan's: the architect amendment before brief 4a owes the height range and the shell's
+  bound, as the backlog said. It does not move to Plan 0115.
+- **New element kinds move out.** Hanging vines and leaves on foliage faces are Plan 0115's
+  Phase 4 (`Hang` and `Leaf`), built on this plan's element path after it closes; flowers stay
+  this plan's `Cap` (the `meadow` preset), and Plan 0115 adds their world-voxel floor form.
+
 ## TL;DR
 
 Faces of a styled material grow a procedural layer: blades on grass, strands and glowing caps
