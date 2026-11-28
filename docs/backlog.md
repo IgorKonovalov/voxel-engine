@@ -17,6 +17,28 @@ Rules:
 
 ## Next up
 
+### The landing fade rewrites every fading block each step for 16 frames (2026-11-28)
+
+Read at Plan 0111 Phase 6e (the amendment "6e's count"), from the code and the quiet outdoor's
+own lines, no run of its own. `advance_fades` (`crates/svet-render/src/bake/queue/digs.rs`) calls
+`store.show` for every fading chunk every bake step until `FADE` = 16 frames are up: a landing is
+written 17 times (the block, its summary, its parents each time). The outdoor reads `fading` 100
+to 275 blocks a step for most of a tester run, the step's `fades` stage 1 to 3.9 ms, and of the
+order of 1 to 2 MB a step of shows at 5.4 KB a write, more than the 1 MiB a frame the render
+thread applied; the backlog this made was flushed by every window move (the plan's 6e'). It is the
+bake thread's largest producer of writes and CPU on a streamed scene with sky.
+
+- **What it would take:** a fade the shader runs from a from-and-to pair, or from the block's
+  landing word (the frame it landed in, which the shader already reads) and the value it fades
+  from, so a landing is one write and the bake thread's `fades` stage goes; an ADR, since a
+  double-width block (two values a record) and a fade start word are the two shapes and each
+  costs pool bytes or a divergent read.
+- **The reading that sizes it:** 6e''s `bake lists:` exit line (the fades' show bytes a step
+  beside the bytes applied) on the quiet outdoor and cave.
+- **Pick up:** after Plan 0111 closes, if 6e''s raised apply cap is what keeps the drain in
+  pace with the production, or when the bake thread's step is read for the next lever ("The bake
+  thread's feed on the RTX").
+
 ### The v0.79.1 tester archive on the owner's box: stagger in flight, no frame rate shown, a build-machine asset path (owner, 2026-11-27)
 
 The owner ran the released Linux archive (`svet-tester-0.79.1-linux-x86_64`, commit `1572f61f`, RTX 3080 Laptop, 2560x1440 output, FSR 2 at 1.5, floor profile, the four benchmark paths) and said: "there is quite a bit of a stagger when we were flying, and fps is unknown and hided". The report folder is kept outside the repo, in the main checkout's `live/owner-notes/2026-11-27-tester-0.79.1/`. **The box was loaded** (five to six lanes building, load1 about 15 to 45 at 13:48 to 13:51 local), so no figure here is a quiet reading.

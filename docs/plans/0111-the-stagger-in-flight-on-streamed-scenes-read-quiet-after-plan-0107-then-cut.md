@@ -1,6 +1,6 @@
 # 0111: The stagger in flight on streamed scenes: read quiet after Plan 0107, then cut
 
-> **Status:** in-progress (2026-11-28: 6d done, the flip restored by the architect's ruling (the amendment "6d's stop rule"); 6e next). Was: in-progress (2026-11-28: 6d's stop rule fired as written and its defaults are reverted; at the architect). Was: in-progress (2026-11-27: Phases 1 to 5 landed; the owner answered Phase 5's questions, all recommended; 6a next). Was: approved (2026-11-27, owner: "go, recommended": it starts after Plan 0107 merges and does not wait for Plan 0091; he takes Phase 3's window runs in a ten-minute quiet slot; if stop line 1 fires a tester README note is enough). Was: draft (2026-11-27; the owner's go on drafting: "go both"; he approves the draft
+> **Status:** in-progress (2026-11-28: 6e missed its bars; the architect's amendment "6e's count" names the cause (a window move's 1.45 MiB header rewrite, flagged as an edit, flushes every carried list) and writes 6e'; 6e' then 6f next). Was: in-progress (2026-11-28: 6d done, the flip restored by the architect's ruling (the amendment "6d's stop rule"); 6e next). Was: in-progress (2026-11-28: 6d's stop rule fired as written and its defaults are reverted; at the architect). Was: in-progress (2026-11-27: Phases 1 to 5 landed; the owner answered Phase 5's questions, all recommended; 6a next). Was: approved (2026-11-27, owner: "go, recommended": it starts after Plan 0107 merges and does not wait for Plan 0091; he takes Phase 3's window runs in a ten-minute quiet slot; if stop line 1 fires a tester README note is enough). Was: draft (2026-11-27; the owner's go on drafting: "go both"; he approves the draft
 > before any dev work). Drafted with no interview from the owner's tester report and Plan 0107's
 > Phase 1 reading; the guesses and the questions left are under "Risks & open questions", each
 > with a recommended option.
@@ -1244,3 +1244,128 @@ residency cost, which read +3 to +9 % in every warm run, on the span and on the 
    the architect ruled it an artefact and restored the flip by a new commit. Alternative:
    `workers` alone (a quarter of the frames, residency -2 %, 17 to 23 `alloc`-led frames stay;
    its loaded run was not taken, about 4 minutes).
+
+## Amended 2026-11-28 (architect, 6e's count)
+
+Read from the Phase 6e section of [logs/0111.md](logs/0111.md), the count run's own lines
+(`live/p6e/count/c1/log.txt`, outside the repo: every `slow frame:` line beside the `bake queue`
+and `bake queue step` lines printed every 60 frames) and the tree at `57796c25`
+(`crates/svet-render/src/bake/writes.rs`, `bake/store.rs`, `bake/link.rs`, `bake/summary.rs`,
+`bake/queue/step.rs`, `bake/queue/digs.rs`, `frame/bake_thread.rs`,
+`apps/flythrough/src/scene.rs`). No run was made for this ruling.
+
+### The cause: a window move's header rewrite is over the cap, and an over-cap unit flushes every list carried before it
+
+**What applies tens of MB in one frame.** `Lists::apply` (`bake/writes.rs`) applies, whatever the
+cap, every list up to and with the last list flagged `edit` (ADR-0083's rule for an edit's list).
+`ListMaker::force` gives that flag to any unit larger than the maker's cap too ("a unit larger than
+the cap sent whole as a list that is never carried", the ADR's Outcome). `Store::rewindow`
+(`bake/store.rs`) is such a unit on every window move: it writes the header, the whole chunk table
+and the whole parent table as one write, from word 3. The streamed window is a cube of 51 chunks
+(`Window::Follow { side }`, `window_side` in `apps/flythrough/src/scene.rs`): 51^3 = 132 651 table
+words, parents (27^3 + 14^3) x 11 = 246 697 words (`ParentTable::of`), 16 header words; the write
+is 379 361 words = **1 517 444 bytes, 1.45 MiB against the 1 MiB cap**, so every move's list is
+forced and flagged. The frame it reaches applies it **and every landing list waiting behind the
+cap**: that is the 9 to 86 MB. The count run's own lines say so: all 20 `slow frame:` lines with
+`apply` over 5 ms fall in a 60-frame window whose `bake queue step` line reads a `rewindow` stage
+mean of 0.014 to 0.129 ms (a move; the stage reads 0.002 to 0.003 while the window stands), and
+none of the 74 windows reading 0.002 holds one. Frames 2453 (an F frame: `poll` 0 chunks, `copy`
+4.6, `build` 2.8) and 2454 (`apply` 19.8 ms, 18 MB) are the pair seen whole; the other moves' F
+frames were under 33 ms after 6a and 6a', so only their flush printed.
+
+**Why a backlog is there to flush.** The render thread drains at most the cap a frame, and one
+list a frame once lists are over half of it (`bytes + l.bytes <= cap`). The bake thread produces
+more than that on the outdoor: `advance_fades` (`bake/queue/digs.rs`) rewrites every fading
+block whole every step for `FADE` = 16 frames (`store.show`: the block, its summary, its parents),
+and the count run's lines read `fading` 100 to 275 blocks a step for most of the run, the step's
+`fades` stage 1 to 3.9 ms. At the count's 5.4 KB a write (table words and parent records among
+them) that is of the order of 1 to 2 MB a step of shows alone, before the landings (`put` and
+`show` of each). So the lists waiting grow between moves (0.07 to 0.5 MB a frame net, from the
+flush sizes over 130-frame gaps) and the move's forced list empties them: 9 to 69 MB in one frame
+at about 1.2 ms a MB, plus the GPU's copy of it (`present` 36 to 37 ms in the three 128 to 130 ms
+frames, headless) and the staging's page faults (`faults` 727 to 1666). The 1 MiB cap sized at
+Plan 0099 from a cave reading is also why the outdoor's light lands late: a landing list waits
+up to the gap between two moves (about 2 s) before it is applied, and the flush is what bounds
+that wait today.
+
+**Why the merge could not help.** 97.6 to 100 % of the writes were calls because a fade's shows
+are one block each at scattered places; the cost is the count of writes, as Phase 5 guessed, but
+the count is the backlog's, not a list's.
+
+### The ruling: Phase 6e' amends the rule and the cap; the fades' rewrite is parked
+
+An over-cap unit is not an edit: it must land whole and in order, and nothing waits on it, so it
+applies **alone in its frame when it reaches the front**, carrying nothing before it. The drain
+must keep pace with the bake's production or the backlog returns under another name: the apply
+cap becomes a setting, its default read from the count. ADR-0083's Outcome gains a dated
+paragraph for the rule (the architect, with this amendment). The fades' 16 rewrites a landing
+are the production's lever and a design change (a fade in the shader); they go to
+[docs/backlog.md](../backlog.md) ("The landing fade rewrites every fading block each step") with
+the reading 6e' adds, not into this plan.
+
+#### Phase 6e': the over-cap unit applies alone, in order; the apply cap keeps pace
+- **Owner skill:** dev
+- **What:** (1) The count completes: the `slow frame:` line's `apply` gains the lists applied
+  (of them whole, over the maker's cap) and the lists and bytes still waiting after the apply;
+  a `bake lists:` exit line gives the run's bytes applied and their mean a frame, the most bytes
+  waiting after any apply, the lists carried (`Lists::carried`), the whole lists (count, largest
+  bytes), and the fades' show bytes a step (a stat counted in `advance_fades`). One quiet
+  headless outdoor run reads them before the fix; expected: the whole lists' count is the moves'
+  and their size 1 517 444 bytes, the waiting bytes rise between moves and fall to 0 at each.
+  (2) `WriteList` gains `whole` (a unit over the maker's cap, sent as a list of its own) beside
+  `edit`; `ListMaker::force` sets `whole`, not `edit`; `Lists::take` accepts a whole list;
+  `Lists::apply` applies the front list when nothing has been applied yet in the frame, whatever
+  its size, and the edit rule stays as written for `edit` lists alone. (3) `Lists::cap` is a
+  setting: `Frame::set_apply_cap(bytes)` beside `set_bake_depth`, the flag `--apply-mib N`
+  (1 to 16) in `cli/queue_flags.rs`, shown in the `mirror sync` banner row or its own; the
+  maker's cap stays `THREAD_LIST_CAP` (lists at most 1 MiB, several a frame). The default is the
+  smallest whole MiB at least twice the count's mean bytes a frame, at least 2 and at most 4 MiB
+  (2 MiB is the guess from the flush arithmetic; the count sets it), named in the log with the
+  mean it was read from.
+- **Files touched:** `crates/svet-render/src/bake/writes.rs` (and its tests), `bake/link.rs`
+  (the cap's doc), `bake/queue/digs.rs` and `bake/queue/stats.rs` (the fade bytes),
+  `frame/bake_thread.rs`, `frame/baked.rs`, `crates/svet-render/src/lib.rs` (the setter),
+  `apps/flythrough/src/cli/queue_flags.rs`, `cli/mod.rs`, `run/slow_frames.rs`, the exit line's
+  module, `docs/flythrough.md`, `docs/plans/logs/0111.md`.
+- **Done when:** (1) CPU tests in `bake/writes.rs`: a whole list of 1.5 x the cap taken behind
+  two landing lists under it and ahead of a third: frame 1 applies the two (`over` 0), frame 2
+  the whole list alone, frame 3 the third; `an_edit_list_is_never_carried` passes unchanged; the
+  door assertion of `a_landing_is_applied_whole_or_not_at_all` flips (a 70 KiB landing list is
+  taken, and applied alone in a frame of its own). A test on `Store::rewindow` over a 51-chunk
+  cube with a `ListMaker` at the 1 MiB cap: one list, `whole`, not `edit`, of 1 517 444 bytes
+  (the arithmetic above, defended). Each under 1 s, no GPU, no clock. (2) The quiet headless
+  outdoor at the tester's line, two runs alternated against the count binary (the base arm),
+  under "6d's stop rule"'s warm-up and cold-run rules: `over_100ms` 0 in both (the base 3 to 4);
+  slow frames whose largest stage is `apply` 0 in both (14 / 14); `apply` max under 8 ms (99.5
+  / 92.7); `apply` p99 not above the base's by more than 0.5 ms (2.47 to 2.69); the exit line's
+  most bytes waiting under twice the apply cap in both runs (the drain keeps pace). The hold is
+  one count run and four counted runs, about 9 minutes under the lock with the warm-ups.
+- **Expected cut (a guess):** the outdoor's 12 to 14 `apply`-led frames and its 3 to 4 frames
+  over 100 ms, headless; the window's 6 `apply` frames; a landing applied within a frame or two
+  of its list instead of up to 2 s later (`carried` near 0).
+- **Stop rule:** the count reads the whole lists' count 0, or the waiting bytes not falling at
+  the moves: the cause is elsewhere, stop at the reading. Or: the bars met on the backlog (most
+  waiting bytes under twice the cap) but `apply` max still over 8 ms: the per-write cost is the
+  rest, stop for the architect. The hold is projected from its first run and not started past
+  20 minutes.
+- **Beside the lanes:** yes; none of these files is a brief's of 0033 or 0081.
+
+### 6f's order
+
+6f (the sweep's evictions capped a poll) touches `crates/svet-world/src/stream/` alone and shares
+no file with 6e'; its "against 6e's tip" reads 6e''s tip. Plan 0033's streamer brief has not
+started (its lane is idle), so 6f running tonight does not run beside it, which is what the
+owner's answer 3 forbade; that brief then stacks on or follows Plan 0111's merge. **Order: 6e'
+first, 6f after it in the lane**, one brief each. If the orchestrator wants both tonight, 6f may
+start in a second worktree stacked on plan-0111 while 6e' runs, under two rules: the holds
+serialize under the perf lock (6f's castle hold waits for 6e''s outdoor), and its log section
+and Implementation-log row merge onto plan-0111 after 6e' lands (two appended sections).
+
+### Owner questions (new; each with the recommended option first)
+
+6. **The apply cap as a setting, its default raised from 1 MiB to 2 to 4 MiB by the count (the
+   brief's rule), so the bake's lists land the frame they arrive?** Recommended: yes; the cost
+   is about 1.2 ms a MiB applied in a frame that applies the cap (the quiet outdoor's `apply`
+   p50 is 0.75 ms today), and the light lands up to 2 s sooner. Alternative: keep 1 MiB and cut
+   the production first (the fades' rewrite, a design plan with an ADR); the outdoor's 100 ms
+   frames stay until it lands.
