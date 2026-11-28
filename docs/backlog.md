@@ -863,6 +863,28 @@ faded by projected size with Plan 0081's fade-band rule so it never reaches spar
 Layers 1 and 2 only recolour and sit under 0081's geometric detail. Size: layer 1 is S (one
 look spike and one window); layer 3 waits until layers 1 and 2 have been looked at.
 
+### The target look: overgrown ruins in canyons, from wbk's Vulkan voxel renderer
+
+Parked 2026-11-28 (owner: "this is what I would like this engine to be capable of in the
+future", youtube.com/watch?v=xwhiink2wzA, "INSANE Voxel Rendering!" by wbk, 4K on an RTX 5090 at
+about 130 fps; stills in `docs/references/local/wbk-voxel-2026/`, untracked). What carries it,
+most first: **overgrowth by shape** (moss on tops and ledges, foliage spilling over edges, damp
+green staining down stone), a placement rule over the world's geometry, offered as a general
+generation pass whose rules the game supplies; **foliage as dense clumps of small voxels**, not
+blades; a **very long view with aerial haze** (Plan 0033 plus an atmosphere term no plan
+carries); **water** reflecting cliffs, turquoise over shallows (Plan 0034); soft, even sky
+light. The ruins' greeble density is content (the game's), but needs fast stamping. Pick up
+at M10's planning: the architect maps each trait to a plan or a new entry, scaled to our floor.
+
+### More vegetation forms than grass blades: taller grass, vines, flowers
+
+Parked 2026-11-28 (owner, after brief 3d's window of Plan 0081: "grass should be much longer -
+now its probably single voxel, but it should be taller"; then "besides grass we should have
+some other forms of vegetation - lians, grass with flowers etc etc"). Taller blades are Plan
+0081's own (an architect amendment owed before its 4a); vines hanging down walls and ledges,
+and grass with flowers, are new element kinds on the same detail path or voxel-scale props
+placed by the overgrowth pass above. Pick up when 0081 resumes, with the architect.
+
 ### Ambient occlusion driving a per-material colour ramp
 
 Parked 2026-11-12 (owner, from the video "the voxel rendering tech nobody talks about", youtube.com/watch?v=1gxcNUUc37Y). Instead of darkening albedo by AO, AO picks a colour along a per-material ramp: snow white to cyan to deep blue in crevices, sand yellow to red, grass bright to deep green. The video's form: per material `light`/`mid`/`dark` colours plus `t_mid`/`t_high` thresholds, `mix(mix(dark, mid, smoothstep(0, t_mid, ao)), bright, smoothstep(t_high, 1, ao))`; AO is per-corner neighbour occupancy shaped by `pow(ao, 1.5)`; fixed face weights (up 1.0, down 0.1, x 0.5, z 0.9) and side faces capped at 0.7 of the ramp; each colour hue-rotated by low simplex noise over world xz for variety.
