@@ -7,7 +7,7 @@ The engine was `voxel-engine`, with crates `vxe-*`, variables `VXE_*` and the WI
 `vxe:logic`, until Plan 0087 renamed it `svet` (v0.73.0); records from before keep those names,
 and `vxe-<x>` reads as `svet-<x>`.
 
-**Next free number: 0112** (0111 the stagger in flight on streamed scenes, closed 2026-11-28; 0110 the math hot paths, measured then cut, drafted 2026-11-27 after Plan 0091; 0109 a blocked chunk is checked again when its blocker clears, closed 2026-11-27; 0108 the start-up readings, closed 2026-11-27; 0107 the mirror's slot image packed on the stream workers, closed 2026-11-27; 0106 no gate test passes by a clock, closed 2026-11-26; 0093 the README rewrite, closed 2026-11-27; 0105 the dig's flash at depth, closed 2026-11-27; 0104 the wobble anchored to the owner's eye, closed 2026-11-26; 0101 the record by rule at every opening, closed 2026-11-26; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
+**Next free number: 0116** (0112 to 0115 the target look, drafted 2026-11-28 on Opus, awaiting a Fable second pass and the owner's approval; 0111 the stagger in flight on streamed scenes, closed 2026-11-28; 0110 the math hot paths, measured then cut, drafted 2026-11-27 after Plan 0091; 0109 a blocked chunk is checked again when its blocker clears, closed 2026-11-27; 0108 the start-up readings, closed 2026-11-27; 0107 the mirror's slot image packed on the stream workers, closed 2026-11-27; 0106 no gate test passes by a clock, closed 2026-11-26; 0093 the README rewrite, closed 2026-11-27; 0105 the dig's flash at depth, closed 2026-11-27; 0104 the wobble anchored to the owner's eye, closed 2026-11-26; 0101 the record by rule at every opening, closed 2026-11-26; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
 the sky around the camera; 0098 the calm light by default, closed 2026-11-24; 0099 the bake
 step off the main thread, closed 2026-11-26; 0100 a sun fixed in the world, closed 2026-11-25; ADRs are a separate sequence, see `../adrs/README.md` for its next
 free number). Plan 0095, the motion wobble (a calm key light in motion), closed 2026-11-21,
@@ -56,9 +56,33 @@ were sized by Plan 0109 Phase 6. Plan 0093, the README rewrite with reproducible
 | [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
 | [0103](0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md) | A pipeline cache for the renderer: the driver's cache through wgpu in an engine envelope, bytes the consumer keeps | draft, parked 11-24 | ADR-0087 (proposed). Parked: the driver's cache already warms a second start (logs/0103.md). |
 | [0110](0110-the-math-hot-paths-measured-then-cut-shader-math-f16-and-the-integer-root.md) | The math hot paths, measured then cut: shader math and f16 by adapter | approved 11-27 | ADR-0088. After M10 (0033-0037) and 0091 (owner). P2 the owner's clock sweep; keep at >= 5 % on RENOIR. |
+| [0112](0112-the-rich-profile-and-the-voxels-colour-in-layers.md) | The rich profile and the voxels' colour in layers: a fifth profile with its own budget, then speckle, drift and a grain | draft 11-28 | M10, ADR-0090 (proposed). Fable pass owed. After 0081, before 0035's aerial brief. |
+| [0113](0113-overgrowth-by-shape-a-seeded-decoration-pass-over-generated-chunks.md) | Overgrowth by shape: a seeded decoration pass over generated chunks, rules the consumer supplies | draft 11-28 | M10, `svet-world`, headless. Fable pass owed. World lane, after 0114 P1-2. |
+| [0114](0114-the-ruins-demo-world-canyons-a-lake-and-overgrown-ruins-in-apps.md) | The ruins demo world: canyons, a lake and overgrown ruins, a generic scene in `apps/` | draft 11-28 | M10, apps only. Fable pass owed; owner q5 (where it lives). World lane, after 0033's world briefs. |
+| [0115](0115-vegetation-forms-clumps-vines-and-flowers-as-voxels-with-a-rich-detail-form.md) | Vegetation forms: clumps, vines and flowers as world voxels, with a rich form of sub-voxel leaves and strands | draft 11-28 | M10, ADR-0090. Fable pass owed. P1-2 after 0113 (world lane); P3-6 after 0034. |
 <!-- roster:end -->
 
 ## Sequence
+
+### From 2026-11-28 (the target look)
+
+The owner named a target look on 2026-11-28 (overgrown ruins in canyons; the backlog's entry
+is now a pointer) and wants it planned, not parked. ADR-0090 (proposed) splits each look
+feature into a floor form and a rich form and adds a Rich profile with its own budget on the
+RTX 3080 Laptop; every look plan from 0033 on states its cost per profile. The cheap features
+come first, the costly ones last with both forms. **ADR-0090, Plans 0112 to 0115 and the
+2026-11-28 amendments to 0033 to 0037 and 0081 were drafted on Opus; a Fable second pass
+reviews and fixes them after the weekly reset (owner), before any go.** This replaces tracks 1
+and 2 of the list below; tracks 3 to 5 stand.
+
+1. **Look track (serial):** Plan 0081 (in flight) → **0112** (the Rich profile, the colour
+   layers) → **0035 brief 5a** (aerial perspective, ahead of the clouds) → 0033's render half
+   → 0034 (Sky or Screen at Floor, Trace at Rich) → **0115 Phases 3 to 6** (vegetation's look)
+   → 0035's cloud phases → 0037 → 0036 → Plan 0110.
+2. **World lane beside it:** 0033's world briefs (in flight) → **0114 Phases 1 and 2** (the
+   canyon, the lake, the ruins) → **0113** (overgrowth by shape) → 0114 Phases 3 and 4 (the far
+   path, the overgrowth rules) → **0115 Phases 1 and 2** (shapes, vines, flowers) → 0114
+   Phases 5 and 6. 0114's window (Phase 7) is flown with 0115's (Phase 5).
 
 ### From 2026-11-27 (owner: "make sequence for all plans that is appropriate")
 

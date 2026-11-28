@@ -1271,3 +1271,12 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
   finds the tint alone leaves the night too bright or too flat.
 - The aurora's directional shadowing on the ground at full map resolution, if Phase 7 keeps a
   coarse mip and the owner misses it: a longer-history sky target (ADR-0027, Alternative F).
+
+## Amended 2026-11-28 (architect, cost per profile)
+
+Drafted on Opus 2026-11-28 (Fable exhausted for the week); a Fable second pass reviews and fixes this draft after the weekly reset (owner). Awaits the owner's approval with ADR-0090.
+
+Under [ADR-0090](../adrs/0090-every-look-feature-has-a-floor-form-and-a-rich-form-and-a-rich-profile-holds-its-own-budget-on-a-named-card.md) (proposed) every look plan from Plan 0033 on states a cost per profile: the form
+each profile applies (Portable, Floor and the new Rich of Plan 0112) and its reading on that
+profile's card. This plan's re-read before its go adds that table to its Budgets section and
+names which of its switches are the rich form; until then its forms are its Floor values.
