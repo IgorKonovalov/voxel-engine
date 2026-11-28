@@ -904,6 +904,42 @@ fn print_slice_line(
     );
 }
 
+/// The write lists over the run (a reading, the teardown's `bake lists:` line): the bytes
+/// applied and their mean a frame, the most bytes waiting after any frame's apply, the lists
+/// carried (summed a frame), the units over the maker's cap sent whole (count, largest), and the
+/// fades' show bytes a step (`st`, the queue's last counters). `None` when no frame applied.
+pub(crate) fn bake_lists_line(
+    a: &svet_render::ListsApplied,
+    st: Option<&svet_render::QueueStats>,
+) -> Option<String> {
+    if a.frames == 0 {
+        return None;
+    }
+    let fades = st.filter(|s| s.steps > 0).map_or_else(
+        || "fades n/a".to_owned(),
+        |s| {
+            format!(
+                "fades shown {} bytes over {} steps ({:.0} a step, most {})",
+                s.fade_bytes,
+                s.steps,
+                s.fade_bytes as f64 / s.steps as f64,
+                s.fade_bytes_max
+            )
+        },
+    );
+    Some(format!(
+        "bake lists: {} frames, {} lists, {} bytes applied ({:.0} a frame), most waiting after an apply {} bytes, carried {}, whole {} (largest {} bytes); {fades}",
+        a.frames,
+        a.lists,
+        a.bytes,
+        a.bytes as f64 / a.frames as f64,
+        a.waiting_max,
+        a.carried,
+        a.whole,
+        a.whole_max,
+    ))
+}
+
 /// The bake thread's submits on the render side (a reading, the teardown's `bake round trip:`
 /// line): the submits issued, their round trip in frames from the issue to the message that
 /// carried the read-back (p50 / p99 / max), the frames that carried a submit past them, and the

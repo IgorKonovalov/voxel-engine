@@ -58,8 +58,11 @@ pub(crate) struct FrameStages {
     /// The bake thread's render laps in the frame, when it ran one.
     pub(crate) laps: Option<[f64; 7]>,
     /// The write lists the frame's step applied: the store's writes, the `write_buffer` calls
-    /// they took and their bytes (`Frame::bake_applied_writes`' difference across the step).
-    pub(crate) applied: [u64; 3],
+    /// they took, their bytes, the lists and of them the whole ones (units over the maker's
+    /// cap; `Frame::bake_lists_applied`' difference across the step).
+    pub(crate) applied: [u64; 5],
+    /// The lists and bytes still waiting after the step's apply.
+    pub(crate) waiting: [u64; 2],
     /// The frame's start to the encode, less the stages above: the keys, the path, the audio,
     /// the HUD's rows and the frame's settings.
     pub(crate) prepare: f64,
@@ -153,14 +156,16 @@ impl FrameStages {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        let [writes, calls, bytes] = self.applied;
+        let [writes, calls, bytes, lists, whole] = self.applied;
+        let [waiting, waiting_bytes] = self.waiting;
         let laps = self.laps.map_or_else(
             || "no laps".to_owned(),
             |l| {
-                // `apply` carries the writes it applied, the calls they took and their bytes.
+                // `apply` carries the writes it applied, the calls they took, their bytes, the
+                // lists and the whole ones, and what waits after it.
                 let k = LAPS.iter().position(|n| *n == "apply").unwrap_or(LAPS.len());
                 format!(
-                    "{}, apply {:.3} ({writes} writes, {calls} calls, {bytes} bytes), {}, other {:.3}",
+                    "{}, apply {:.3} ({writes} writes, {calls} calls, {bytes} bytes; {lists} lists, {whole} whole; waiting {waiting} lists, {waiting_bytes} bytes), {}, other {:.3}",
                     parts(&LAPS[..k], &l[..k]),
                     l[k],
                     parts(&LAPS[k + 1..], &l[k + 1..]),
@@ -447,16 +452,21 @@ impl Run {
             .gfx
             .as_ref()
             .map_or(0, |g| g.frame.bake_render_laps().len());
+        let sums = |a: svet_render::ListsApplied| [a.writes, a.calls, a.bytes, a.lists, a.whole];
         let applied_before = self
             .gfx
             .as_ref()
-            .map_or([0; 3], |g| g.frame.bake_applied_writes());
+            .map_or([0; 5], |g| sums(g.frame.bake_lists_applied()));
         let t = now();
         let enc = self.step_bake_queue(gpu, enc);
         let ms = ms_since(t);
-        let applied = self.gfx.as_ref().map_or([0; 3], |g| {
-            let after = g.frame.bake_applied_writes();
-            std::array::from_fn(|k| after[k].saturating_sub(applied_before[k]))
+        let (applied, waiting) = self.gfx.as_ref().map_or(([0; 5], [0; 2]), |g| {
+            let a = g.frame.bake_lists_applied();
+            let after = sums(a);
+            (
+                std::array::from_fn(|k| after[k].saturating_sub(applied_before[k])),
+                [a.waiting_lists, a.waiting_bytes],
+            )
         });
         let laps = self.gfx.as_ref().and_then(|g| {
             let l = g.frame.bake_render_laps();
@@ -468,6 +478,7 @@ impl Run {
             p.queue = ms;
             p.laps = laps;
             p.applied = applied;
+            p.waiting = waiting;
         }
         enc
     }
@@ -557,7 +568,8 @@ mod tests {
             bricks: 900,
             queue: 6.0,
             laps: Some([4.0, 0.5, 0.5, 0.25, 0.25, 0.0, 0.0]),
-            applied: [300, 2, 98_304],
+            applied: [300, 2, 98_304, 3, 1],
+            waiting: [4, 5000],
             prepare: 2.0,
             encode: 3.0,
             submit: 0.5,
@@ -573,7 +585,7 @@ mod tests {
         assert_eq!(f.named(), 31.5);
         assert_eq!(
             f.line(),
-            "slow frame: 9 at 2.5 s, wall 40.000 ms: acquire 0.500, update 0.250, poll 1.000 (7 chunks), events 0.250, sync 16.000 (select 0.000, size 0.000, pack 0.000, place 0.000, note 0.000, copy 3.000, alloc 12.000, lock 0.000, other 1.000; 900 bricks), queue 6.000 (build 4.000, take 0.500, issue 0.500, apply 0.250 (300 writes, 2 calls, 98304 bytes), collect 0.250, send 0.000, wait 0.000, other 0.500), prepare 2.000, encode 3.000, submit 0.500, after 1.000, present 1.000, rest 8.500; switches 2, faults 300 minor 0 major"
+            "slow frame: 9 at 2.5 s, wall 40.000 ms: acquire 0.500, update 0.250, poll 1.000 (7 chunks), events 0.250, sync 16.000 (select 0.000, size 0.000, pack 0.000, place 0.000, note 0.000, copy 3.000, alloc 12.000, lock 0.000, other 1.000; 900 bricks), queue 6.000 (build 4.000, take 0.500, issue 0.500, apply 0.250 (300 writes, 2 calls, 98304 bytes; 3 lists, 1 whole; waiting 4 lists, 5000 bytes), collect 0.250, send 0.000, wait 0.000, other 0.500), prepare 2.000, encode 3.000, submit 0.500, after 1.000, present 1.000, rest 8.500; switches 2, faults 300 minor 0 major"
         );
 
         // A frame of exactly 33.3 ms is not slow: no line, and only every frame's counters.

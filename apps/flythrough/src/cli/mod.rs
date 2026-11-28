@@ -639,6 +639,9 @@ pub struct BakeArgs {
     /// (`svet_render::Frame::set_bake_depth`; default `svet_render::THREAD_DEPTH`); lockstep
     /// holds two whatever it is.
     pub(crate) depth: usize,
+    /// `--apply-mib N`: the MiB a frame applies of the bake thread's write lists at most, 1 to
+    /// 16 (`svet_render::Frame::set_apply_cap`; default `svet_render::DEFAULT_APPLY_CAP`).
+    pub(crate) apply_mib: usize,
     /// `--bake-slots N`: the live queue's table slots the bake thread's steps open jobs into,
     /// 16 to 64 (`svet_render::Frame::set_bake_slots`; default `svet_render::THREAD_SLOTS`);
     /// lockstep keeps 16 whatever it is.

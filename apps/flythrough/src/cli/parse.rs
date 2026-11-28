@@ -160,6 +160,7 @@ impl Args {
                 ring1_stretch: svet_render::DEFAULT_RING1_STRETCH,
                 thread: None,
                 depth: svet_render::THREAD_DEPTH,
+                apply_mib: svet_render::DEFAULT_APPLY_CAP >> 20,
                 slots: svet_render::THREAD_SLOTS,
                 read_missing: false,
                 pre_roll_drain: None,

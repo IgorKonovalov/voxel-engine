@@ -6,7 +6,10 @@
 //! summaries. A list holds whole units. Lists are applied in the order they were made, so a later
 //! write of a word always lands after an earlier one. An edit's list (a dig's sky-stale marks,
 //! its held and provisional blocks) is never carried: it is applied in the frame it reaches the
-//! render half, and every list made before it goes with it, whatever the frame's cap.
+//! render half, and every list made before it goes with it, whatever the frame's cap. A unit
+//! over the maker's cap (a window move's header and tables) is a list of its own, `whole`: it
+//! waits its turn like a landing's, and the frame it reaches the front applies it alone, whatever
+//! its size, carrying nothing made before it past the cap (ADR-0083).
 
 use std::collections::VecDeque;
 
@@ -42,9 +45,11 @@ pub(crate) struct WriteList {
     pub(crate) frame: u64,
     pub(crate) writes: Vec<Write>,
     pub(crate) bytes: usize,
-    /// An edit's list (or a unit over the cap sent whole): never carried; the lists made before
-    /// it are applied with it.
+    /// An edit's list: never carried; the lists made before it are applied with it.
     pub(crate) edit: bool,
+    /// A unit over the maker's cap sent as a list of its own ([`ListMaker::force`]): applied in
+    /// order, alone in a frame when it is over the frame's cap.
+    pub(crate) whole: bool,
 }
 
 impl WriteList {
@@ -84,8 +89,8 @@ pub(crate) struct ListMaker {
     /// closes the open list first, so the edit's list sits between the landings made before
     /// and after it.
     pub(crate) editing: bool,
-    /// Units over the cap the maker refused (a block larger than a frame's cap), kept for the
-    /// caller: [`ListMaker::force`] sends each as a list of its own that is never carried.
+    /// Units over the cap the maker refused (a block larger than a frame's cap, a window move's
+    /// tables), kept for the caller: [`ListMaker::force`] sends each as a list of its own.
     pub(crate) refused: Vec<Vec<Write>>,
 }
 
@@ -133,15 +138,21 @@ impl ListMaker {
     }
 
     /// Sends the refused units whole, each as a list of its own in its place in the order (the
-    /// store's books already hold them, so they cannot wait or drop): never carried.
+    /// store's books already hold them, so they cannot drop), flagged [`WriteList::whole`].
     pub(crate) fn force(&mut self) {
         for unit in std::mem::take(&mut self.refused) {
             self.close();
             self.current.bytes = unit.iter().map(|w| w.data.len()).sum::<usize>();
             self.current.writes = unit;
-            self.current.edit = true;
+            self.current.edit = false;
+            self.current.whole = true;
             self.close();
         }
+    }
+
+    /// The bytes appended so far: the lists closed, the open list and the open unit.
+    pub(crate) fn bytes(&self) -> usize {
+        self.done.iter().map(|l| l.bytes).sum::<usize>() + self.current.bytes + self.unit_bytes
     }
 
     fn close(&mut self) {
@@ -154,7 +165,7 @@ impl ListMaker {
     }
 
     /// The step's lists in the order made: the landings before an edit, the edit's (flagged),
-    /// the landings after.
+    /// the landings after, a whole unit's in its place.
     pub(crate) fn finish(&mut self) -> Vec<WriteList> {
         // An unsealed unit is a caller's slip; it is sealed whole here rather than lost.
         if self.seal().is_err() {
@@ -173,56 +184,57 @@ pub(crate) struct Lists {
     /// Bytes a frame applies at most; `None` applies every list the frame it arrives.
     pub(crate) cap: Option<usize>,
     pub(crate) waiting: VecDeque<WriteList>,
-    /// Lists applied in a later frame than the first they could have been.
-    pub(crate) carried: u64,
     /// The bytes the last [`Lists::apply`] applied over its cap: an edit's list and the lists
-    /// made before it go whatever the cap (0 within it).
+    /// made before it go whatever the cap, and so does a front list over it applied alone (0
+    /// within it).
     pub(crate) over: usize,
     /// The landing words written that the bake half's copy may not hold yet, by chunk: the word,
     /// and the message's frame that carried it to the bake half (`None`: not sent yet).
     pub(crate) unconfirmed: std::collections::HashMap<[i32; 3], (u32, Option<u64>)>,
     /// The newest message's frame a list applied so far was made from ([`WriteList::frame`]).
     pub(crate) newest: u64,
-    /// Every [`Lists::apply`] so far, summed: the store's writes applied, the applier's calls
-    /// made for them and their bytes (a reading; the caller takes a frame's share as the
-    /// difference across its call).
-    pub(crate) applied: Applied,
+    /// Every [`Lists::apply`] so far, summed, and what waits after the last (a reading; the
+    /// caller takes a frame's share of the sums as the difference across its call).
+    pub(crate) applied: ListsApplied,
 }
 
-/// The writes [`Lists::apply`] applied, summed over its calls.
+/// The write lists [`Lists::apply`] applied, summed over its calls, and the lists waiting after
+/// the last call (a reading, `Frame::bake_lists_applied`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Applied {
+pub struct ListsApplied {
     /// The store's writes, one a block, table word or summary.
-    pub(crate) writes: u64,
+    pub writes: u64,
     /// The applier's calls (`queue.write_buffer` in the frame) they were applied in.
-    pub(crate) calls: u64,
-    pub(crate) bytes: u64,
+    pub calls: u64,
+    pub bytes: u64,
+    /// The lists applied, and of them the units over the maker's cap sent whole, and the
+    /// largest of those in bytes.
+    pub lists: u64,
+    pub whole: u64,
+    pub whole_max: u64,
+    /// The calls to [`Lists::apply`]: one a frame with the bake thread on.
+    pub frames: u64,
+    /// Lists applied in a later frame than the first they could have been, summed a frame
+    /// (a list waiting three frames counts three).
+    pub carried: u64,
+    /// The lists and bytes waiting after the last call, and the most bytes waiting after any.
+    pub waiting_lists: u64,
+    pub waiting_bytes: u64,
+    pub waiting_max: u64,
 }
 
 impl Lists {
-    /// Takes a step's lists, in the order given. A landing list over the cap is refused at its
-    /// making, never split.
-    pub(crate) fn take(&mut self, lists: Vec<WriteList>) -> Result<(), OverCap> {
-        for l in lists {
-            if let Some(cap) = self.cap
-                && !l.edit
-                && l.bytes > cap
-            {
-                return Err(OverCap {
-                    bytes: l.bytes,
-                    cap,
-                });
-            }
-            self.waiting.push_back(l);
-        }
-        Ok(())
+    /// Takes a step's lists, in the order given, whatever their size: a list over the frame's cap
+    /// (a whole unit's, or any list under a cap set below the maker's) applies alone in a frame.
+    pub(crate) fn take(&mut self, lists: Vec<WriteList>) {
+        self.waiting.extend(lists);
     }
 
     /// Applies whole lists in order: every list up to and with the last edit's list waiting,
-    /// whatever the cap, then landing lists while the next fits in what the cap leaves. `frame`
-    /// is the frame applying them: a first block's landing word reads `frame + 1`. Returns the
-    /// bytes applied and the landing words written, by chunk; [`Lists::over`] reads the bytes
-    /// past the cap.
+    /// whatever the cap; then the front list, whatever its size, when the frame has applied none;
+    /// then lists while the next fits in what the cap leaves. `frame` is the frame applying them:
+    /// a first block's landing word reads `frame + 1`. Returns the bytes applied and the landing
+    /// words written, by chunk; [`Lists::over`] reads the bytes past the cap.
     pub(crate) fn apply(
         &mut self,
         frame: u64,
@@ -236,24 +248,37 @@ impl Lists {
             .iter()
             .rposition(|l| l.edit)
             .map_or(0, |k| k + 1);
+        let mut first = true;
         while let Some(l) = self.waiting.front() {
-            let fits = forced > 0 || self.cap.is_none_or(|cap| bytes + l.bytes <= cap);
+            let fits = forced > 0 || first || self.cap.is_none_or(|cap| bytes + l.bytes <= cap);
             if !fits {
                 break;
             }
             forced = forced.saturating_sub(1);
+            first = false;
             let l = self.waiting.pop_front().expect("front above");
             bytes += l.bytes;
             self.newest = self.newest.max(l.frame);
             // The bake half had read the words sent up to the list's message.
             self.unconfirmed
                 .retain(|_, (_, sent)| sent.is_none_or(|f| f > l.frame));
-            self.applied.writes += l.writes.len() as u64;
-            self.applied.bytes += l.bytes as u64;
-            self.applied.calls += apply_list(l, frame, out, &mut landed, &mut self.unconfirmed);
+            let a = &mut self.applied;
+            a.writes += l.writes.len() as u64;
+            a.bytes += l.bytes as u64;
+            a.lists += 1;
+            if l.whole {
+                a.whole += 1;
+                a.whole_max = a.whole_max.max(l.bytes as u64);
+            }
+            a.calls += apply_list(l, frame, out, &mut landed, &mut self.unconfirmed);
         }
         self.over = self.cap.map_or(0, |cap| bytes.saturating_sub(cap));
-        self.carried += self.waiting.len() as u64;
+        let a = &mut self.applied;
+        a.frames += 1;
+        a.carried += self.waiting.len() as u64;
+        a.waiting_lists = self.waiting.len() as u64;
+        a.waiting_bytes = self.waiting.iter().map(|l| l.bytes as u64).sum();
+        a.waiting_max = a.waiting_max.max(a.waiting_bytes);
         (bytes, landed)
     }
 
@@ -355,7 +380,9 @@ mod tests {
 
     /// Done when (1) of Plan 0099 Phase 2: three lists of about 40 KiB under a 64 KiB cap apply
     /// one a frame over three frames, in order; no frame holds a block's words without its
-    /// table word; a single list over the cap is refused at its making, not split.
+    /// table word; a single unit over the cap is refused at its making, not split. A list over
+    /// the frame's cap is taken at the render half's door and applied alone, in a frame of its
+    /// own.
     #[test]
     fn a_landing_is_applied_whole_or_not_at_all() {
         const KIB: usize = 1024;
@@ -372,7 +399,7 @@ mod tests {
             cap: Some(cap),
             ..Lists::default()
         };
-        q.take(lists).expect("each under the cap");
+        q.take(lists);
         let mut rec = Recorder::default();
         for frame in 1..=4 {
             rec.frame = frame;
@@ -410,14 +437,114 @@ mod tests {
             })
         );
         assert!(m.finish().is_empty());
-        // And a list over the cap is refused at the render half's door.
-        let big = WriteList {
+        // A 70 KiB landing list is taken at the render half's door; it applies alone in frame
+        // 5, 6 KiB over the cap, and the 10 KiB list behind it waits to frame 6.
+        let list = |offset: u64, bytes: usize| WriteList {
             frame: 3,
-            writes: vec![],
-            bytes: 70 * KIB,
+            writes: vec![Write {
+                offset,
+                data: vec![0; bytes],
+                kind: 0,
+                landing: None,
+            }],
+            bytes,
             edit: false,
+            whole: false,
         };
-        assert!(q.take(vec![big]).is_err());
+        q.take(vec![list(500_000, 70 * KIB), list(600_000, 10 * KIB)]);
+        rec.frame = 5;
+        let (bytes, _) = q.apply(5, &mut rec);
+        assert_eq!((bytes, q.over, q.waiting.len()), (70 * KIB, 6 * KIB, 1));
+        rec.frame = 6;
+        let (bytes, _) = q.apply(6, &mut rec);
+        assert_eq!((bytes, q.over, q.waiting.len()), (10 * KIB, 0, 0));
+        assert_eq!(
+            rec.log[6..],
+            [(5, 500_000, 70 * KIB), (6, 600_000, 10 * KIB)]
+        );
+    }
+
+    /// Done when (1) of Plan 0111 Phase 6e': a whole list of 1.5 times the cap, taken behind two
+    /// landing lists under it and ahead of a third: frame 1 applies the two (none over the
+    /// cap), frame 2 the whole list alone, frame 3 the third. The reading counts the lists, the
+    /// whole one, the bytes waiting after each frame and the lists carried.
+    #[test]
+    fn a_whole_list_over_the_cap_applies_alone_in_its_turn() {
+        let cap = 1000;
+        let block = |offset: u64, bytes: usize| words_at(offset, &vec![7; bytes / 4], 0);
+        let mut m = ListMaker::new(Some(cap), 4);
+        for (at, bytes) in [(10_000, 400), (20_000, 400)] {
+            m.push(block(at, bytes));
+            m.seal().expect("under the cap");
+        }
+        m.push(block(30_000, 1500));
+        assert_eq!(m.seal(), Err(OverCap { bytes: 1500, cap }));
+        m.force();
+        m.push(block(40_000, 400));
+        m.seal().expect("under the cap");
+        let lists = m.finish();
+        let shape: Vec<(bool, bool, usize)> =
+            lists.iter().map(|l| (l.edit, l.whole, l.bytes)).collect();
+        assert_eq!(
+            shape,
+            [
+                (false, false, 800),
+                (false, true, 1500),
+                (false, false, 400)
+            ],
+            "the two landings share a list; the whole unit is its own, not an edit's"
+        );
+        // Lists as the render half takes them: the landings one a list.
+        let mut q = Lists {
+            cap: Some(cap),
+            ..Lists::default()
+        };
+        let mut split = lists.into_iter();
+        let first = split.next().expect("the landings' list");
+        for w in first.writes {
+            q.take(vec![WriteList {
+                frame: 4,
+                bytes: w.data.len(),
+                writes: vec![w],
+                edit: false,
+                whole: false,
+            }]);
+        }
+        q.take(split.collect());
+        let mut rec = Recorder::default();
+        let mut frames = Vec::new();
+        for frame in 1..=3 {
+            rec.frame = frame;
+            let (bytes, _) = q.apply(frame, &mut rec);
+            frames.push((bytes, q.over, q.applied.waiting_bytes));
+        }
+        assert_eq!(
+            frames,
+            [(800, 0, 1900), (1500, 500, 400), (400, 0, 0)],
+            "(bytes applied, over the cap, waiting) by frame"
+        );
+        assert_eq!(
+            rec.log,
+            [
+                (1, 10_000, 400),
+                (1, 20_000, 400),
+                (2, 30_000, 1500),
+                (3, 40_000, 400)
+            ]
+        );
+        let a = q.applied;
+        assert_eq!(
+            (
+                a.lists,
+                a.whole,
+                a.whole_max,
+                a.frames,
+                a.carried,
+                a.waiting_max
+            ),
+            (4, 1, 1500, 3, 3, 1900),
+            "two waiting after frame 1 and one after frame 2 make 3 carried"
+        );
     }
 
     /// Done when (9) of Plan 0099 Phase 2: a first block whose list was made at frame 5 and
@@ -442,7 +569,7 @@ mod tests {
         });
         m.seal().expect("no cap");
         let mut q = Lists::default();
-        q.take(m.finish()).expect("no cap");
+        q.take(m.finish());
         struct Words(Vec<u32>);
         impl Applier for Words {
             fn write(&mut self, _offset: u64, data: &[u8], _kind: usize) {
@@ -467,7 +594,7 @@ mod tests {
             landing: None,
         });
         m.seal().expect("no cap");
-        q.take(m.finish()).expect("no cap");
+        q.take(m.finish());
         let (_, landed) = q.apply(9, &mut w);
         assert_eq!(w.0[2], 8);
         assert!(landed.is_empty());
@@ -522,6 +649,7 @@ mod tests {
             writes: vec![],
             bytes,
             edit,
+            whole: false,
         }
     }
 
@@ -534,10 +662,8 @@ mod tests {
             cap: Some(cap),
             ..Lists::default()
         };
-        q.take(vec![sized(1, 80, false), sized(1, 80, false)])
-            .expect("under");
-        q.take(vec![sized(2, 500, true), sized(2, 80, false)])
-            .expect("an edit's is never refused");
+        q.take(vec![sized(1, 80, false), sized(1, 80, false)]);
+        q.take(vec![sized(2, 500, true), sized(2, 80, false)]);
         let mut rec = Recorder::default();
         let (bytes, _) = q.apply(2, &mut rec);
         assert_eq!(bytes, 660, "the two landings ahead and the edit's 500");
@@ -565,10 +691,8 @@ mod tests {
             cap: Some(68),
             ..Lists::default()
         };
-        q.take(made(5, false, vec![words_at(P, &shown, 0)]))
-            .expect("under");
-        q.take(made(6, true, vec![words_at(P, &held, 0)]))
-            .expect("an edit's");
+        q.take(made(5, false, vec![words_at(P, &shown, 0)]));
+        q.take(made(6, true, vec![words_at(P, &held, 0)]));
         let mut pool = Pool::default();
         q.apply(7, &mut pool);
         assert!(q.waiting.is_empty(), "both in the edit's frame");
@@ -586,14 +710,12 @@ mod tests {
             5,
             false,
             vec![words_at(P, &shown, 0), words_at(TABLE, &[p_word], 1)],
-        ))
-        .expect("under");
+        ));
         q.take(made(
             6,
             true,
             vec![words_at(Q, &held, 0), words_at(TABLE, &[q_word], 1)],
-        ))
-        .expect("an edit's");
+        ));
         let mut pool = Pool::default();
         q.apply(7, &mut pool);
         assert!(q.waiting.is_empty());
@@ -607,11 +729,10 @@ mod tests {
             ..Lists::default()
         };
         let landing = (2 * MIB - 512) / 4;
-        q.take((0..4).map(|_| sized(5, landing, false)).collect())
-            .expect("each under the cap");
-        q.take(vec![sized(6, 512, true)]).expect("an edit's");
-        q.take(vec![sized(7, 100, false)]).expect("under");
-        q.take(vec![sized(8, 100, false)]).expect("under");
+        q.take((0..4).map(|_| sized(5, landing, false)).collect());
+        q.take(vec![sized(6, 512, true)]);
+        q.take(vec![sized(7, 100, false)]);
+        q.take(vec![sized(8, 100, false)]);
         let mut rec = Recorder::default();
         let (bytes, _) = q.apply(8, &mut rec);
         assert_eq!(bytes, 2 * MIB, "every list up to and with the edit's");
@@ -641,22 +762,38 @@ mod tests {
         assert!(m.seal().is_err(), "512 bytes over the 256 cap");
         m.force();
         let lists = m.finish();
-        let shape: Vec<(bool, usize)> = lists.iter().map(|l| (l.edit, l.bytes)).collect();
+        let shape: Vec<(bool, bool, usize)> =
+            lists.iter().map(|l| (l.edit, l.whole, l.bytes)).collect();
         assert_eq!(
             shape,
-            [(false, 4), (true, 36), (false, 32), (true, 512)],
-            "the order made, the unit over the cap whole and never carried"
+            [
+                (false, false, 4),
+                (true, false, 36),
+                (false, false, 32),
+                (false, true, 512)
+            ],
+            "the order made, the unit over the cap whole in its place"
         );
         let mut q = Lists {
             cap: Some(256),
             ..Lists::default()
         };
-        q.take(lists).expect("the landings under the cap");
+        q.take(lists);
         let mut pool = Pool::default();
         let (bytes, _) = q.apply(3, &mut pool);
-        assert_eq!(bytes, 584);
+        assert_eq!(
+            bytes, 72,
+            "up to the edit's, and the landing after it under the cap"
+        );
         assert_eq!(pool.word(TABLE), 2, "the edit's word over the earlier one");
         assert_eq!(pool.word(2048), 3);
+        let (bytes, _) = q.apply(4, &mut pool);
+        assert_eq!(
+            (bytes, q.over),
+            (512, 256),
+            "the whole unit alone the next frame"
+        );
+        assert_eq!(pool.word(4096), 4);
     }
 
     /// Done when (9) of Plan 0099 Phase 3a: a first block's list made from message 5 and a
@@ -694,8 +831,8 @@ mod tests {
         };
         // Made from message 5 (the first block, the bake half's guess 6) and 6 (the fade's
         // show, the copy's word still 6).
-        q.take(list(5, block(6, true))).expect("under");
-        q.take(list(6, block(6, false))).expect("under");
+        q.take(list(5, block(6, true)));
+        q.take(list(6, block(6, false)));
         let mut pool = Pool::default();
         // Frame 8 applies the first; the frame cap lets the second wait to frame 9.
         q.cap = Some(12);
@@ -709,11 +846,11 @@ mod tests {
         assert!(landed.is_empty());
         assert_eq!(word(&pool), 9, "after frame 9");
         // A list made from message 10 read the word: what it carries is written as made.
-        q.take(list(10, block(9, false))).expect("under");
+        q.take(list(10, block(9, false)));
         q.apply(10, &mut pool);
         assert_eq!(word(&pool), 9);
         assert!(q.unconfirmed.is_empty(), "the word is the bake half's");
-        q.take(list(11, block(3, false))).expect("under");
+        q.take(list(11, block(3, false)));
         q.apply(11, &mut pool);
         assert_eq!(word(&pool), 3, "a later list's word is the bake half's own");
     }

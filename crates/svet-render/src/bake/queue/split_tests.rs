@@ -175,9 +175,7 @@ impl RenderHalf for Half {
     }
     fn apply(&mut self, lists: Vec<WriteList>, frame: u64) -> Vec<([i32; 3], u32)> {
         self.named.extend(lists.iter().map(|l| l.frame));
-        self.lists
-            .take(lists)
-            .expect("no landing list over the cap");
+        self.lists.take(lists);
         let mut out = Recorder {
             out: &mut self.applied,
             pool: None,
@@ -486,6 +484,7 @@ fn a_dig_is_served_whole_in_the_edits_step() {
         }],
         bytes: 40 << 10,
         edit: false,
+        whole: false,
     };
     rig.half.lists.waiting.extend([landing(901), landing(902)]);
     let before: BTreeMap<[i32; 3], Vec<u32>> = rig.store.words.clone();

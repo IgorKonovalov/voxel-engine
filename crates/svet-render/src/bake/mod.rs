@@ -82,6 +82,7 @@ pub use self::held::{HeldBase, HeldPart, RadianceFrom};
 pub(crate) use self::issue::*;
 pub use self::job::*;
 pub(crate) use self::job_loop::*;
+pub use self::link::DEFAULT_APPLY_CAP;
 pub(crate) use self::link::*;
 pub use self::order::*;
 pub use self::pipeline::*;
@@ -92,6 +93,7 @@ pub(crate) use self::seal::{SharedShells, Shell, Verdict};
 pub use self::stages::*;
 pub use self::store::*;
 pub use self::summary::*;
+pub use self::writes::ListsApplied;
 pub(crate) use self::writes::*;
 
 /// One face after its bake.

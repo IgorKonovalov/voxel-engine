@@ -277,6 +277,12 @@ pub fn mirror_sync_row(t: Option<std::time::Duration>) -> String {
     }
 }
 
+/// The bake thread's apply cap in the start-up banner (`--apply-mib`):
+/// `bake apply 2 MiB a frame`.
+pub fn bake_apply_row(mib: usize) -> String {
+    format!("bake apply {mib} MiB a frame")
+}
+
 impl HudRow {
     pub const ALL: [Self; 8] = [
         Self::Look,

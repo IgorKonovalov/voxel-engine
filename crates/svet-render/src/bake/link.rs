@@ -17,8 +17,15 @@ use std::collections::VecDeque;
 /// waits when it is full).
 pub(crate) const OUTBOX_BYTES: usize = 8 << 20;
 
-/// The bytes a frame applies at most with the bake thread on ([`Lists::cap`]).
+/// The bytes of a write list the bake thread makes at most ([`ListMaker::cap`]): a unit over it
+/// goes as a list of its own ([`WriteList::whole`]). Several lists apply in a frame under the
+/// frame's cap ([`DEFAULT_APPLY_CAP`]).
 pub(crate) const THREAD_LIST_CAP: usize = 1 << 20;
+
+/// The bytes a frame applies at most with the bake thread on, by default ([`Lists::cap`],
+/// `Frame::set_apply_cap`). The drain must keep pace with what the bake thread lists, or the
+/// lists wait frames behind the cap; a front list over it applies alone.
+pub const DEFAULT_APPLY_CAP: usize = 2 << 20;
 
 /// One render-half call the bake half made, in order.
 pub(crate) enum Op {
@@ -802,8 +809,7 @@ pub(crate) fn render_frame(
         if made.is_empty() {
             all_empty = Some(taken.frames[step]);
         }
-        let ok = lists.take(made);
-        debug_assert!(ok.is_ok(), "a write list over the frame's cap");
+        lists.take(made);
     }
     link.issued_now = replay_a_frame(&mut link.carried, ops, half, link.timer.as_ref(), dig);
     for _ in 0..link.issued_now {

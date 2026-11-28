@@ -122,6 +122,8 @@ pub(super) struct BakeLink {
     pub(super) last_apply: (f64, usize),
     /// The bake thread's depth in flight ([`Frame::set_bake_depth`]).
     pub(super) thread_depth: usize,
+    /// The bytes a frame applies at most with the bake thread on ([`Frame::set_apply_cap`]).
+    pub(super) apply_cap: usize,
     /// The table slots the bake thread's steps open jobs into ([`Frame::set_bake_slots`]).
     pub(super) thread_slots: usize,
     /// The listing pool's threads at the bake thread's start ([`Frame::set_bake_listers`]).
@@ -190,6 +192,7 @@ impl BakeLink {
             last_issue: (0.0, 0),
             last_apply: (0.0, 0),
             thread_depth: crate::THREAD_DEPTH,
+            apply_cap: crate::DEFAULT_APPLY_CAP,
             thread_slots: crate::THREAD_SLOTS,
             thread_listers: crate::ThreadPlan::here(None).listers,
             round_trip: Default::default(),
@@ -304,7 +307,10 @@ impl Frame {
     ) {
         // The old queue's books and what its thread made are dropped with it.
         self.join_bake(None);
+        // The reading's sums run over the frame's life, across the queue's starts.
+        let applied = self.baked.lists.applied;
         self.baked.lists = crate::bake::Lists::default();
+        self.baked.lists.applied = applied;
         self.baked.unissued.clear();
         self.baked.leftover = None;
         self.baked.failed = None;

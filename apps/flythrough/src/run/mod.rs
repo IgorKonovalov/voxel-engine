@@ -562,6 +562,11 @@ impl Drop for Run {
             if let Some(line) = queue::round_trip_line(&g.frame.bake_round_trip()) {
                 println!("frames: {line}");
             }
+            if let Some(line) =
+                queue::bake_lists_line(&g.frame.bake_lists_applied(), self.queue.stats.as_ref())
+            {
+                println!("frames: {line}");
+            }
         }
         if let Some(line) = self.hud.run.line() {
             println!("{line}");

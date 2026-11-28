@@ -76,6 +76,20 @@ pub(super) fn queue_flags() -> Vec<Flag<Parsing>> {
             },
         ),
         Flag::value(
+            &["--apply-mib"],
+            "N",
+            "the MiB a frame applies of the bake thread's write lists at most, 1 to 16",
+            |p: &mut Parsing, v| {
+                p.args.bake.apply_mib = v
+                    .text
+                    .parse()
+                    .ok()
+                    .filter(|d| (1..=16).contains(d))
+                    .ok_or_else(|| v.takes("1 to 16"))?;
+                Ok(())
+            },
+        ),
+        Flag::value(
             &["--bake-slots"],
             "N",
             "the bake thread's table slots, 16 to 64",

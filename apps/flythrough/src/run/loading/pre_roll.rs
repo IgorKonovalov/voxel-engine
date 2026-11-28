@@ -51,6 +51,8 @@ impl Run {
         frame.share_bake_world(self.world.clone());
         frame.set_bake_thread(&gpu.queue, self.args.bake_thread());
         frame.set_bake_depth(self.args.bake.depth);
+        frame.set_apply_cap(self.args.bake.apply_mib << 20);
+        println!("{}", crate::hud::bake_apply_row(self.args.bake.apply_mib));
         frame.set_bake_slots(self.args.bake.slots);
         let threads = svet_render::ThreadPlan::here(self.args.workers);
         frame.set_bake_listers(threads.listers);

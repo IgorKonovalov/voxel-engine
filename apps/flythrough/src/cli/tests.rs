@@ -13,6 +13,7 @@ use crate::test_support::argv;
 use crate::{LogicChoice, LookPreset, RESIDENCY};
 use svet_app::Pacing;
 use svet_render::UpscalerKind;
+mod apply;
 mod exposure;
 mod mirror_pack;
 mod outdoor;
