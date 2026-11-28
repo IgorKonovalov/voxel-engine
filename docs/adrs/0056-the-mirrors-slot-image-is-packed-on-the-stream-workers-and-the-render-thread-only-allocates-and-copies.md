@@ -135,9 +135,17 @@ with no path found from the image to the cost and no second run; the stand-in's 
 full residency 5.6 % later. Neither is attributed.
 
 The decision is not superseded: the mechanism works and its bytes are proven equal. A flip of
-the default is [Plan 0111](../plans/0111-the-stagger-in-flight-on-streamed-scenes-read-quiet-after-plan-0107-then-cut.md)'s
+the default is [Plan 0111](../plans/done/0111-the-stagger-in-flight-on-streamed-scenes-read-quiet-after-plan-0107-then-cut.md)'s
 to propose, on three conditions (Plan 0107's amendment of 2026-11-27): its quiet tables show
 fewer frames over 33.3 ms under `Workers`; the stand-in's fresh forest re-read in two
 alternated pairs does not follow the arm on the GPU; the stand-in's full residency is not
 later by more than 10 %. The `alloc` stage's candidates (LOD records from the workers, the
 per-record work, a run a bin in place of the per-brick walk) are that plan's to read first.
+
+**2026-11-28 (Plan 0111's close):** the default flipped. Plan 0111 Phase 6b read the three
+conditions above (fewer frames over 33.3 ms under `Workers`, 33 / 37 against 141 / 150; the
+stand-in's `march GPU` p50 not following the arm; full residency reached in no stand-in run,
+read on the fill at 5 s and 15 s, the owner's answer), and Phase 6d made `Packing::Workers` the
+default of `Packing` and `MirrorConfig::new`, paired with a 6 ms sync budget in the fly-through:
+[ADR-0089](0089-the-streamed-mirrors-sync-takes-a-6-ms-budget-a-frame-on-top-of-the-workers-slot-image.md),
+which supersedes this record's rejection of Alternative A. This record's Decision stands.

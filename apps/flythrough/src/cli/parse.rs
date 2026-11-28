@@ -13,7 +13,7 @@ use crate::outdoor::Spawn;
 use crate::path::{PATH_SEED, PathMode, Scene};
 use crate::setup::CrispRows;
 use crate::showcase::SHOTS;
-use crate::streaming::SYNC_BUDGET_MIB;
+use crate::streaming::{SYNC_BUDGET_MIB, SYNC_MS};
 use crate::trees::{LEAF_FILL, TreeDensity};
 use crate::{LogicChoice, LookPreset, RESIDENCY};
 use svet_app::Pacing;
@@ -84,9 +84,9 @@ impl Args {
             structures_dir: None,
             library: false,
             sync_budget: SYNC_BUDGET_MIB << 20,
-            sync_time: None,
+            sync_time: Some(std::time::Duration::from_millis(SYNC_MS)),
             workers: None,
-            mirror_pack: svet_render::Packing::Inline,
+            mirror_pack: svet_render::Packing::Workers,
             mirror_budget: None,
             residency: RESIDENCY,
             hud: false,
@@ -160,6 +160,7 @@ impl Args {
                 ring1_stretch: svet_render::DEFAULT_RING1_STRETCH,
                 thread: None,
                 depth: svet_render::THREAD_DEPTH,
+                apply_mib: svet_render::DEFAULT_APPLY_CAP >> 20,
                 slots: svet_render::THREAD_SLOTS,
                 read_missing: false,
                 pre_roll_drain: None,

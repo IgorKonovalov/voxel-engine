@@ -281,3 +281,15 @@ What it falsified or changed:
 
 The flash the owner sees when digging deeper than 2 to 3 m is the same with the thread off, by
 his word; it is not this decision's and goes to Plan 0105.
+
+**2026-11-28, at Plan 0111 Phase 6e (the amendment "6e's count").** The Outcome's rule "a unit
+larger than the cap sent whole as a list that is never carried" gave such a unit the edit's flag,
+and with it the edit's clause: the frame it reached applied every list made before it, whatever
+the cap. On a streamed window of 51 chunks the store's header rewrite at every window move is one
+such unit (1 517 444 bytes against the 1 MiB cap), so every move flushed the landing lists the cap
+had carried: 9 to 86 MB in one frame on the quiet outdoor, 12 to 100 ms of `apply`, the path's 3
+to 4 frames over 100 ms a run. Plan 0111's Phase 6e' amends the rule: **a unit over the cap is
+whole, not an edit; it applies alone in its frame when it reaches the front, in order, carrying
+nothing before it; an edit's list keeps its clause.** The same reading showed the 1 MiB cap under
+the bake's production on the outdoor (the fades' rewrites), so the lists waited up to the gap
+between moves: the apply cap becomes a setting whose default that phase reads from the count.

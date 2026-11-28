@@ -66,9 +66,29 @@ pub trait App {
         let _ = input;
     }
 
+    /// Called before every [`frame`](Self::frame) with the shell's own spans since the frame
+    /// before ([`ShellTimes`]), which lie inside that frame's `dt`. The default does nothing.
+    fn shell_times(&mut self, times: ShellTimes) {
+        let _ = times;
+    }
+
     /// Draws one frame into `surface` and submits the work; the shell presents afterwards.
     /// `dt` is the time since the previous frame in seconds.
     fn frame(&mut self, gpu: &Gpu, input: &Input, dt: f32, surface: &wgpu::TextureView) -> Flow;
+}
+
+/// The shell's spans around the app's frames, in ms, handed to [`App::shell_times`]: both lie
+/// between the previous frame's start and this one's, inside this frame's `dt`. Each is one
+/// pair of clock reads on the thread that runs the frames.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ShellTimes {
+    /// This frame's surface acquire (`get_current_texture`), with any acquire since the
+    /// previous frame that gave no texture; 0 headless.
+    pub acquire_ms: f64,
+    /// The previous frame's present (the frame-callback request and `Queue::present`);
+    /// headless, the wait for the device to go idle after the previous frame, which stands
+    /// for it. 0 before the first frame.
+    pub present_ms: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -244,6 +264,7 @@ pub fn run<A: App>(config: ShellConfig, app: A) -> Result<(), ShellError> {
         state: None,
         input: Input::default(),
         last_frame: None,
+        times: ShellTimes::default(),
         error: None,
     };
     let ran = event_loop.run_app(&mut shell);
@@ -378,17 +399,24 @@ pub fn run_headless<A: App>(mut app: A, config: HeadlessConfig) -> Result<(), Sh
     let view = target.create_view(&wgpu::TextureViewDescriptor::default());
     let mut input = Input::default();
     let mut last = now();
+    let mut present_ms = 0.0;
     loop {
         let t = now();
         let dt = (t - last).as_secs_f32();
         last = t;
         app.poll(&mut input);
+        app.shell_times(ShellTimes {
+            acquire_ms: 0.0,
+            present_ms,
+        });
         if app.frame(&gpu, &input, dt, &view) == Flow::Exit {
             log::info!("teardown: the app asked to exit");
             break;
         }
         // Keep the queue from running ahead of the GPU, as presenting would.
+        let tp = now();
         let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+        present_ms = ms_since(tp);
     }
     drop(view);
     drop(target);
@@ -502,6 +530,9 @@ struct Shell<A> {
     state: Option<State>,
     input: Input,
     last_frame: Option<Instant>,
+    /// The spans the next [`App::shell_times`] hands over: the acquires since the last frame
+    /// and the last present.
+    times: ShellTimes,
     error: Option<ShellError>,
 }
 
@@ -511,6 +542,11 @@ struct Shell<A> {
 )]
 fn now() -> Instant {
     Instant::now()
+}
+
+/// Milliseconds from `t` to now.
+fn ms_since(t: Instant) -> f64 {
+    (now() - t).as_secs_f64() * 1e3
 }
 
 impl<A: App> Shell<A> {
@@ -690,7 +726,10 @@ impl<A: App> Shell<A> {
         let Some(state) = self.state.as_mut() else {
             return;
         };
-        let texture = match state.surface.get_current_texture() {
+        let ta = now();
+        let acquired = state.surface.get_current_texture();
+        self.times.acquire_ms += ms_since(ta);
+        let texture = match acquired {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return,
@@ -706,12 +745,15 @@ impl<A: App> Shell<A> {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         self.app.poll(&mut self.input);
+        self.app.shell_times(std::mem::take(&mut self.times));
         let flow = self.app.frame(&state.gpu, &self.input, dt, &view);
         self.input.end_frame();
+        let tp = now();
         if self.config.pacing.frame_callback() {
             state.window.pre_present_notify();
         }
         state.gpu.queue.present(texture);
+        self.times.present_ms = ms_since(tp);
         if !self.presented {
             self.presented = true;
             self.mark("first frame presented");

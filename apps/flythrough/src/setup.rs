@@ -646,6 +646,7 @@ fn streamed_world(args: &Args) -> (VoxelCoord, Pending) {
         args.residency.hysteresis,
         crate::window_side(args.residency)
     );
+    println!("{}", crate::hud::mirror_sync_row(args.sync_time));
     if args.castle {
         // The castle's prefabs build on a thread of their own, so the window, the device and
         // the first loading frame do not wait for them; the run joins it after the device.
@@ -699,6 +700,7 @@ fn outdoor_world(args: &Args) -> (VoxelCoord, Pending) {
         args.residency.r_full,
         args.residency.r_lod,
     );
+    println!("{}", crate::hud::mirror_sync_row(args.sync_time));
     let streamer = if trees == crate::trees::TreeDensity::None {
         Streamer::new(Arc::new(hills), cfg)
     } else {

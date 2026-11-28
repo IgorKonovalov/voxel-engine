@@ -90,8 +90,8 @@ pub use shape::Shape;
 pub use source::{FnSource, StampedSource, UniformSource, WorldSource};
 pub use store::{ChunkStore, StoreWriteGuard, World, WorldStats};
 pub use stream::{
-    ChunkPrep, Prepared, Residency, StreamConfig, StreamError, StreamEvents, StreamStats, Streamer,
-    Tier, chunks_in_ball,
+    ChunkPrep, EVICT_PER_POLL, Prepared, Residency, StreamConfig, StreamError, StreamEvents,
+    StreamStats, Streamer, Tier, chunks_in_ball,
 };
 pub use support::{Anchors, Region, SupportParams, find_unsupported, find_unsupported_with_stats};
 pub use walkable::{WalkableMap, WalkableParams, WalkableStats};

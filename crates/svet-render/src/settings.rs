@@ -588,6 +588,12 @@ impl RenderSettings {
              (Plan 0099 Phase 4c); lockstep holds two whatever it is",
         ),
         (
+            "set_apply_cap",
+            "a reading's knob: the bytes a frame applies of the bake thread's write lists, read \
+             against the bake's production (Plan 0111 Phase 6e'); lockstep applies every list \
+             the frame it is made",
+        ),
+        (
             "set_bake_slots",
             "a reading's knob: the bake thread's table slots, picked by reading (Plan 0099 \
              Phase 4c2); lockstep keeps 16 whatever it is",

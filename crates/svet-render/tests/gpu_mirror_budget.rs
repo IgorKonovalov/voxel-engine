@@ -978,3 +978,100 @@ fn the_light_counters_follow_a_full_buffer() {
     assert!(evicted > 0, "no eviction with half the samples");
     assert!(steps >= evicted, "{steps} steps for {evicted} evictions");
 }
+
+/// Plan 0111 Phase 6a'': a 10 x 2 x 10 chunk world of [`Mixed`] bricks whose material 2 emits,
+/// the window following the focus (a cube of 4 chunks), light radius 1 and 6000 samples a sync
+/// (chunks wait for it). The flight: the first uploads, the focus a chunk in x, then in z, a
+/// jump clear of the window and back, a carve through a lit chunk and a carve of a whole one
+/// (its lists emptied), a held radius of 2 and back, with idle syncs after each change. After
+/// every sync a [`LightNotesProbe`] fed the mirror's light change list answers
+/// `emitters_near` and `lights_ready_near` for every chunk of the window and one chunk around
+/// it, at reaches 1 and 2, as a shadow fed the whole light notes does and as the mirror does;
+/// only the first sync reads the whole, and at least 20 send a delta naming a chunk.
+#[test]
+fn the_light_notes_delta_reads_as_the_whole() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let mut t = MaterialTable::new();
+    t.push(Material::named("one"));
+    let mut lamp = Material::named("two");
+    lamp.emission = [1.0, 0.8, 0.5];
+    t.push(lamp);
+    let world = World::generate(ChunkExtent::new([0, 0, 0], [10, 2, 10]), &Mixed, &t);
+    let mut gpu = GpuWorld::with_config(
+        &device,
+        MirrorConfig {
+            light_radius: 1,
+            light_sync_samples: 6000,
+            ..small(Window::Follow { side: 4 })
+        },
+    );
+    #[derive(Clone, Copy, Debug)]
+    enum Step {
+        Idle,
+        Focus([i32; 3]),
+        Carve([i32; 3], i32),
+        Hold(i32),
+    }
+    use Step::*;
+    let mut script = vec![Focus([2, 0, 2])];
+    script.extend([Idle; 8]);
+    for (change, n) in [
+        (Focus([3, 0, 2]), 6),
+        (Focus([3, 0, 3]), 6),
+        (Carve([3, 0, 3], 40), 4),
+        (Carve([2, 1, 3], 64), 4),
+        (Focus([7, 1, 7]), 8),
+        (Hold(2), 10),
+        (Hold(0), 4),
+        (Focus([2, 0, 2]), 8),
+    ] {
+        script.push(change);
+        script.extend(std::iter::repeat_n(Idle, n));
+    }
+    let mut probe = svet_render::debug::LightNotesProbe::new();
+    let (mut wholes, mut deltas) = (0, 0);
+    for (k, step) in script.iter().enumerate() {
+        match *step {
+            Idle => {}
+            Focus(c) => gpu.set_focus(VoxelCoord(c.map(|v| v * 64 + 32))),
+            Carve(c, edge) => {
+                let lo = c.map(|v| v * 64 + if edge < 64 { 8 } else { 0 });
+                world
+                    .apply(&EditOp::box_(
+                        centre_of_voxel(lo),
+                        centre_of_voxel(lo.map(|v| v + edge - 1)),
+                        Mode::Carve,
+                    ))
+                    .unwrap();
+            }
+            Hold(r) => gpu.hold_lights(r),
+        }
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        gpu.sync(&world, &queue, &mut enc).unwrap();
+        queue.submit([enc.finish()]);
+        match probe.take(&mut gpu) {
+            None => wholes += 1,
+            Some(n) => deltas += usize::from(n > 0),
+        }
+        let w = gpu.window();
+        let around = ChunkExtent::new(w.min.0.map(|v| v - 1), w.max.0.map(|v| v + 1));
+        let bad = probe.mismatches(&gpu, around, &[1, 2]);
+        assert!(
+            bad.is_empty(),
+            "step {k} ({step:?}): {} of {}: {:?}",
+            bad.len(),
+            probe.len(),
+            &bad[..bad.len().min(6)]
+        );
+    }
+    println!(
+        "{} syncs, {wholes} whole, {deltas} deltas naming a chunk, {} chunks with lights at the end",
+        script.len(),
+        probe.len()
+    );
+    assert_eq!(wholes, 1, "only the first sync reads the whole");
+    assert!(deltas >= 20, "{deltas} deltas");
+    assert!(!probe.is_empty());
+}

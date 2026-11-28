@@ -53,13 +53,13 @@ fn slab(n: i32) -> World {
 }
 
 /// The mirror as the render half reads it: the slab's chunks held full, the chunks `notes`
-/// names in their state, and `lights` with its key.
+/// names in their state, and `lights` with the chunks whose light note changed.
 struct Mirror {
     n: i32,
     notes: std::collections::HashMap<[i32; 3], ChunkNote>,
     changed: Vec<ChunkCoord>,
     lights: Vec<([i32; 3], LightNote)>,
-    key: (u64, u64),
+    light_changed: Vec<ChunkCoord>,
 }
 
 impl MirrorRead for Mirror {
@@ -90,8 +90,8 @@ impl MirrorRead for Mirror {
     fn column_lowest(&self, _: i32, _: i32) -> i32 {
         SLAB_TOP
     }
-    fn light_key(&self) -> (u64, u64) {
-        self.key
+    fn light_note(&self, c: ChunkCoord) -> Option<LightNote> {
+        self.lights.iter().find(|(k, _)| *k == c.0).map(|(_, l)| *l)
     }
     fn light_notes(&self) -> Vec<([i32; 3], LightNote)> {
         self.lights.clone()
@@ -122,7 +122,7 @@ struct Rig {
     world: World,
     mirror: Mirror,
     shadow: Shadow,
-    seen: (Option<ChunkExtent>, Option<(u64, u64)>),
+    seen: Option<ChunkExtent>,
     queue: BakeQueue,
     store: Store,
     settings: StepSettings,
@@ -143,7 +143,7 @@ impl Rig {
             notes: pending.iter().map(|&c| (c, PENDING)).collect(),
             changed: Vec::new(),
             lights: Vec::new(),
-            key: (0, 0),
+            light_changed: Vec::new(),
         };
         let mut store = Store::new(64 << 20);
         store.start_queue(mirror.window(), settings.cell);
@@ -162,7 +162,7 @@ impl Rig {
             world: slab(n),
             mirror,
             shadow: Shadow::default(),
-            seen: (None, None),
+            seen: None,
             queue,
             store,
             settings: step_settings,
@@ -187,10 +187,15 @@ impl Rig {
         assert!(noise[2] < 6, "the row's chunks of the window are spent");
         self.set(noise, UPLOADED);
         let changed = std::mem::take(&mut self.mirror.changed);
-        let (window, key) = &mut self.seen;
-        let first = window.is_none();
-        let n = notes(&self.mirror, (!first).then_some(changed), *window, key);
-        *window = n.window;
+        let light_changed = std::mem::take(&mut self.mirror.light_changed);
+        let first = self.seen.is_none();
+        let n = notes(
+            &self.mirror,
+            (!first).then_some(changed),
+            (!first).then_some(light_changed),
+            self.seen,
+        );
+        self.seen = n.window;
         self.frame += 1;
         let view = QueueView {
             eye: [32.0, 32.0, 32.0],
@@ -275,7 +280,8 @@ fn a_candidate_blocked_by_a_column_outside_its_reach_opens_when_that_chunk_uploa
 /// (b) Two blockers: chunk (0, 0, 1), within the candidate's reach, waits to upload, and a
 /// light range near it, chunk (0, 0, 1)'s, is not current. The chunk uploads before step 3:
 /// the candidate is checked at step 3 and refused by the lights, its mark now the lights'; no
-/// job. The range turns current before step 9 (the light key moves): the job opens at step 9.
+/// job. The range turns current before step 9 (its chunk on the light change list): the job
+/// opens at step 9.
 #[test]
 fn a_candidate_with_two_blockers_is_checked_as_each_clears() {
     let r = [0, 0, 1];
@@ -315,7 +321,7 @@ fn a_candidate_with_two_blockers_is_checked_as_each_clears() {
         assert!(!rig.job(C));
     }
     rig.mirror.lights[0].1.current = true;
-    rig.mirror.key.0 += 1;
+    rig.mirror.light_changed.push(ChunkCoord(r));
     rig.step();
     assert_eq!(rig.queue.steps, 9);
     assert!(rig.job(C), "the job opens at step 9");

@@ -336,8 +336,10 @@ pub struct MirrorConfig {
 }
 
 impl MirrorConfig {
-    /// A window with no sync budget, no shard cap and the default budget,
-    /// [`DEFAULT_BUDGET_BYTES`], clamped to what the device can bind.
+    /// A window with no sync budget, no shard cap, the default budget,
+    /// [`DEFAULT_BUDGET_BYTES`], clamped to what the device can bind, and the workers' slot
+    /// images used where a hook makes them ([`Packing::Workers`]; with no hook every record is
+    /// packed inline). The time budget is the caller's share of its frame, so none here.
     pub fn new(window: Window) -> Self {
         Self {
             window,
@@ -350,7 +352,7 @@ impl MirrorConfig {
             light_chunk_cap: DEFAULT_LIGHT_CHUNK_CAP,
             light_radius: DEFAULT_LIGHT_RADIUS,
             light_sync_samples: DEFAULT_LIGHT_SYNC_SAMPLES,
-            packing: Packing::Inline,
+            packing: Packing::Workers,
         }
     }
 }
@@ -648,6 +650,15 @@ impl GpuWorld {
     pub fn column_lowest(&self, cx: i32, cy: i32) -> i32 {
         let (min, size) = (self.window.min[2], self.window.size[2].max(1));
         self.columns.lowest_top([cx, cy], min..min + size)
+    }
+
+    /// The column map's sheets held for chunks outside the window: 0 once a sync has moved
+    /// the window, because the move drops every leaving chunk with its sheet. The bake's
+    /// shadow reads a column's lowest top as a delta of the noted chunks on that invariant.
+    #[doc(hidden)]
+    pub fn column_sheets_outside_window(&self) -> usize {
+        self.columns
+            .sheets_outside(self.window.min, self.window.size)
     }
 
     /// Whether chunk column `(cx, cy)` is final: no chunk of it within the window waits to

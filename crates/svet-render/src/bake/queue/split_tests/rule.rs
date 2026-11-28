@@ -255,7 +255,7 @@ fn a_ruled_chunk_is_relisted_when_the_rule_stops_holding() {
                 current: true,
             },
         ));
-        m.light_gen += 1;
+        m.light_changed.push(ChunkCoord(H));
         m.changed.push(ChunkCoord(H));
     });
 

@@ -69,8 +69,8 @@ impl WorldSource for Rich {
     }
 }
 
-/// One arm: a world streamed from [`Rich`] at r_full 2 with the workers' hook, its images
-/// under `hook`, mirrored by `gpu`.
+/// One arm: a world streamed from [`Rich`] (at r_full 2, r_lod 2 unless built
+/// [`Arm::with_ring`]) with the workers' hook, its images under `hook`, mirrored by `gpu`.
 struct Arm {
     world: World,
     streamer: Streamer,
@@ -99,6 +99,19 @@ impl Arm {
         field: bool,
         budget: u64,
     ) -> Self {
+        Self::with_ring(device, packing, hook_table, field, budget, 2)
+    }
+
+    /// [`Arm::with_budget`] streaming LOD records out to `r_lod` around the full radius of 2,
+    /// in a window of side `2 * (r_lod + 1) + 1` (the residency and its hysteresis).
+    fn with_ring(
+        device: &wgpu::Device,
+        packing: Packing,
+        hook_table: &MaterialTable,
+        field: bool,
+        budget: u64,
+        r_lod: i32,
+    ) -> Self {
         let table = rich_table();
         let world = World::new(&table);
         let hook = ImageHook::new(hook_table, packing, DEFAULT_IMAGE_CAP_BYTES);
@@ -107,7 +120,7 @@ impl Arm {
             StreamConfig {
                 residency: Residency {
                     r_full: 2,
-                    r_lod: 2,
+                    r_lod,
                     hysteresis: 1,
                 },
                 workers: 4,
@@ -118,7 +131,9 @@ impl Arm {
         let cfg = MirrorConfig {
             packing,
             budget_bytes: budget,
-            ..small(Window::Follow { side: 7 })
+            ..small(Window::Follow {
+                side: 2 * (r_lod + 1) + 1,
+            })
         };
         let gpu = if field {
             GpuWorld::with_field_surface(device, cfg)
@@ -242,6 +257,83 @@ fn the_mirror_is_byte_identical_whichever_thread_packed() {
     assert_eq!(h.made, chunks, "{h:?}");
     assert_eq!((h.refused, h.held_bytes), (0, 0), "{h:?}");
     assert_eq!(workers.gpu.held_images(), 0);
+}
+
+/// Plan 0111 Phase 6d (ADR-0089: `Workers` is the default). The world streamed at r_full 2
+/// and r_lod 4, mirrored inline and from the workers' images: at the first focus, then after a
+/// move of three chunks along x that promotes LOD records to full ones (their images held from
+/// the promoting load) and demotes full records to LOD ones. After every sync, the two arms'
+/// syncs write, defer and leave pending the same chunks, and their pool shards, records, table,
+/// light lists and light-sample buffer read back equal byte for byte. The `Workers` arm's
+/// promoted records came from images, and it sized every chunk the `Inline` arm sized but
+/// those its images carried (a LOD record has no image).
+#[test]
+fn a_promoted_and_a_demoted_record_are_byte_identical_whichever_thread_packed() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let table = rich_table();
+    let budget = 256 << 20;
+    let mut inline = Arm::with_ring(&device, Packing::Inline, &table, false, budget, 4);
+    let mut workers = Arm::with_ring(&device, Packing::Workers, &table, false, budget, 4);
+    let mut before: Option<(Vec<ChunkCoord>, Vec<ChunkCoord>)> = None;
+    for focus in [VoxelCoord([0, 0, 0]), VoxelCoord([192, 0, 0])] {
+        for arm in [&mut inline, &mut workers] {
+            arm.stream(focus);
+        }
+        let used_before = workers.total(|s| s.images_used);
+        let mut syncs = 0;
+        loop {
+            let a = sync_line(&mut inline, &device, &queue);
+            let b = sync_line(&mut workers, &device, &queue);
+            assert_eq!(a, b, "focus {focus:?}: (error, written, deferred, pending)");
+            assert!(!b.0, "focus {focus:?}: a sync failed");
+            assert_same_bytes(&device, &queue, &inline.gpu, &workers.gpu);
+            assert_same_lights(&device, &queue, &inline.gpu, &workers.gpu);
+            syncs += 1;
+            if b.3 == 0 {
+                break;
+            }
+            assert!(
+                syncs < 16,
+                "focus {focus:?}: still pending after {syncs} syncs"
+            );
+        }
+        let g = &workers.gpu;
+        let mirrored: Vec<ChunkCoord> = g.full_chunks().collect();
+        let lod: Vec<ChunkCoord> = g
+            .window()
+            .coords()
+            .into_iter()
+            .filter(|&c| g.is_lod(c))
+            .collect();
+        assert!(!lod.is_empty(), "focus {focus:?}: no LOD record");
+        if let Some((full0, lod0)) = &before {
+            let promoted: Vec<_> = mirrored.iter().filter(|c| lod0.contains(c)).collect();
+            let demoted: Vec<_> = lod.iter().filter(|c| full0.contains(c)).collect();
+            assert!(!promoted.is_empty(), "no LOD record promoted");
+            assert!(!demoted.is_empty(), "no full record demoted");
+            let used = workers.total(|s| s.images_used) - used_before;
+            assert!(
+                used >= promoted.len() as u64,
+                "{used} images used for {} promotions",
+                promoted.len()
+            );
+        }
+        before = Some((mirrored, lod));
+    }
+    assert!(workers.gpu.light_samples() > 0, "the world holds emitters");
+    // A LOD record has no image (its bricks are mips), so both arms size and pack it inline;
+    // the `Workers` arm sizes every chunk the `Inline` arm sizes but those its images carried.
+    let used = workers.total(|s| s.images_used);
+    assert!(used > 0);
+    assert_eq!(
+        workers.total(|s| s.sized_chunks) + used,
+        inline.total(|s| s.sized_chunks),
+        "(sized, images used)"
+    );
+    assert!(workers.total(|s| s.packed_bricks) < inline.total(|s| s.packed_bricks));
+    assert_eq!(inline.total(|s| s.images_used), 0);
 }
 
 /// What one sync of an arm did, for comparing two arms' syncs: whether it returned an error,

@@ -227,11 +227,7 @@ impl RenderHalf for GpuHalf<'_> {
     }
 
     fn apply(&mut self, lists: Vec<WriteList>, frame: u64) -> Vec<([i32; 3], u32)> {
-        if self.lists.take(lists).is_err() {
-            // A landing list over the cap: the maker never makes one (it closes a list before a
-            // unit would pass the cap and sends a larger unit as an edit's).
-            debug_assert!(false, "a write list over the frame's cap");
-        }
+        self.lists.take(lists);
         let mut out = PoolApplier {
             queue: self.run.queue,
             pool: self.run.pool,

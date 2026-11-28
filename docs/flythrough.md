@@ -104,7 +104,7 @@ row showing the new value.
 | readings | `Enter` | Sample the next frames and print frame-time readings (menu closed) |
 | debug | `F9` | Cycle the view: shaded, normals, hitmask, steps, cracks, albedo |
 | debug | `X` | Cycle the cutaway: auto, on, off |
-| debug | `U` | `mirror pack`: inline or workers (`--mirror-pack`); the mirror uses or drops the images that arrive from the next sync, the workers follow from their next chunk |
+| debug | `U` | `mirror pack`: workers (the default) or inline (`--mirror-pack`); the mirror uses or drops the images that arrive from the next sync, the workers follow from their next chunk |
 
 Everything else is an entry of the menu (`Tab`) with no key: the dig radius (`moving`), the
 look presets and far normal,
@@ -288,9 +288,9 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--eye X,Y,Z,YAW,PITCH` | Start the camera at this point in voxels (as the HUD reads it), facing YAW degrees (counter-clockwise from +x, 90 north) and PITCH degrees up, on any source, in place of its spawn, shot, castle shot or pose; a streamed world centres on it. Refused with `--path`; a source switch starts the next source at its own camera (a live session's, a rehearsal's or a still's pose) |
 | `--settled-start` | With `--headless` only (refused in a window): after the light pre-roll and before frame 0, step the stream until full residency (nothing queued or in flight, nothing pending on the mirror), then the stream and the live queue in lockstep at 40 ms a step until the queue has no job and nothing to refine on 3 steps in a row; ended by that state, never by wall time. Prints `settled: F full, L lod chunks, J jobs, C to refine, P provisional after S steps (R to residency, Q of the queue), T ms`; past 50 000 steps it prints `settled start: not settled ...` and the run exits non-zero without drawing a frame |
 | `--sync-budget MIB` | The mirror's upload bytes a frame |
-| `--sync-ms MS` | The mirror's upload time a frame [none; 0 is none] |
+| `--sync-ms MS` | The streamed mirror's sync time a frame: selection and upload stop between chunks once it is spent, the rest pending nearest first (ADR-0089); the banner's `mirror sync 6 ms a frame` row [6; 0 is none] |
 | `--workers N` | The streamer's generation workers, at least 1; the bake's listing threads take what the workers and the render and bake threads leave, at least 1, and the start-up's `threads:` line prints the sum against the logical CPUs (`svet_render::ThreadPlan`) [half the logical cores] |
-| `--mirror-pack inline\|workers` | Where a streamed world's new mirror records are packed: on the render thread, or copied from the slot images the stream workers make (ADR-0056; the bytes are the same); the banner's and the HUD's `mirror pack inline` row; `U` flips it [inline] |
+| `--mirror-pack inline\|workers` | Where a streamed world's new mirror records are packed: on the render thread, or copied from the slot images the stream workers make (ADR-0056; the bytes are the same); the banner's and the HUD's `mirror pack workers` row; `U` flips it [workers] |
 | `--residency R_FULL,R_LOD` | The streamed full and LOD radii in chunks, hysteresis 1 [16,24] |
 | `--mirror-budget MIB` | The VRAM the mirror reserves at startup [3072 streamed; on the level what it needs plus dig headroom]. While streaming, the full radius drops a chunk after 30 frames with the mirror's pressure over 0.9 and returns after 300 frames under 0.7, down to 6 |
 
@@ -444,6 +444,7 @@ Grouped as `--help` groups them. A default in brackets is the code's.
 | `--queue-withdraw on\|off` | Withdraw the jobs of chunks the camera passed |
 | `--bake-thread on\|off` | Run the live queue's sliced steps on the bake thread (ADR-0083; the pre-roll and the one-shot bakes stay lockstep); the banner's queue row and the HUD's queue row read `bake thread on` or `off`; a profile does not set it, every profile's being `off` [on in a window, off under `--headless`] |
 | `--bake-depth N` | The submits the bake thread's steps hold unread at most, 1 to 8 (a reading's knob; lockstep, the pre-roll and the one-shot bakes hold two whatever it is) [3] |
+| `--apply-mib N` | The MiB a frame applies of the bake thread's write lists at most, 1 to 16; the lists stay at most 1 MiB, a list over the cap at the front applies alone in its frame, an edit's with every list before it whatever the cap; the banner's `bake apply N MiB a frame` row names it (a reading's knob; lockstep applies every list the frame it is made) [2] |
 | `--bake-slots N` | The live queue's table slots the bake thread's steps open jobs into, 16 to 64 (a reading's knob; lockstep and the pre-roll keep 16 whatever it is) [16] |
 | `--queue-census` | Read the queue's view census at every opening, its listing once |
 | `--queue-rule-reading` | Count the jobs opened for chunks the zero rule would answer, and hash the zeroed chunks' blocks and the store's once the queue is empty and at the end (a reading) |
@@ -518,6 +519,27 @@ thread's steps whose cycles ended in those frames, p50 and mean in ms: `wait`, f
 free to the message taken; `step`, the step; `snapshot`, the books' snapshot after it;
 `hand-over`, the step's results and the books put in the outbox; and `sum`, their total, the
 time from one step's pick-up to the next's, beside the frames' wall over the same frames.
+
+After the `frames: N frames;` line the teardown prints the `slow frame:` block: one line for
+each of the 64 slowest frames whose wall was over 33.3 ms, in frame order, then a `slow frames:`
+summary over every such frame. A frame's wall is the span from its start to the next frame's
+(the `dt` the `frames:` line's `wall` reads), and its line splits it into that frame's own
+stages in ms: `acquire` (the window's surface acquire for the next frame; 0 headless),
+`update`, `poll` with the chunks it inserted and the chunks its events evicted and demoted, `events` (the poll's events applied to the mirror
+and the frame), `sync` with its stages (`select`, `size`, `pack`, `place` and `note` the light's
+two parts, `copy`, `alloc`, `lock`, `other`), the bricks it packed, its `writes` (the staged runs, one belt copy each)
+and the column-map `tiles` it wrote, `queue` (the live queue's
+step on the render thread) with the bake thread's render laps (`build` to `wait`, then `other`;
+`no laps` in lockstep; `apply` carries the store's writes it applied, the `write_buffer` calls
+they took and their bytes), `prepare` (the frame's start to the encode, less the stages above),
+`encode` (to the command buffer's finish), `submit`, `after` (the submit to the frame's end: the
+read-backs and the readings), `present` (the window's present; headless, the wait for the device
+to idle that stands for it), and `rest`, the wall less every named stage. On Linux the line
+ends with the render thread's involuntary context switches and minor and major page faults
+over the frame's wall. The summary counts the frames over 33.3 ms and over 100 ms, names for
+each leaf stage (a stage with parts counts by its parts) the slow frames it was the largest in
+and its mean over them, counts those whose `rest` is over a fifth of their wall, and gives the
+counters' means over a slow frame beside any frame's.
 
 ### Audio
 

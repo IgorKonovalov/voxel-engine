@@ -38,6 +38,23 @@ impl Frame {
         self.baked.thread_depth = depth.max(1);
     }
 
+    /// The bytes a frame applies of the bake thread's write lists at most, at least 1
+    /// ([`crate::DEFAULT_APPLY_CAP`] by default). The lists the thread makes stay at most
+    /// 1 MiB, several a frame; a list over the cap at the front applies alone in its frame, and
+    /// an edit's list with every list made before it whatever the cap. It takes hold at once.
+    pub fn set_apply_cap(&mut self, bytes: usize) {
+        self.baked.apply_cap = bytes.max(1);
+        if self.baked.thread.is_some() {
+            self.baked.lists.cap = Some(self.baked.apply_cap);
+        }
+    }
+
+    /// The bytes a frame applies of the bake thread's write lists at most
+    /// ([`Frame::set_apply_cap`]).
+    pub fn apply_cap(&self) -> usize {
+        self.baked.apply_cap
+    }
+
     /// The live queue's table slots the bake thread's steps open jobs into, 16 to 64 (a
     /// reading's knob; [`crate::THREAD_SLOTS`] by default). Lockstep and the pre-roll keep the
     /// last 16 whatever it is; at the thread's stop the loop returns to them, a job open in a
@@ -74,6 +91,14 @@ impl Frame {
     /// collected, the send and an edit's frame's wait for its step; then the frame call's whole.
     pub fn bake_render_laps(&self) -> &[[f32; 8]] {
         &self.baked.render_laps
+    }
+
+    /// The write lists applied so far, summed over the run (the store's writes, the
+    /// `queue.write_buffer` calls they were applied in, their bytes, the lists and the whole
+    /// ones), and the lists waiting after the last frame's apply (a reading; a frame's share of
+    /// the sums is the difference across its step).
+    pub fn bake_lists_applied(&self) -> crate::ListsApplied {
+        self.baked.lists.applied
     }
 
     /// The edit's frames with the bake thread on (ADR-0083's one wait), each the wait for the
@@ -212,8 +237,7 @@ impl Frame {
                 b.shadow = st.side.shadow;
                 for (ops, lists) in st.steps {
                     b.unissued.extend(ops);
-                    let taken = b.lists.take(lists);
-                    debug_assert!(taken.is_ok(), "a write list over the frame's cap");
+                    b.lists.take(lists);
                 }
                 if let Some(m) = st.msg {
                     b.issuer.give_back(m.read_backs);
@@ -289,7 +313,7 @@ impl Frame {
             #[cfg(test)]
             books_hook: None,
         };
-        b.lists.cap = Some(THREAD_LIST_CAP);
+        b.lists.cap = Some(b.apply_cap);
         match ThreadLink::start(side, Some(THREAD_LIST_CAP), OUTBOX_BYTES) {
             Ok(link) => b.thread = Some(link),
             // No thread to be had: the books are lost with the closure that failed to spawn.

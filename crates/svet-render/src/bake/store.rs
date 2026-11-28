@@ -661,6 +661,36 @@ impl Store {
 mod tests {
     use super::*;
 
+    /// Done when (1) of Plan 0111 Phase 6e': a move of a 51-chunk cube window, written through a
+    /// list maker at the bake thread's 1 MiB cap, is one list, `whole` and not an edit's, of the
+    /// header from word 3, the chunk table (51^3 words) and both parent levels (27^3 and 14^3
+    /// records of `BRICK_WORDS`): 1 517 444 bytes.
+    #[test]
+    fn a_window_move_is_one_whole_list_over_the_cap() {
+        let cube = |x: i32| ChunkExtent::new([x, -25, -25], [x + 51, 26, 26]);
+        let mut s = Store::new(1 << 30);
+        s.start_queue(cube(-25), BRICK_CELL);
+        assert!(
+            !s.take_direct().is_empty(),
+            "the reset's header, written at once"
+        );
+        s.out = Some(ListMaker::new(Some(THREAD_LIST_CAP), 1));
+        assert!(
+            s.rewindow(cube(-24)).is_empty(),
+            "an empty store drops nothing"
+        );
+        let lists = s.out.take().expect("the maker").finish();
+        let words = (STORE_TABLE - 3) + 51 * 51 * 51 + (27 * 27 * 27 + 14 * 14 * 14) * 11;
+        assert_eq!(words * 4, 1_517_444);
+        let shape: Vec<(bool, bool, usize, usize)> = lists
+            .iter()
+            .map(|l| (l.edit, l.whole, l.bytes, l.writes.len()))
+            .collect();
+        assert_eq!(shape, [(false, true, 1_517_444, 1)]);
+        assert!(lists[0].bytes > THREAD_LIST_CAP, "over the maker's cap");
+        assert_eq!(lists[0].writes[0].offset, 12, "from word 3");
+    }
+
     /// Three neighbouring places freed in any order merge into one, which a place of their sum
     /// takes back at its first word; the pool's end is untouched while a block lies past them,
     /// and moves back over them once that block is freed too.

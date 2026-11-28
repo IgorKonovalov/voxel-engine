@@ -17,6 +17,11 @@ pub(crate) const NEAR_D2: i32 = 4;
 /// Default mirror upload budget per frame.
 pub(crate) const SYNC_BUDGET_MIB: u64 = 2;
 
+/// Default mirror sync time per frame on a streamed world, in milliseconds (`--sync-ms`;
+/// ADR-0089): selection and upload stop between chunks once it is spent, the rest pending
+/// nearest first.
+pub(crate) const SYNC_MS: u64 = 6;
+
 /// Mirror pressure (`GpuWorld::pressure`, the fuller of pool slots and records) above which the full radius falls by a
 /// chunk once it has held for `PRESSURE_HIGH_FRAMES` frames, and below which it rises by one
 /// once it has held for `PRESSURE_LOW_FRAMES` (ADR-0013).

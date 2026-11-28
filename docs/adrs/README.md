@@ -11,7 +11,7 @@ and `vxe-<x>` reads as `svet-<x>`.
 Rule of thumb: if you can't name an option you're *not* taking, you don't need an ADR, you need
 a code comment.
 
-**Next free number: 0089** (0088 is Plan 0110's; 0085 accepted at Plan 0101's close, 2026-11-26; 0086 accepted at Plan 0102's close, 2026-11-25; 0087 is Plan 0103's; 0079 accepted at Plan 0095's close, 2026-11-21; 0080 accepted at Plan 0096's close, 2026-11-23; 0081 is Plan 0097's; 0082 accepted at Plan 0098's close, 2026-11-24; 0083 accepted at Plan 0099's close, 2026-11-26; 0084 accepted at Plan 0100's close, 2026-11-25).
+**Next free number: 0090** (0089 accepted at Plan 0111's close, 2026-11-28; 0088 is Plan 0110's; 0085 accepted at Plan 0101's close, 2026-11-26; 0086 accepted at Plan 0102's close, 2026-11-25; 0087 is Plan 0103's; 0079 accepted at Plan 0095's close, 2026-11-21; 0080 accepted at Plan 0096's close, 2026-11-23; 0081 is Plan 0097's; 0082 accepted at Plan 0098's close, 2026-11-24; 0083 accepted at Plan 0099's close, 2026-11-26; 0084 accepted at Plan 0100's close, 2026-11-25).
 
 An index row is a pointer, not an abstract: the link, the title as the ADR's `H1` writes it, and
 the status.
@@ -74,7 +74,7 @@ the status.
 | [0053](0053-a-light-summary-per-block-and-a-two-level-parent-table-light-a-brick-with-no-value.md) | A light summary per block and a two-level parent table light a brick with no baked value | accepted 2026-11-11 (Plan 0067); Outcome 2026-11-12: `chain` default |
 | [0054](0054-the-tester-build-is-a-launcher-that-runs-the-flythrough-per-scene.md) | The tester build is a launcher that runs the fly-through once per scene as a child process | accepted (Plan 0068, 2026-11-15) |
 | [0055](0055-render-settings-are-one-struct-with-an-apply-class-per-field-and-profiles-are-named-values.md) | Render settings are one struct with an apply class per field, and a profile is a named value of it | accepted 2026-11-17, Outcome (Plan 0069): four profiles, High added |
-| [0056](0056-the-mirrors-slot-image-is-packed-on-the-stream-workers-and-the-render-thread-only-allocates-and-copies.md) | The mirror's slot image is packed on the stream workers; the render thread only allocates and copies | accepted; built by Plan 0107 (2026-11-27) as a setting, off: see Outcome |
+| [0056](0056-the-mirrors-slot-image-is-packed-on-the-stream-workers-and-the-render-thread-only-allocates-and-copies.md) | The mirror's slot image is packed on the stream workers; the render thread only allocates and copies | accepted; built by Plan 0107 (Outcome); its default flipped with ADR-0089 |
 | [0057](0057-the-render-api-is-three-objects-and-a-settings-struct-with-a-compiled-example-as-the-contract.md) | The render API is three objects and a settings struct, with a compiled example as the contract | accepted (Plan 0071) |
 | [0058](0058-the-apps-keep-render-settings-in-a-toml-file-layered-over-a-profile-through-an-app-side-field-table.md) | The apps keep render settings in a TOML file in the user's config directory, layered over a profile through an app-side field table | accepted (Plan 0073) |
 | [0059](0059-loading-runs-as-time-sliced-steps-on-the-apps-frame-loop-behind-an-engine-loading-frame.md) | Loading runs as time-sliced steps on the app's frame loop, behind an engine loading frame the app can replace | accepted (Plan 0075), Outcome: the pipelines on one worker, a splash before init |
@@ -107,6 +107,7 @@ the status.
 | [0086](0086-fsr-2-is-the-only-upscaler-the-upscaler-of-our-own-is-removed.md) | FSR 2 is the engine's only upscaler; the upscaler of our own is removed | accepted 2026-11-25, Outcome (Plan 0102); supersedes ADR-0024 and ADR-0034's opt-in clause |
 | [0087](0087-the-renderers-pipeline-cache-is-the-drivers-through-wgpu-as-bytes-the-consumer-keeps.md) | The renderer's pipeline cache is the driver's, through wgpu, as bytes the consumer keeps | proposed (Plan 0103) |
 | [0088](0088-half-precision-shader-math-from-one-source-built-per-adapter.md) | Half-precision shader math comes from one WGSL source, built per adapter as f16 or f32 | proposed (Plan 0110) |
+| [0089](0089-the-streamed-mirrors-sync-takes-a-6-ms-budget-a-frame-on-top-of-the-workers-slot-image.md) | The streamed mirror's sync takes a 6 ms time budget a frame, on top of the workers' slot image | accepted at Plan 0111's close, 2026-11-28 (Outcome); supersedes ADR-0056's Alternative A |
 <!-- roster:end -->
 
 ## Decisions taken but not yet recorded

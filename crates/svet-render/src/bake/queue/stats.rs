@@ -18,6 +18,10 @@ pub struct QueueStats {
     pub prepared: u64,
     /// Blocks fading.
     pub fading: u64,
+    /// The bytes the fades' shows wrote into the write lists since the queue started (each
+    /// fading block, its summary and parents, every step), and the most of them in one step.
+    pub fade_bytes: u64,
+    pub fade_bytes_max: u64,
     /// The samples read back in the last step and their milliseconds on the GPU's timestamps
     /// (submit to readback where there are none).
     pub samples: u64,

@@ -568,6 +568,8 @@ impl BakeQueue {
         let mut ended = Vec::new();
         let mut shown = std::mem::take(&mut self.fade_scratch);
         let now = self.frame;
+        let listed = |s: &Store| s.out.as_ref().map_or(0, ListMaker::bytes) as u64;
+        let before = listed(store);
         for (c, f) in &mut self.fades {
             f.advance(now);
             let Some(to) = store.words.get(c) else {
@@ -603,5 +605,8 @@ impl BakeQueue {
         for c in ended {
             self.fades.remove(&c);
         }
+        let bytes = listed(store).saturating_sub(before);
+        self.stats.fade_bytes += bytes;
+        self.stats.fade_bytes_max = self.stats.fade_bytes_max.max(bytes);
     }
 }

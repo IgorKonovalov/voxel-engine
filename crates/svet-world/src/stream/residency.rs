@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use super::{Residency, Tier, unit_step};
+use super::{EVICT_PER_POLL, Residency, Tier, unit_step};
 use crate::coords::{ChunkCoord, VoxelCoord};
 
 /// A job's queue key: smaller runs first. Full loads sort before LOD loads.
@@ -65,6 +65,11 @@ pub(super) struct ResidencyPlan {
     swept_focus: Option<ChunkCoord>,
     /// Chunks inserted outside their band since the last sweep, which the next one checks.
     recheck: HashSet<ChunkCoord>,
+    /// The evictions and demotions the last sweep found past its [`EVICT_PER_POLL`], each
+    /// sorted: still resident, for the next sweep, which the flag `sweep` asks for. At the
+    /// focus they were found at they stay due (nothing loads or demotes a chunk outside its
+    /// band), so a sweep there takes them as they are; a moved focus classifies them anew.
+    deferred: (Vec<(ChunkCoord, Tier)>, Vec<ChunkCoord>),
     /// The offsets, from the new focus chunk, of a ball's entering or leaving shell for one
     /// focus step: by squared radius, step and `entering`.
     shells: HashMap<ShellKey, Arc<Vec<[i32; 3]>>>,
@@ -92,6 +97,7 @@ impl ResidencyPlan {
             sweep_full: true,
             swept_focus: None,
             recheck: HashSet::new(),
+            deferred: (Vec::new(), Vec::new()),
             shells: HashMap::new(),
             #[cfg(any(test, feature = "stream-oracle"))]
             oracle: false,
@@ -363,11 +369,31 @@ impl ResidencyPlan {
         self.recheck.extend(outside);
     }
 
-    /// The sweep's evictions and demotions, each sorted. A sweep after one-step moves of a
-    /// single focus visits the chunks that crossed out of the keep balls since the last sweep
-    /// and those inserted outside their band since: every other resident chunk is inside its
-    /// band, as the last sweep left it.
+    /// The sweep's evictions and demotions, each sorted, at most [`EVICT_PER_POLL`] of them
+    /// together: the evictions first, then the demotions, each list in its order. The rest
+    /// stay resident, are deferred and set `sweep`, so the next poll sweeps again; the order
+    /// of a chunk's removal is the full lists' order, only its poll moves. A sweep after
+    /// one-step moves of a single focus visits the chunks that crossed out of the keep balls
+    /// since the last sweep, those inserted outside their band since and the deferred ones:
+    /// every other resident chunk is inside its band, as the last sweep left it.
     pub(super) fn sweep_lists(&mut self) -> (Vec<(ChunkCoord, Tier)>, Vec<ChunkCoord>) {
+        let (mut evict, mut demote) = self.sweep_all();
+        let cap = EVICT_PER_POLL;
+        let rest_evict = evict.split_off(evict.len().min(cap));
+        let rest_demote = demote.split_off(demote.len().min(cap - evict.len()));
+        self.deferred = (rest_evict, rest_demote);
+        self.sweep |= self.deferred() > 0;
+        (evict, demote)
+    }
+
+    /// The chunks the last sweep deferred past its cap.
+    pub(super) fn deferred(&self) -> usize {
+        self.deferred.0.len() + self.deferred.1.len()
+    }
+
+    /// Every eviction and demotion due at the current focus, each sorted: the uncapped lists
+    /// [`ResidencyPlan::sweep_lists`] cuts.
+    fn sweep_all(&mut self) -> (Vec<(ChunkCoord, Tier)>, Vec<ChunkCoord>) {
         let keep_full2 = self.residency.keep_full2();
         let keep_lod2 = self.residency.keep_lod2();
         let step = match (self.focus.as_slice(), self.swept_focus) {
@@ -397,21 +423,32 @@ impl ResidencyPlan {
         let lists = match step {
             Some((f, d)) => {
                 let mut visit: HashSet<ChunkCoord> = std::mem::take(&mut self.recheck);
+                let (mut evict, mut demote) = std::mem::take(&mut self.deferred);
                 if d != [0; 3] {
+                    visit.extend(evict.drain(..).map(|(c, _)| c));
+                    visit.extend(demote.drain(..));
                     for r2 in [keep_lod2, keep_full2] {
                         for o in self.shell(r2, d, false).iter() {
                             visit.insert(ChunkCoord([0, 1, 2].map(|k| f.0[k] + o[k])));
                         }
                     }
                 }
-                let (mut evict, mut demote) = (Vec::new(), Vec::new());
+                // At the same focus the deferred lists are kept whole and sorted; only the
+                // chunks visited now are classified and merged in.
+                let (kept_evict, kept_demote) = (evict.len(), demote.len());
                 for c in visit {
                     if let Some(&tier) = self.resident.get(&c) {
                         classify(self, c, tier, &mut evict, &mut demote);
                     }
                 }
-                evict.sort_unstable();
-                demote.sort_unstable();
+                if evict.len() > kept_evict {
+                    evict.sort_unstable();
+                    evict.dedup();
+                }
+                if demote.len() > kept_demote {
+                    demote.sort_unstable();
+                    demote.dedup();
+                }
                 #[cfg(any(test, feature = "stream-oracle"))]
                 if self.oracle {
                     let full = full_scan(self);
@@ -423,6 +460,7 @@ impl ResidencyPlan {
             None => full_scan(self),
         };
         self.recheck.clear();
+        self.deferred = (Vec::new(), Vec::new());
         self.sweep_full = false;
         self.swept_focus = match self.focus.as_slice() {
             [f] => Some(*f),

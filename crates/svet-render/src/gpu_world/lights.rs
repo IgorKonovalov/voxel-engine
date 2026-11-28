@@ -38,6 +38,10 @@ pub(super) struct LightMirror {
     pub(super) force_walks: bool,
     /// The write walks run so far ([`GpuWorld::light_walks`]).
     pub(super) walks: u64,
+    /// The chunks whose light note may have changed ([`GpuWorld::take_light_changes`]): every
+    /// site that changes a chunk's membership in `chunks`, its lists, its range's placement
+    /// or its dirty mark notes the chunk here.
+    pub(super) noted: Changes,
 }
 
 /// [`GpuWorld::lights_ready_near`]'s answers by chunk and reach, valid while `epoch` and
@@ -72,18 +76,20 @@ impl LightMirror {
             ready: Default::default(),
             force_walks: false,
             walks: 0,
+            noted: Changes::default(),
         }
     }
 
-    /// Notes a change to an input of the walks and of `lights_ready_near`.
-    pub(super) fn touch(&mut self) {
+    /// Notes a change of `c` to an input of the walks and of `lights_ready_near`.
+    pub(super) fn touch(&mut self, c: ChunkCoord) {
         self.stale = true;
         self.changes += 1;
+        self.noted.push(c);
     }
 
-    /// Notes range `r` released from its chunk (freed, its zeroing the caller's).
-    fn released(&mut self, r: (u32, u32)) {
-        self.touch();
+    /// Notes `c`'s range released (freed, its zeroing the caller's).
+    fn released(&mut self, c: ChunkCoord, r: (u32, u32)) {
+        self.touch(c);
         self.epoch += 1;
         self.live -= u64::from(r.1);
     }
@@ -366,7 +372,9 @@ impl WriteWalk for SyncWalk<'_> {
     }
 
     fn walked(&mut self, coord: ChunkCoord) {
-        self.gw.lights.dirty.remove(&coord);
+        if self.gw.lights.dirty.remove(&coord) {
+            self.gw.lights.noted.push(coord);
+        }
         self.gw.lights.wait.remove(&coord);
     }
 }
@@ -515,7 +523,7 @@ impl GpuWorld {
         }
         if let Some(l) = fresh {
             self.lights.chunks.insert(coord, l);
-            self.lights.touch();
+            self.lights.touch(coord);
         }
     }
 
@@ -534,7 +542,7 @@ impl GpuWorld {
                     placed: false,
                 },
             );
-            self.lights.touch();
+            self.lights.touch(coord);
         }
     }
 
@@ -636,7 +644,7 @@ impl GpuWorld {
         };
         if l.bricks.is_empty() {
             self.lights.chunks.remove(&coord);
-            self.lights.touch();
+            self.lights.touch(coord);
             return Some(0);
         }
         // The thinned count first: a chunk the buffer refuses is not gathered.
@@ -651,7 +659,7 @@ impl GpuWorld {
             if let Some(l) = self.lights.chunks.get_mut(&v) {
                 l.placed = false;
             }
-            self.lights.released(r);
+            self.lights.released(v, r);
             self.zero_light_range(r, enc);
             self.lights.wait.entry(v).or_insert(self.lights.syncs);
             st.light_evicted += 1;
@@ -666,6 +674,7 @@ impl GpuWorld {
             .get_mut(&coord)
             .expect("a placed chunk has lists");
         l.placed = true;
+        self.lights.noted.push(coord);
         let all: Vec<LightSample> = l.bricks.values().flatten().copied().collect();
         let power: f32 = all
             .iter()
@@ -695,7 +704,7 @@ impl GpuWorld {
             if let Some(l) = self.lights.chunks.get_mut(&coord) {
                 l.placed = false;
             }
-            self.lights.released(r);
+            self.lights.released(coord, r);
             self.zero_light_range(r, enc);
         }
     }
@@ -735,32 +744,32 @@ impl GpuWorld {
         self.lights.epoch
     }
 
-    /// A key that changes whenever a light range, a chunk's light membership or a dirty mark
-    /// does: the key [`GpuWorld::lights_ready_near`]'s answers are kept by.
-    pub(crate) fn light_key(&self) -> (u64, u64) {
-        (self.lights.epoch, self.lights.changes)
-    }
-
-    /// Every chunk with lights: whether it holds an exposed emitter (as
-    /// [`GpuWorld::emitters_near`] reads it), and whether its range is placed and clean (as
-    /// [`GpuWorld::lights_ready_near`] reads it). The bake half's shadow notes (ADR-0083).
+    /// Every chunk with lights and its note ([`GpuWorld::light_note`]), by coordinate. The bake
+    /// half's shadow notes when they replace the whole (ADR-0083).
     pub(crate) fn light_notes(&self) -> Vec<([i32; 3], crate::bake::LightNote)> {
         let mut v: Vec<_> = self
             .lights
             .chunks
             .iter()
-            .map(|(c, l)| {
-                (
-                    c.0,
-                    crate::bake::LightNote {
-                        emitter: l.bricks.values().any(|s| !s.is_empty()),
-                        current: l.placed && !self.lights.dirty.contains(c),
-                    },
-                )
-            })
+            .map(|(c, l)| (c.0, self.note_of(*c, l)))
             .collect();
         v.sort_unstable_by_key(|e| e.0);
         v
+    }
+
+    /// `c`'s light note: whether it holds an exposed emitter (as [`GpuWorld::emitters_near`]
+    /// reads it), and whether its range is placed and clean (as
+    /// [`GpuWorld::lights_ready_near`] reads it); `None` when the chunk holds no lights. A held
+    /// chunk's note can read neither, which is not `None`: it still counts as not current.
+    pub(crate) fn light_note(&self, c: ChunkCoord) -> Option<crate::bake::LightNote> {
+        self.lights.chunks.get(&c).map(|l| self.note_of(c, l))
+    }
+
+    fn note_of(&self, c: ChunkCoord, l: &ChunkLights) -> crate::bake::LightNote {
+        crate::bake::LightNote {
+            emitter: l.bricks.values().any(|s| !s.is_empty()),
+            current: l.placed && !self.lights.dirty.contains(&c),
+        }
     }
 
     /// The light radius in chunks ([`MirrorConfig::light_radius`]).
@@ -774,9 +783,10 @@ impl GpuWorld {
         let waited = self.lights.wait.remove(&coord).is_some();
         let held = self.lights.chunks.remove(&coord);
         if dirty || waited || held.is_some() {
-            self.lights.touch();
+            self.lights.touch(coord);
         }
         if let Some(r) = self.lights.ranges.forget(coord) {
+            self.lights.noted.push(coord);
             self.lights.epoch += 1;
             self.lights.live -= u64::from(r.1);
             self.lights.dropped.push(r);

@@ -491,7 +491,7 @@ Read from the rows of [logs/0107.md](../logs/0107.md) (Phases 1 and 5) and the t
 the default, as the stop pre-wrote; an arm that costs nothing when off stays). **Phase 7 runs,
 then the tip, then the close review.** Phases 6 and 8 and Phase 9's default flip do not run.
 The `alloc` finding and Phase 6's `light place` go to
-[Plan 0111](../0111-the-stagger-in-flight-on-streamed-scenes-read-quiet-after-plan-0107-then-cut.md),
+[Plan 0111](0111-the-stagger-in-flight-on-streamed-scenes-read-quiet-after-plan-0107-then-cut.md),
 which measures before it picks (the last section here is its note).
 
 This differs from the pre-written stop in one point: it said "Phases 6 and 7 still run", and
@@ -788,4 +788,4 @@ Clean: no blocker, no major. Read: the plan's diff against main `81f38aa5` (`cra
 ## Followups
 
 - `docs/backlog.md`: "Plan 0107's leftovers" (the three flip conditions, the stand-in run, the LOD ring in the identity test, the first selection's flags, the row on bounded scenes, the README's `hud` still, `run.json`, the cap, Phase 6).
-- [Plan 0111](../0111-the-stagger-in-flight-on-streamed-scenes-read-quiet-after-plan-0107-then-cut.md) takes `alloc` and `light place`, and proposes the flip if its tables carry it.
+- [Plan 0111](0111-the-stagger-in-flight-on-streamed-scenes-read-quiet-after-plan-0107-then-cut.md) takes `alloc` and `light place`, and proposes the flip if its tables carry it.

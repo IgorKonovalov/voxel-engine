@@ -76,10 +76,9 @@ pub(super) struct BakeLink {
     /// The live queue's submits as the render half holds them: readback buffers, the loop's
     /// timer, the submits in flight.
     pub(super) issuer: crate::bake::Issuer,
-    /// The bake half's shadow of the mirror, and the window and light key of its last notes
-    /// (ADR-0083).
+    /// The bake half's shadow of the mirror, and the window of its last notes (ADR-0083).
     pub(super) shadow: crate::bake::Shadow,
-    pub(super) shadow_seen: (Option<svet_world::ChunkExtent>, Option<(u64, u64)>),
+    pub(super) shadow_seen: Option<svet_world::ChunkExtent>,
     /// The live queue's world group and the buffers it binds ([`Frame::queue_world_bind`]).
     pub(super) world_bind: Option<(Vec<wgpu::Buffer>, wgpu::BindGroup)>,
     /// The live queue's knobs, kept while no queue runs and handed to the next one.
@@ -122,6 +121,8 @@ pub(super) struct BakeLink {
     pub(super) last_apply: (f64, usize),
     /// The bake thread's depth in flight ([`Frame::set_bake_depth`]).
     pub(super) thread_depth: usize,
+    /// The bytes a frame applies at most with the bake thread on ([`Frame::set_apply_cap`]).
+    pub(super) apply_cap: usize,
     /// The table slots the bake thread's steps open jobs into ([`Frame::set_bake_slots`]).
     pub(super) thread_slots: usize,
     /// The listing pool's threads at the bake thread's start ([`Frame::set_bake_listers`]).
@@ -163,7 +164,7 @@ impl BakeLink {
             lists: crate::bake::Lists::default(),
             issuer: crate::bake::Issuer::timed(),
             shadow: crate::bake::Shadow::default(),
-            shadow_seen: (None, None),
+            shadow_seen: None,
             world_bind: None,
             knobs: crate::settings::BakeKnobs::default(),
             count_store: false,
@@ -190,6 +191,7 @@ impl BakeLink {
             last_issue: (0.0, 0),
             last_apply: (0.0, 0),
             thread_depth: crate::THREAD_DEPTH,
+            apply_cap: crate::DEFAULT_APPLY_CAP,
             thread_slots: crate::THREAD_SLOTS,
             thread_listers: crate::ThreadPlan::here(None).listers,
             round_trip: Default::default(),
@@ -304,7 +306,10 @@ impl Frame {
     ) {
         // The old queue's books and what its thread made are dropped with it.
         self.join_bake(None);
+        // The reading's sums run over the frame's life, across the queue's starts.
+        let applied = self.baked.lists.applied;
         self.baked.lists = crate::bake::Lists::default();
+        self.baked.lists.applied = applied;
         self.baked.unissued.clear();
         self.baked.leftover = None;
         self.baked.failed = None;
@@ -567,9 +572,9 @@ impl Frame {
         }
         // The frame's message to the bake half, one owned value: the view, the mirror's changes
         // and its state for them, the sky and key, the settings, and the mailbox's arrivals.
-        let (last_window, last_key) = &mut self.baked.shadow_seen;
-        let notes = crate::bake::notes(&*gpu, gpu.take_changes(), *last_window, last_key);
-        *last_window = notes.window;
+        let (changed, light_changed) = (gpu.take_changes(), gpu.take_light_changes());
+        let notes = crate::bake::notes(&*gpu, changed, light_changed, self.baked.shadow_seen);
+        self.baked.shadow_seen = notes.window;
         let lighting = &self.state.lighting;
         let settings = crate::bake::StepSettings {
             column_wait: lighting.column_wait,
