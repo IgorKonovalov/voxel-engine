@@ -1,20 +1,20 @@
 # 0111: The stagger in flight on streamed scenes: read quiet after Plan 0107, then cut
 
-> **Status:** in-progress (2026-11-28: 6h's count half done; the quiet cave printed no slow frame, so no copy-led F line to count; the cut half not started, at the architect). Was: in-progress (2026-11-28: 6a'' done, its bars met; 6h's count next, not started). Was: in-progress (2026-11-28: Phase 7 done, owner "gone mostly"; 6a'' next, then 6h's count). Was: in-progress (2026-11-28: 6f done, its bars met (castle `over_100ms` 0 / 0, `poll` max 3.7 / 4.1 ms; the cave's tips printed no slow frame); 6e''s backlog bar at the architect; Phase 7 not started). Was: in-progress (2026-11-28: 6e' landed and missed its backlog bar (most bytes waiting 15.5 / 18.3 MB against under 4 MiB) with its `apply` bars met; at the architect; 6f not started). Was: in-progress (2026-11-28: 6e missed its bars; the architect's amendment "6e's count" names the cause (a window move's 1.45 MiB header rewrite, flagged as an edit, flushes every carried list) and writes 6e'; 6e' then 6f next). Was: in-progress (2026-11-28: 6d done, the flip restored by the architect's ruling (the amendment "6d's stop rule"); 6e next). Was: in-progress (2026-11-28: 6d's stop rule fired as written and its defaults are reverted; at the architect). Was: in-progress (2026-11-27: Phases 1 to 5 landed; the owner answered Phase 5's questions, all recommended; 6a next). Was: approved (2026-11-27, owner: "go, recommended": it starts after Plan 0107 merges and does not wait for Plan 0091; he takes Phase 3's window runs in a ten-minute quiet slot; if stop line 1 fires a tester README note is enough). Was: draft (2026-11-27; the owner's go on drafting: "go both"; he approves the draft
+> **Status:** done (2026-11-28, v0.84.0, closed by a fresh architect review: the quiet tester paths read 0 to 2 frames over 33 ms where Phase 3 read 10 to 34, the owner at Phase 7 "gone mostly"; ADR-0089 accepted; 6g and 6h's cut half parked in the backlog, see "Closed 2026-11-28"). Was: in-progress (2026-11-28: 6h's count half done; the quiet cave printed no slow frame, so no copy-led F line to count; the cut half not started, at the architect). Was: in-progress (2026-11-28: 6a'' done, its bars met; 6h's count next, not started). Was: in-progress (2026-11-28: Phase 7 done, owner "gone mostly"; 6a'' next, then 6h's count). Was: in-progress (2026-11-28: 6f done, its bars met (castle `over_100ms` 0 / 0, `poll` max 3.7 / 4.1 ms; the cave's tips printed no slow frame); 6e''s backlog bar at the architect; Phase 7 not started). Was: in-progress (2026-11-28: 6e' landed and missed its backlog bar (most bytes waiting 15.5 / 18.3 MB against under 4 MiB) with its `apply` bars met; at the architect; 6f not started). Was: in-progress (2026-11-28: 6e missed its bars; the architect's amendment "6e's count" names the cause (a window move's 1.45 MiB header rewrite, flagged as an edit, flushes every carried list) and writes 6e'; 6e' then 6f next). Was: in-progress (2026-11-28: 6d done, the flip restored by the architect's ruling (the amendment "6d's stop rule"); 6e next). Was: in-progress (2026-11-28: 6d's stop rule fired as written and its defaults are reverted; at the architect). Was: in-progress (2026-11-27: Phases 1 to 5 landed; the owner answered Phase 5's questions, all recommended; 6a next). Was: approved (2026-11-27, owner: "go, recommended": it starts after Plan 0107 merges and does not wait for Plan 0091; he takes Phase 3's window runs in a ten-minute quiet slot; if stop line 1 fires a tester README note is enough). Was: draft (2026-11-27; the owner's go on drafting: "go both"; he approves the draft
 > before any dev work). Drafted with no interview from the owner's tester report and Plan 0107's
 > Phase 1 reading; the guesses and the questions left are under "Risks & open questions", each
 > with a recommended option.
-> **Lane order:** starts after [Plan 0107](done/0107-the-mirrors-slot-image-packed-on-the-stream-workers.md)
+> **Lane order:** starts after [Plan 0107](0107-the-mirrors-slot-image-packed-on-the-stream-workers.md)
 > merges, so it measures only what that plan leaves.
 > **Created:** 2026-11-27
 > **Milestone:** cross-cutting: the streaming lines of `docs/nfr.md` sections 2 and 5 (M10's
-> performance work in [`docs/roadmap.md`](../roadmap.md) is the nearest home)
+> performance work in [`docs/roadmap.md`](../../roadmap.md) is the nearest home)
 > **Related ADRs:** none new. No mechanism is chosen here, so there is no rejected alternative
 > to record; the amendment that writes the remedies writes an ADR if one of them has one.
-> [ADR-0056](../adrs/0056-the-mirrors-slot-image-is-packed-on-the-stream-workers-and-the-render-thread-only-allocates-and-copies.md),
-> [ADR-0017](../adrs/0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md),
-> [ADR-0022](../adrs/0022-mirror-uploads-through-a-staging-belt-and-copy-commands.md) and
-> [ADR-0083](../adrs/0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md)
+> [ADR-0056](../../adrs/0056-the-mirrors-slot-image-is-packed-on-the-stream-workers-and-the-render-thread-only-allocates-and-copies.md),
+> [ADR-0017](../../adrs/0017-mirror-cpu-work-bounded-in-the-frame-loop-narrowing-on-stream-workers.md),
+> [ADR-0022](../../adrs/0022-mirror-uploads-through-a-staging-belt-and-copy-commands.md) and
+> [ADR-0083](../../adrs/0083-the-live-bake-queue-runs-on-a-bake-thread-the-render-thread-applies-its-write-lists-and-issues-its-submits.md)
 > own the parts a remedy may touch.
 
 ## TL;DR
@@ -33,7 +33,7 @@ table in `docs/plans/logs/0111.md` that says which stage each slow frame went to
 ## Context & problem
 
 **The complaint and its report** (the backlog's "The v0.79.1 tester archive on the owner's
-box", [`docs/backlog.md`](../backlog.md); the raw folder is kept outside the repo in the main
+box", [`docs/backlog.md`](../../backlog.md); the raw folder is kept outside the repo in the main
 checkout's `live/owner-notes/2026-11-27-tester-0.79.1/`). Commit `1572f61f`, RTX 3080 Laptop,
 Ryzen 9 5900HS (16 logical CPUs), Wayland, 2560 x 1440 output, FSR 2 at 1.5, Floor, the
 tester's window (`pacing: free`, present mode `Immediate`), the bake thread on, 8 stream
@@ -74,7 +74,7 @@ over 33 ms on the showcase.
 - **Percentiles of different series do not add.** No line joins one frame's wall time to that
   frame's stages, the acquire and the present are outside the CPU span, and no timer brackets
   `configure_frame`, the encode or the submit
-  ([the review of 2026-11-26](../reviews/2026-11-26-work-off-the-render-thread.md), section 1).
+  ([the review of 2026-11-26](../../reviews/2026-11-26-work-off-the-render-thread.md), section 1).
   So the report cannot say which stage a given slow frame went to.
 
 **The rule this plan follows** (architect skill; Plan 0047's lesson): a plan that chases a
@@ -363,7 +363,7 @@ slow frame: 539 at 11.2 s, wall 108.4 ms: acquire 0.1, update 0.3, poll 2.1 (41 
 > resume notes go to the plan's readings log, `docs/plans/logs/0111.md` (started from
 > `templates/readings-log.md`), and this section links it once it exists.
 
-Readings: [`logs/0111.md`](logs/0111.md).
+Readings: [`logs/0111.md`](../logs/0111.md).
 
 | phase | owner | state | commit |
 |---|---|---|---|
@@ -408,7 +408,7 @@ _(Facts for the architect. No recommendations, and no suggested version bump.)_
 
 ## Amended 2026-11-27 (architect, Phase 5)
 
-Read from Phases 1 to 4 ([logs/0111.md](logs/0111.md)), the raw window folders
+Read from Phases 1 to 4 ([logs/0111.md](../logs/0111.md)), the raw window folders
 (`live/owner-notes/2026-11-27-0111-p3/`, outside the repo) and the tree at `48b68ed6`
 (`crates/svet-render/src/bake/queue/shadow.rs`, `frame/baked.rs`, `frame/bake_thread.rs`,
 `bake/link.rs`, `bake/writes.rs`, `gpu_world/window.rs`, `gpu_world/slot.rs`,
@@ -730,7 +730,7 @@ merged tree first (the plan's risk, unchanged).
 
 ## Amended 2026-11-27 (architect, 6a's bars)
 
-Read from the Phase 6a section of [logs/0111.md](logs/0111.md), the diff `b8d74e5b..1795738b`
+Read from the Phase 6a section of [logs/0111.md](../logs/0111.md), the diff `b8d74e5b..1795738b`
 and the tree at `1795738b` (`crates/svet-render/src/bake/queue/shadow.rs`,
 `gpu_world/columns.rs`, `gpu_world/window.rs`, `gpu_world/mod.rs`, `gpu_world/lights.rs`,
 `gpu_world/slot.rs`, `frame/baked.rs`). No run was made for this reading.
@@ -900,7 +900,7 @@ says "against 6a's tip" it means the tip it stacks on (6a', or 6a'' if run).
 
 ## Amended 2026-11-27 (architect, 6a''s reading)
 
-Read from the Phase 6a' section of [logs/0111.md](logs/0111.md) and the tree at `0c7d353b`
+Read from the Phase 6a' section of [logs/0111.md](../logs/0111.md) and the tree at `0c7d353b`
 (`crates/svet-render/src/gpu_world/mod.rs` `sync_into`, `window.rs` `reconcile_window` and
 `StageClock`, `stage.rs` `flush_table` and `write_table_run`, `columns.rs` `flush`,
 `apps/flythrough/src/run/slow_frames.rs`). No run was made for this reading.
@@ -1014,13 +1014,13 @@ the tip it stacks on. The window's figures stay Phase 7's.
 
 ## Amended 2026-11-28 (architect, 6c's picks)
 
-Read from the Phase 6b section of [logs/0111.md](logs/0111.md) (its tables under `live/p6b/`,
+Read from the Phase 6b section of [logs/0111.md](../logs/0111.md) (its tables under `live/p6b/`,
 outside the repo), ADR-0056's Outcome, the fly-through's `cli/parse.rs`, `setup.rs`
 (`start_streaming`), `run/loading/pre_roll.rs` and `gpu_world/mod.rs` (`MirrorConfig::new`) at
 `0c7d353b`. No run was made for this reading. The owner's standing answer (Phase 5, question 4)
 lets the picks follow the written rule; they are shown here before 6d starts, and the owner may
 overrule them in the morning (question 4 below). The ADR the earlier amendment said a budget
-flip owes is [ADR-0089](../adrs/0089-the-streamed-mirrors-sync-takes-a-6-ms-budget-a-frame-on-top-of-the-workers-slot-image.md).
+flip owes is [ADR-0089](../../adrs/0089-the-streamed-mirrors-sync-takes-a-6-ms-budget-a-frame-on-top-of-the-workers-slot-image.md).
 
 ### The picks, shown to the owner
 
@@ -1162,11 +1162,11 @@ settings, and the revert is one commit. 6d proceeds; the owner's morning word ma
 
 ## Amended 2026-11-28 (architect, 6d's stop rule)
 
-Read from the Phase 6d section of [logs/0111.md](logs/0111.md) and the runs' own `log.txt` under
+Read from the Phase 6d section of [logs/0111.md](../logs/0111.md) and the runs' own `log.txt` under
 `live/p6d/A/` (outside the repo), the rig `live/p6d-run.sh`, `git diff --stat 0c7d353b fa3fe4a8
 -- '*.wgsl'`, `run/loading.rs` (the `entity pipelines built` mark) and the start-up notes of
-[Plan 0103](0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md)'s and
-[Plan 0108](done/0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md)'s
+[Plan 0103](../0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md)'s and
+[Plan 0108](0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md)'s
 logs. No run was made for this ruling. The owner's standing answer (Phase 5, question 4) lets
 the picks follow the written rule; the ruling is shown here and question 4 below carries it.
 
@@ -1254,7 +1254,7 @@ residency cost, which read +3 to +9 % in every warm run, on the span and on the 
 
 ## Amended 2026-11-28 (architect, 6e's count)
 
-Read from the Phase 6e section of [logs/0111.md](logs/0111.md), the count run's own lines
+Read from the Phase 6e section of [logs/0111.md](../logs/0111.md), the count run's own lines
 (`live/p6e/count/c1/log.txt`, outside the repo: every `slow frame:` line beside the `bake queue`
 and `bake queue step` lines printed every 60 frames) and the tree at `57796c25`
 (`crates/svet-render/src/bake/writes.rs`, `bake/store.rs`, `bake/link.rs`, `bake/summary.rs`,
@@ -1307,7 +1307,7 @@ must keep pace with the bake's production or the backlog returns under another n
 cap becomes a setting, its default read from the count. ADR-0083's Outcome gains a dated
 paragraph for the rule (the architect, with this amendment). The fades' 16 rewrites a landing
 are the production's lever and a design change (a fade in the shader); they go to
-[docs/backlog.md](../backlog.md) ("The landing fade rewrites every fading block each step") with
+[docs/backlog.md](../../backlog.md) ("The landing fade rewrites every fading block each step") with
 the reading 6e' adds, not into this plan.
 
 #### Phase 6e': the over-cap unit applies alone, in order; the apply cap keeps pace
@@ -1379,7 +1379,7 @@ and Implementation-log row merge onto plan-0111 after 6e' lands (two appended se
 
 ## Amended 2026-11-28 (architect, 6e''s backlog bar)
 
-Read from the Phase 6e' section of [logs/0111.md](logs/0111.md) (the count and Hold A, six runs)
+Read from the Phase 6e' section of [logs/0111.md](../logs/0111.md) (the count and Hold A, six runs)
 and the tree at `5301e227` (`crates/svet-render/src/bake/writes.rs` `Lists::apply`,
 `bake/queue/digs.rs` `advance_fades`, `bake/link.rs`). No run was made for this ruling. The
 owner is asleep; question 6 below is restated with the reading.
@@ -1465,3 +1465,39 @@ nothing of this ruling touches its files.
 4. **The pair** (`--sync-ms 6` and `--mirror-pack workers`) stays the default at +4 to +7 % quiet full residency.
 5. **Plan 0107's condition 3** is accepted as read on the fill at 5 s and 15 s.
 6. **The apply cap** stays 2 MiB by default; `--apply-mib` stays a setting.
+
+## Closed 2026-11-28 (architect)
+
+A fresh architect review closes the plan at v0.84.0. On the quiet tester paths in the owner's
+window, the streamed benchmarks read 0 to 2 frames over 33 ms and none over 100 ms. Phase 3 had
+read 10 to 34 on the same paths, at a higher resolution. Asked at Phase 7, the owner said the
+stagger was "gone mostly". ADR-0089 is accepted, with an Outcome.
+
+- **Gate at `26069b0b`:** the gate tier ran 1519, passed 1519 and skipped 252, in 970.8 s
+  (load1 1.42 to 2.16). Doctests (11), workspace clippy `-D warnings`, `cargo fmt --all
+  --check` and `cargo deny check` all exited 0. The reading is in `docs/nfr.md` section 7.
+- **The one major, and its fix:** the 6 ms `--sync-ms` default reached the streamed pre-roll.
+  On lavapipe its "lighting the near chunks" stage took 2743 loading frames after a source
+  switch, where main took 10, and the switched `gpu_loading` test took 105.6 s against 12.3 s.
+  The fix is `b449c4ff`: the pre-roll syncs with no budget, and `Run::restore_sync_budget` sets
+  the run's budget back at `PreRollState::Done`. That is the only way out of the pre-roll short
+  of a failure, and `--pre-roll off`, a level, a switched run and the plain start all reach it.
+  The in-world budget is the same expression as before, so ADR-0089's Decision holds as written.
+  `gpu_loading` now asserts at most 40 near-stage frames after the switch, and that the restored
+  budget reads `6 ms`. The review bit both assertions on the working tree. With the fix reverted,
+  the test read 1471 frames against 40 and failed (123.2 s). With only the restore broken, it
+  read `none` against `6 ms` and failed (16.2 s).
+- **Fix-pass gate:** `test-changed.mjs --profile gate --since 26069b0b` (flythrough, svet-tester)
+  ran 647, passed 647 and skipped 216, in 740.9 s. Its sole run of
+  `every_settings_row_changes_the_image_or_is_listed_inert` passed in 15.2 s. Workspace clippy
+  `-D warnings` exited 0. The dev's quick tier, clippy, fmt, `gpu_loading` and
+  `gpu_mirror_image` were green as well (the readings log, "Fix pass").
+- **The slow test:** `a_source_switch_shows_the_loading_frames_before_the_new_world` is main's
+  test. With the fix it is back at 12.4 s in the gate (16.3 s alone, loaded), and it stays in the
+  gate unmarked, as at Plans 0106 and 0109.
+- **Not done, parked:** Phase 6g (the queue lock under load) was not run, and 6h's cut half (the
+  column map's strip flush) was not built. Both are in `docs/backlog.md`, "Plan 0111's
+  leftovers", each with the reading that would revive it, along with `alloc` p99 still over its
+  line and the hitch line read at 720p only.
+- **Nits, not fixed:** the plan's `### Close triggers` block was left as the template, and the
+  Implementation log has no 6g row. This section and the backlog entry carry both facts.

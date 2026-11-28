@@ -1,8 +1,8 @@
 # ADR-0089: The streamed mirror's sync takes a 6 ms time budget a frame, on top of the workers' slot image
 
-> **Status:** proposed (Plan 0111 Phase 6c, 2026-11-28; accepted at the plan's close if 6d's bars hold)
+> **Status:** accepted (2026-11-28, at Plan 0111's close; see Outcome). Was: proposed (Plan 0111 Phase 6c, 2026-11-28; accepted at the plan's close if 6d's bars hold)
 > **Date:** 2026-11-28
-> **Related plan(s):** [Plan 0111](../plans/0111-the-stagger-in-flight-on-streamed-scenes-read-quiet-after-plan-0107-then-cut.md)
+> **Related plan(s):** [Plan 0111](../plans/done/0111-the-stagger-in-flight-on-streamed-scenes-read-quiet-after-plan-0107-then-cut.md)
 > (Phases 6b to 6d); [Plan 0107](../plans/done/0107-the-mirrors-slot-image-packed-on-the-stream-workers.md)
 > built the image; [Plan 0064](../plans/done/0064-the-windows-frame-pacing-workers-and-readbacks-that-wait.md)
 > built the budget. Supersedes the rejection of
@@ -106,3 +106,35 @@ image's lower per-chunk cost is what lets 6 ms carry the slab. Rejected by readi
 Plan 0064's reading stands for its day: at about 300 us a chunk a budget starved the window. It
 does not hold at 65 us. The rejection is superseded here; the record's Decision (the image on
 the workers) is unchanged and its default flips.
+
+## Outcome (2026-11-28, Plan 0111's close)
+
+The pair shipped as decided, at Plan 0111 Phase 6d (`fa3fe4a8`, restored at `63bad424` after a
+stop that fired on a cold driver cache; the plan's amendment "6d's stop rule"). 6d's warm pairs,
+quiet headless cave at 2560 x 1440 on the RTX 3080 Laptop: `over_33ms` 12 / 13 against 130 / 149
+at the base, sync p99 7.9 ms against 17.2, `full residency after` +3.6 % and +7.4 %, inside the
+10 % clause; the owner kept the pair at that cost (the plan's answers of 2026-11-28, 4).
+
+- **On screen** (Plan 0111 Phase 7, the tester's four benchmarks in the owner's window, 1280 x
+  720, quiet): `over_33ms` cave 0, showcase 0, castle 2, outdoor 0, none over 100 ms; the owner,
+  asked whether the stagger is gone: "gone mostly". The LOD-for-longer case in the Negative list
+  was not called out.
+- **The window move's own `copy`** (the second Negative): Plan 0111 Phase 6h put `writes` and
+  `tiles` on the `slow frame:` line, and the quiet cave at the plan's tip printed no slow frame,
+  so no copy-led frame was left to count. The column map's strip flush was not built; it is in
+  `docs/backlog.md` with the reading that would revive it.
+- **The identity test ADR-0056 owed** landed with the flip: `gpu_mirror_image`'s
+  `a_promoted_and_a_demoted_record_are_byte_identical_whichever_thread_packed` streams a LOD
+  ring and moves the focus so that records are promoted and demoted, and both arms' pools,
+  records, table and light buffers read back equal after every sync; a debug-build glide under
+  the pair passed the re-pack compare on each of its 3297 images.
+- **The budget is the world frame's, not the loading screen's** (the close review's one major,
+  fixed at `b449c4ff`). As first built, the fly-through set `--sync-ms` at the pre-roll's start.
+  On lavapipe the near chunks' light then waited on a mirror filled 6 ms a step: after a source
+  switch the near stage took 2743 loading frames where main took 10, and the outdoor start took
+  92.0 s against 32.2 s unbudgeted. The pre-roll now syncs with no budget, and the run's budget
+  is set at its end, before the settle and the first world frame. The switched run is back at 10
+  frames and the test at 16.3 s. `gpu_loading` asserts both the count bound and the restored
+  6 ms. The Decision's frame budget is unchanged.
+- **Not read:** the RENOIR under the pair, and full residency on the eight-CPU stand-in (no run
+  reached it; its fill at 5 s and 15 s was within 1.5 %).

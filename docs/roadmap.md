@@ -951,6 +951,17 @@ against the baked store: no probe or store term takes sun or sky light.
   from one place (`ThreadPlan`), printed at the start. **Left open:** `alloc` and `light
   place` go to Plan 0111, which reads before it picks; the three conditions of a flip to
   `workers` are the backlog's "Plan 0107's leftovers".
+- **The stagger in flight on streamed scenes** ([Plan 0111](plans/done/0111-the-stagger-in-flight-on-streamed-scenes-read-quiet-after-plan-0107-then-cut.md),
+  closed 2026-11-28, v0.84.0; ADR-0089 accepted, ADR-0056's Outcome added to): a `slow frame:`
+  block names the stage of every frame over 33.3 ms, and the remedies it attributed are cut in
+  turn. The bake's notes across a window move are a delta (the shadow and the light notes);
+  the mirror's sync takes a 6 ms budget a frame on the workers' slot image, both now the
+  defaults, so an arriving slab lands over frames, not in one; an over-cap write list applies
+  alone, in order, at a 2 MiB cap (`--apply-mib`); the sweep's evictions are spread at 256 a
+  poll (`EVICT_PER_POLL`). The tester's four benchmarks in the owner's window read 0 to 2
+  frames over 33 ms and none over 100 ms, the owner: "gone mostly". A hitch line now stands in
+  `docs/nfr.md` section 2. **Left open** (the backlog's "Plan 0111's leftovers"): the queue
+  lock under load (6g), the column map's strip flush (6h's cut), `alloc` over its line.
 - **A surface detail layer** ([Plan 0081](plans/0081-a-surface-detail-layer-blades-caps-and-pebbles-marched-above-styled-faces-swayed-by-wind.md),
   drafted 2026-11-16, awaits the owner's go; ADR-0063 proposed): grass, moss, strands,
   fungus caps, flowers, pebbles and snow tufts as a procedural shell marched in the hit pass

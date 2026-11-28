@@ -7,7 +7,7 @@ The engine was `voxel-engine`, with crates `vxe-*`, variables `VXE_*` and the WI
 `vxe:logic`, until Plan 0087 renamed it `svet` (v0.73.0); records from before keep those names,
 and `vxe-<x>` reads as `svet-<x>`.
 
-**Next free number: 0112** (0111 the stagger in flight on streamed scenes, drafted 2026-11-27 from the owner's tester report, starts after Plan 0107 merges; 0110 the math hot paths, measured then cut, drafted 2026-11-27 after Plan 0091; 0109 a blocked chunk is checked again when its blocker clears, closed 2026-11-27; 0108 the start-up readings, closed 2026-11-27; 0107 the mirror's slot image packed on the stream workers, closed 2026-11-27; 0106 no gate test passes by a clock, closed 2026-11-26; 0093 the README rewrite, closed 2026-11-27; 0105 the dig's flash at depth, closed 2026-11-27; 0104 the wobble anchored to the owner's eye, closed 2026-11-26; 0101 the record by rule at every opening, closed 2026-11-26; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
+**Next free number: 0112** (0111 the stagger in flight on streamed scenes, closed 2026-11-28; 0110 the math hot paths, measured then cut, drafted 2026-11-27 after Plan 0091; 0109 a blocked chunk is checked again when its blocker clears, closed 2026-11-27; 0108 the start-up readings, closed 2026-11-27; 0107 the mirror's slot image packed on the stream workers, closed 2026-11-27; 0106 no gate test passes by a clock, closed 2026-11-26; 0093 the README rewrite, closed 2026-11-27; 0105 the dig's flash at depth, closed 2026-11-27; 0104 the wobble anchored to the owner's eye, closed 2026-11-26; 0101 the record by rule at every opening, closed 2026-11-26; 0102 the removal of `own`, closed 2026-11-25; 0103 a pipeline cache for the renderer, drafted 2026-11-24; 0096 the performance plan, closed; 0097 the exposure's anchor by
 the sky around the camera; 0098 the calm light by default, closed 2026-11-24; 0099 the bake
 step off the main thread, closed 2026-11-26; 0100 a sun fixed in the world, closed 2026-11-25; ADRs are a separate sequence, see `../adrs/README.md` for its next
 free number). Plan 0095, the motion wobble (a calm key light in motion), closed 2026-11-21,
@@ -30,7 +30,8 @@ were sized by Plan 0109 Phase 6. Plan 0093, the README rewrite with reproducible
 "Plan 0105's leftovers" and the two entries beside it). Plan 0109, a blocked chunk is checked again when its blocker clears, closed 2026-11-27, v0.81.0
 (no ADR; the owner kept today's start; what it left is the backlog's "Plan 0109's leftovers" and the three entries beside it). Plan 0108, the start-up readings, closed 2026-11-27, v0.82.0
 (no ADR; `--pre-roll near` by default in a window over a streamed source, the owner's pick; the start-up pipelines on 2 or 4 threads; what it left is the backlog's "Plan 0108's leftovers"). Plan 0107, the mirror's slot image packed on the stream workers, closed 2026-11-27, v0.83.0
-(ADR-0056's Outcome added to: built, byte-identical by test, a setting that stays off, `--mirror-pack workers`, since it cut the sync's p99 by 10 to 15 % against a 20 % bar; `ThreadPlan` hands out the thread counts; what it left is the backlog's "Plan 0107's leftovers", and `alloc` and `light place` are Plan 0111's).
+(ADR-0056's Outcome added to: built, byte-identical by test, a setting that stays off, `--mirror-pack workers`, since it cut the sync's p99 by 10 to 15 % against a 20 % bar; `ThreadPlan` hands out the thread counts; what it left is the backlog's "Plan 0107's leftovers", and `alloc` and `light place` are Plan 0111's). Plan 0111, the stagger in flight on streamed scenes, closed 2026-11-28, v0.84.0
+(ADR-0089 accepted: `--sync-ms 6` and `--mirror-pack workers` the defaults; the owner at his window "gone mostly"; what it left, its Phase 6g and 6h's cut half among it, is the backlog's "Plan 0111's leftovers").
 
 ## Active roster
 
@@ -55,7 +56,6 @@ were sized by Plan 0109 Phase 6. Plan 0093, the README rewrite with reproducible
 | [0092](0092-wgsl-hot-reload-in-the-fly-through-an-mtime-poll-pipelines-rebuilt-and-the-old-ones-kept-on-an-error.md) | WGSL hot reload in the fly-through: an mtime poll, pipelines rebuilt from disk, the old kept on an error | approved | M7, no ADR. After 0091 in its lane, before 0090 (owner). |
 | [0103](0103-a-pipeline-cache-for-the-renderer-bytes-the-consumer-keeps.md) | A pipeline cache for the renderer: the driver's cache through wgpu in an engine envelope, bytes the consumer keeps | draft, parked 11-24 | ADR-0087 (proposed). Parked: the driver's cache already warms a second start (logs/0103.md). |
 | [0110](0110-the-math-hot-paths-measured-then-cut-shader-math-f16-and-the-integer-root.md) | The math hot paths, measured then cut: shader math and f16 by adapter | approved 11-27 | ADR-0088. After M10 (0033-0037) and 0091 (owner). P2 the owner's clock sweep; keep at >= 5 % on RENOIR. |
-| [0111](0111-the-stagger-in-flight-on-streamed-scenes-read-quiet-after-plan-0107-then-cut.md) | The stagger in flight on streamed scenes: read quiet, then cut | in progress | P1-6e done; 6e missed: a move's header flushed the carried lists; 6e' (the fix, the cap a setting) then 6f; 6a'', 6h ask the owner |
 <!-- roster:end -->
 
 ## Sequence
@@ -68,7 +68,7 @@ one lane beside it. At most two lanes build at once, and a lane owing a quiet re
 slot with nothing else building. The numbered list from 2026-11-10 below is the history this
 replaces.
 
-1. **Look and performance (serial, M10):** Plan 0111 (in flight) → Plan 0081 (surface detail;
+1. **Look and performance (serial, M10):** Plan 0111 (closed 2026-11-28) → Plan 0081 (surface detail;
    its four questions answered 2026-11-26) → Plan 0033's render half → 0034 → 0035 → 0037 → 0036 → Plan 0110
    (approved 2026-11-27: after M10 and after Plan 0091).
 2. **World briefs beside the look track:** Plan 0033's world brief 3 starts after 0111's quiet
@@ -375,6 +375,7 @@ their figures for wall time and frame cost are estimates until a phase measures 
 <!-- roster:begin cap=320 -->
 | Plan | Title | Closed |
 |------|-------|--------|
+| [0111](done/0111-the-stagger-in-flight-on-streamed-scenes-read-quiet-after-plan-0107-then-cut.md) | The stagger in flight on streamed scenes: the slab spread over frames, the mirror's sync budgeted at 6 ms on the workers' image (ADR-0089) | 2026-11-28, v0.84.0 |
 | [0107](done/0107-the-mirrors-slot-image-packed-on-the-stream-workers.md) | The mirror's slot image packed on the stream workers: built, byte-identical, a setting that stays off (`--mirror-pack`); the thread counts in one place | 2026-11-27, v0.83.0 |
 | [0108](done/0108-the-start-up-readings-a-shorter-pre-roll-and-the-cold-pipelines-split.md) | The start-up readings: `--pre-roll near` in a window over a streamed source, the cold pipelines on 2 or 4 threads | 2026-11-27, v0.82.0 |
 | [0109](done/0109-a-blocked-chunk-is-checked-again-when-its-blocker-clears-the-start-on-a-streamed-world.md) | A blocked chunk is checked again when its blocker clears: the streamed start waits 5 to 10 steps, not 32 to 97 | 2026-11-27, v0.81.0 |
